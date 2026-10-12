@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderDelegatedPrompt } from '../src/claude-adapter.js'
+import { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderDelegatedPrompt, TITLE_MODEL_ID } from '../src/claude-adapter.js'
 
 /** An inner adapter that records what it was asked for. */
 function innerAdapter({ model = { id: 'gpt-6.1-sol' } } = {}) {
@@ -72,11 +72,76 @@ test('a delegated turn streams the CLI text and finishes clean', async () => {
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
   }))
   assert.deepEqual(chunks, [
+    { type: 'block-start', index: 0, blockType: 'text' },
     { type: 'text-delta', index: 0, text: 'Hel' },
     { type: 'text-delta', index: 0, text: 'lo' },
-    { type: 'usage', usage: { inputTokens: 3, outputTokens: 4 } },
+    { type: 'block-end', index: 0, block: { type: 'text', text: 'Hello' } },
+    { type: 'usage', usage: { inputTokens: 3, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0 } },
     { type: 'finish', reason: { kind: 'stop' } },
   ])
+})
+
+test('thinking and tool activity stream live as reasoning, the answer as text', async () => {
+  const runner = stubRunner([
+    { type: 'block', kind: 'reasoning' },
+    { type: 'reasoning', text: '先看仓库' },
+    { type: 'tool', id: 't1', summary: 'Bash · git status' },
+    { type: 'tool', id: 't1', summary: 'Bash · git status' },
+    { type: 'tool-error', id: 't1', text: 'not a git repository' },
+    { type: 'block', kind: 'text' },
+    { type: 'text', text: '第一段' },
+    { type: 'block', kind: 'text' },
+    { type: 'text', text: '第二段' },
+    { type: 'result', result: { result: '', inputTokens: 0, outputTokens: 9 } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const chunks = await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))
+  const ends = chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)
+  assert.deepEqual(ends, [
+    { type: 'reasoning', text: '先看仓库\n▸ Bash · git status\n  ✗ not a git repository\n' },
+    { type: 'text', text: '第一段' },
+    { type: 'text', text: '第二段' },
+  ])
+  // Every delta addresses an open block of its own type.
+  const open = new Map()
+  for (const chunk of chunks) {
+    if (chunk.type === 'block-start') open.set(chunk.index, chunk.blockType)
+    if (chunk.type === 'block-end') open.delete(chunk.index)
+    if (chunk.type === 'text-delta') assert.equal(open.get(chunk.index), 'text')
+    if (chunk.type === 'reasoning-delta') assert.equal(open.get(chunk.index), 'reasoning')
+  }
+  assert.equal(open.size, 0)
+})
+
+test('usage reports the last request as context and keeps cache hits', async () => {
+  const runner = stubRunner([
+    { type: 'request-usage', usage: { inputTokens: 2, cacheReadTokens: 29_246, cacheWriteTokens: 13_634 } },
+    { type: 'text', text: 'a' },
+    { type: 'request-usage', usage: { inputTokens: 2, cacheReadTokens: 43_323, cacheWriteTokens: 385 } },
+    { type: 'result', result: { result: 'a', inputTokens: 4, outputTokens: 357, cacheReadTokens: 72_569, cacheWriteTokens: 14_019 } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const chunks = await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))
+  assert.deepEqual(chunks.find(chunk => chunk.type === 'usage').usage, {
+    inputTokens: 2,
+    outputTokens: 357,
+    cacheReadTokens: 43_323,
+    cacheWriteTokens: 385,
+  })
+})
+
+test('usage falls back to the CLI totals when no request was observed', async () => {
+  const runner = stubRunner([
+    { type: 'result', result: { result: '', inputTokens: 4, outputTokens: 5, cacheReadTokens: 6, cacheWriteTokens: 7 } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const chunks = await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))
+  assert.deepEqual(chunks.find(chunk => chunk.type === 'usage').usage, {
+    inputTokens: 4,
+    outputTokens: 5,
+    cacheReadTokens: 6,
+    cacheWriteTokens: 7,
+  })
 })
 
 test('a delegated turn reports a CLI failure without blaming a key', async () => {
@@ -101,6 +166,35 @@ test('the request signal reaches the CLI so a cancelled turn kills it', async ()
   const controller = new AbortController()
   await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [], signal: controller.signal }))
   assert.equal(runner.calls[0].signal, controller.signal)
+})
+
+test('a session title runs on the small model, read-only, outside the workspace', async () => {
+  const runner = stubRunner([{ type: 'text', text: '修复登录' }, { type: 'result', result: { result: '修复登录', inputTokens: 1, outputTokens: 2 } }])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner, resolveMode: () => 'full', resolveCwd: () => '/work' })
+  const chunks = await consume(adapter.stream({
+    provider: 'packycode',
+    model: 'claude-opus-5-5',
+    purpose: 'session-title',
+    system: 'Return only the title.',
+    messages: [{ role: 'user', content: [{ type: 'text', text: '登录页报错了' }] }],
+  }))
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+  assert.equal(runner.calls.length, 1)
+  const call = runner.calls[0]
+  assert.equal(call.model, TITLE_MODEL_ID)
+  assert.equal(call.mode, 'read-only')
+  assert.notEqual(call.cwd, '/work')
+  assert.equal(call.appendSystemPrompt, 'Return only the title.')
+  assert.equal(call.prompt, '登录页报错了')
+})
+
+test('every CLI-backed model is routed to the CLI with its own id', async () => {
+  for (const id of CLI_BACKED_MODEL_IDS) {
+    const runner = stubRunner([{ type: 'result', result: { result: '', inputTokens: 0, outputTokens: 0 } }])
+    const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+    await consume(adapter.stream({ provider: 'packycode', model: id, messages: [] }))
+    assert.equal(runner.calls[0].model, id)
+  }
 })
 
 test('a delegated prompt drops the harness system prompt and marks what it cannot carry', () => {

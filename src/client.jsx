@@ -61,6 +61,29 @@ const zh = {
   composerNoKey: '无可用 Key',
   error: '读取 PackyCode 状态失败',
   loadFailed: '读取失败',
+  cliTitle: 'Claude Code CLI',
+  cliChecking: '正在检测本机的 Claude Code CLI…',
+  cliInstalled: '已安装',
+  cliVersion: '版本',
+  cliPath: '位置',
+  cliRecheck: '重新检测',
+  cliMissing: '未检测到 Claude Code CLI',
+  cliMissingHint: '不安装将无法正常使用 Claude 模型（claude-opus-5-5、claude-sonnet-5-5、claude-haiku-5-5）：PackyCode 只把 Claude 模型提供给官方 Claude Code CLI，插件需要调用本机的 CLI 来运行它。其它模型不受影响。',
+  cliConfiguredMissing: '设置里指定的 CLI 路径不存在：{path}',
+  cliBroken: '找到了 CLI，但无法运行',
+  cliInstall: '安装 Claude Code CLI',
+  cliReinstall: '重新安装',
+  cliInstalling: '正在安装…（通常需要一两分钟，请勿关闭 DSH）',
+  cliInstallCommand: '将在本机执行：{command}（需要 Node.js 18 或更高版本）',
+  cliInstallSucceeded: '安装完成。',
+  cliInstallFailed: '安装失败',
+  cliNpmMissing: '没有找到 npm。请先从 https://nodejs.org 安装 Node.js（18 或更高版本），然后再点安装。',
+  cliPermission: 'npm 没有权限写入全局目录。请在终端执行 sudo {command}，或把 npm 的全局目录改到用户目录后重试。',
+  cliPermissionWindows: 'npm 没有权限写入全局目录。请以管理员身份打开终端执行 {command}，然后点「重新检测」。',
+  cliNetwork: '下载失败，请检查网络或 npm 镜像设置后重试。',
+  cliTimeout: '安装超时，请检查网络后重试。',
+  cliNotFoundAfterInstall: 'npm 显示安装完成，但仍找不到 claude 命令。请在终端执行 claude --version 确认，然后点「重新检测」。',
+  cliWindowsNote: 'Windows 上 Claude Code 还需要 Git for Windows（https://git-scm.com/downloads/win）。',
 }
 
 const en = {
@@ -107,6 +130,29 @@ const en = {
   composerNoKey: 'No usable key',
   error: 'Could not read PackyCode status',
   loadFailed: 'Read failed',
+  cliTitle: 'Claude Code CLI',
+  cliChecking: 'Checking this device for the Claude Code CLI…',
+  cliInstalled: 'Installed',
+  cliVersion: 'Version',
+  cliPath: 'Location',
+  cliRecheck: 'Check again',
+  cliMissing: 'Claude Code CLI not found',
+  cliMissingHint: 'Without it the Claude models (claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5) cannot work: PackyCode serves Claude models only to the official Claude Code CLI, so the plugin runs the CLI on this device. Other models are unaffected.',
+  cliConfiguredMissing: 'The CLI path set in settings does not exist: {path}',
+  cliBroken: 'The CLI was found but could not run',
+  cliInstall: 'Install Claude Code CLI',
+  cliReinstall: 'Reinstall',
+  cliInstalling: 'Installing… (usually a minute or two; keep DSH open)',
+  cliInstallCommand: 'Runs on this device: {command} (requires Node.js 18 or later)',
+  cliInstallSucceeded: 'Installed.',
+  cliInstallFailed: 'Install failed',
+  cliNpmMissing: 'npm was not found. Install Node.js 18 or later from https://nodejs.org, then click Install again.',
+  cliPermission: 'npm cannot write its global directory. Run sudo {command} in a terminal, or point npm’s global prefix at a folder you own, then retry.',
+  cliPermissionWindows: 'npm cannot write its global directory. Open a terminal as administrator, run {command}, then click Check again.',
+  cliNetwork: 'The download failed. Check your network or npm registry settings and retry.',
+  cliTimeout: 'The install timed out. Check your network and retry.',
+  cliNotFoundAfterInstall: 'npm reported success, but the claude command still cannot be found. Run claude --version in a terminal, then click Check again.',
+  cliWindowsNote: 'On Windows, Claude Code also needs Git for Windows (https://git-scm.com/downloads/win).',
 }
 
 const STYLE = `
@@ -139,6 +185,9 @@ const STYLE = `
 .packyCodeAdvanced summary{cursor:pointer;color:var(--dsw-alias-label-secondary)}
 .packyCodeAdvancedBody{display:flex;flex-direction:column;gap:10px;padding-top:10px}
 .packyCodeField{display:flex;flex-direction:column;gap:4px}
+.packyCodeWarning{color:var(--dsw-alias-state-warning-primary,#c27c0e);font-weight:500}
+.packyCodeDetail{margin:0;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow:auto}
+.packyCodeMono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
 .packyCodeComposer{display:inline-flex;align-items:center;flex:0 0 auto;height:28px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;user-select:none}
 @media(max-width:640px){.packyCodeRow{align-items:flex-start;flex-direction:column}.packyCodeActions{width:100%}}
 `
@@ -175,6 +224,129 @@ function activeUsage(balance) {
 function clearMessage(error) {
   const text = typeof error?.message === 'string' && error.message.length > 0 ? error.message : String(error)
   return text.length > 200 ? text.slice(0, 200) : text
+}
+
+const INSTALL_POLL_MS = 2_000
+
+/** The sentence explaining a failed install, by the code the host classified. */
+function installFailure(cli, t) {
+  const command = cli.command ?? ''
+  switch (cli.install?.code) {
+    case 'npm-missing': return t('cliNpmMissing')
+    case 'permission': return t(cli.platform === 'win32' ? 'cliPermissionWindows' : 'cliPermission').replace('{command}', command)
+    case 'network': return t('cliNetwork')
+    case 'timeout': return t('cliTimeout')
+    case 'not-found-after-install': return t('cliNotFoundAfterInstall')
+    default: return undefined
+  }
+}
+
+/**
+ * Whether this device has the Claude Code CLI, which version, and — when it
+ * has none — a button that installs it with npm.
+ */
+function ClaudeCliCard({ call, t }) {
+  const [cli, setCli] = react.useState()
+  const [checking, setChecking] = react.useState(false)
+  const [error, setError] = react.useState()
+
+  const check = react.useCallback((force = false) => {
+    setChecking(true)
+    setError(undefined)
+    return call('claude-cli/status', { force })
+      .then(setCli)
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setChecking(false))
+  }, [call])
+
+  react.useEffect(() => {
+    check(false)
+  }, [check])
+
+  const running = cli?.install?.state === 'running'
+  react.useEffect(() => {
+    if (!running) return undefined
+    let live = true
+    const timer = window.setInterval(() => {
+      call('claude-cli/status').then(value => {
+        if (live) setCli(value)
+      }).catch(() => undefined)
+    }, INSTALL_POLL_MS)
+    return () => {
+      live = false
+      window.clearInterval(timer)
+    }
+  }, [call, running])
+
+  const install = () => {
+    setError(undefined)
+    call('claude-cli/install').then(setCli).catch(failure => setError(clearMessage(failure)))
+  }
+
+  const usable = cli?.installed === true && cli.version !== undefined
+  const failed = cli?.install?.state === 'failed'
+  return (
+    <section className="packyCodeCard">
+      <header className="packyCodeCardHeader">
+        <span className="packyCodeCardTitle">{t('cliTitle')}</span>
+        <button type="button" className="packyCodeButton" disabled={checking || running} onClick={() => check(true)}>
+          {checking ? t('refreshing') : t('cliRecheck')}
+        </button>
+      </header>
+      {cli === undefined && error === undefined && <span className="packyCodeNote">{t('cliChecking')}</span>}
+      {usable && (
+        <>
+          <div className="packyCodeFigures">
+            <span className="packyCodeFigure">
+              <span className="packyCodeFigureLabel">{t('cliInstalled')}</span>
+              <span className="packyCodeFigureValue">{`${t('cliVersion')} ${cli.version}`}</span>
+            </span>
+          </div>
+          <span className="packyCodeNote">
+            {`${t('cliPath')}：`}
+            <span className="packyCodeMono">{cli.path}</span>
+          </span>
+          {cli.install?.state === 'succeeded' && <span className="packyCodeNote">{t('cliInstallSucceeded')}</span>}
+        </>
+      )}
+      {cli !== undefined && !usable && (
+        <>
+          <span className="packyCodeWarning">{cli.installed ? t('cliBroken') : t('cliMissing')}</span>
+          {cli.installed && (
+            <>
+              <span className="packyCodeNote">
+                {`${t('cliPath')}：`}
+                <span className="packyCodeMono">{cli.path}</span>
+              </span>
+              {cli.error !== undefined && <pre className="packyCodeDetail">{cli.error}</pre>}
+            </>
+          )}
+          {cli.configuredPath !== undefined && (
+            <span className="packyCodeNote">{t('cliConfiguredMissing').replace('{path}', cli.configuredPath)}</span>
+          )}
+          <span className="packyCodeIntro">{t('cliMissingHint')}</span>
+          <div className="packyCodeActions">
+            <button type="button" className="packyCodeButton packyCodeButtonPrimary" disabled={running || checking} onClick={install}>
+              {running ? t('cliInstalling') : cli.installed ? t('cliReinstall') : t('cliInstall')}
+            </button>
+          </div>
+          <span className="packyCodeNote">
+            {t('cliInstallCommand').replace('{command}', cli.command ?? '')}
+            {cli.platform === 'win32' && ` ${t('cliWindowsNote')}`}
+          </span>
+        </>
+      )}
+      {failed && !usable && (
+        <>
+          <span className="packyCodeError">
+            {installFailure(cli, t) === undefined ? t('cliInstallFailed') : `${t('cliInstallFailed')}：${installFailure(cli, t)}`}
+          </span>
+          {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="packyCodeDetail">{cli.install.detail}</pre>}
+        </>
+      )}
+      {error !== undefined && <span className="packyCodeError">{`${t('error')}: ${error}`}</span>}
+    </section>
+  )
 }
 
 function PackyCodeSection({ rpc, t }) {
@@ -273,6 +445,8 @@ function PackyCodeSection({ rpc, t }) {
   return (
     <div className="packyCodeSection">
       <p className="packyCodeIntro">{t('intro')}</p>
+
+      <ClaudeCliCard call={call} t={t} />
 
       <section className="packyCodeCard">
         <header className="packyCodeCardHeader">

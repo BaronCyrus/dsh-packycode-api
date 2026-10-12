@@ -9,7 +9,7 @@ import { DEFAULT_API_HOST, DEFAULT_REASONING_LEVEL, PROVIDER } from '../src/cons
 const byId = id => PACKYCODE_MODELS.find(model => model.id === id)
 
 test('ships exactly the models verified against the gateway', () => {
-  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'gpt-6.1-sol', 'claude-opus-5-5'])
+  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'gpt-6.1-sol', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
   for (const model of PACKYCODE_MODELS) assert.equal(model.provider, PROVIDER)
 })
 
@@ -20,14 +20,18 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
   assert.equal(byId('gpt-6.1-sol').api, 'openai-responses')
   assert.equal(byId('gpt-6.1-sol').baseUrl, `${DEFAULT_API_HOST}/v1`)
   // Anthropic traffic carries no /v1: the Anthropic client appends /v1/messages.
-  assert.equal(byId('claude-opus-5-5').api, 'anthropic-messages')
-  assert.equal(byId('claude-opus-5-5').baseUrl, DEFAULT_API_HOST)
+  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+    assert.equal(byId(id).api, 'anthropic-messages')
+    assert.equal(byId(id).baseUrl, DEFAULT_API_HOST)
+  }
 })
 
 test("offers each vendor's documented effort levels", () => {
   assert.deepEqual(getSupportedThinkingLevels(byId('deepseek-flash')), ['off', 'low', 'high', 'max'])
   assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6.1-sol')), ['low', 'medium', 'high', 'xhigh', 'max'])
-  assert.deepEqual(getSupportedThinkingLevels(byId('claude-opus-5-5')), ['low', 'medium', 'high', 'xhigh', 'max'])
+  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+    assert.deepEqual(getSupportedThinkingLevels(byId(id)), ['low', 'medium', 'high', 'xhigh', 'max'])
+  }
 })
 
 test('every model accepts the route default effort', () => {
@@ -43,8 +47,10 @@ test('declares the wire dialect each protocol needs', () => {
   assert.equal(byId('deepseek-flash').compat.thinkingFormat, 'deepseek')
   assert.equal(byId('deepseek-flash').compat.maxTokensField, 'max_tokens')
   assert.equal(byId('deepseek-flash').compat.requiresReasoningContentOnAssistantMessages, true)
-  // Opus 5.x always thinks adaptively and rejects temperature.
-  assert.equal(byId('claude-opus-5-5').compat.forceAdaptiveThinking, true)
-  assert.equal(byId('claude-opus-5-5').compat.supportsTemperature, false)
+  // Claude 5.x always thinks adaptively and rejects temperature.
+  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+    assert.equal(byId(id).compat.forceAdaptiveThinking, true)
+    assert.equal(byId(id).compat.supportsTemperature, false)
+  }
   assert.equal(byId('gpt-6.1-sol').compat, undefined)
 })

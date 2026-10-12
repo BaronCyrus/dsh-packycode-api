@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import test from 'node:test'
 
 import {
@@ -10,6 +11,8 @@ import {
   createClaudeRunner,
   findClaudeBinary,
   parseClaudeResult,
+  readClaudeStreamEvents,
+  summarizeToolUse,
 } from '../src/claude-cli.js'
 
 const PAYLOAD = {
@@ -54,6 +57,12 @@ test('builds the argv the CLI documents', () => {
   const full = buildClaudeArgs({ prompt: 'do it', mode: 'full', model: 'claude-opus-5-5' })
   assert.deepEqual(full, ['-p', 'do it', '--output-format', 'json', '--model', 'claude-opus-5-5', '--dangerously-skip-permissions'])
   assert.deepEqual(buildClaudeArgs({ prompt: 'x', mode: 'read-only' }).slice(4), ['--allowedTools', 'Read', 'Grep', 'Glob'])
+  // Extra instructions are appended; the CLI's own system prompt and tools stay.
+  const titled = buildClaudeArgs({ prompt: 'x', mode: 'read-only', model: 'claude-haiku-5-5', appendSystemPrompt: '  Return only the title.  ' })
+  assert.deepEqual(titled.slice(4), ['--model', 'claude-haiku-5-5', '--append-system-prompt', 'Return only the title.', '--allowedTools', 'Read', 'Grep', 'Glob'])
+  assert.equal(titled.includes('--system-prompt'), false)
+  assert.equal(titled.includes('--tools'), false)
+  assert.equal(buildClaudeArgs({ prompt: 'x', appendSystemPrompt: '   ' }).includes('--append-system-prompt'), false)
 })
 
 test('refuses a missing prompt, an unknown mode, and an oversized prompt', () => {
@@ -150,6 +159,114 @@ test('a timeout stops a hung CLI', async () => {
     timeoutMs: 20,
   })
   await assert.rejects(() => runner.run({ prompt: 'x' }), /timed out/u)
+})
+
+const STREAM_LINES = [
+  { type: 'system', subtype: 'init' },
+  { type: 'stream_event', event: { type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 443, cache_read_input_tokens: 42_880, output_tokens: 1 } } } },
+  { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+  { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '想一想' } } },
+  { type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: {} } } },
+  { type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"comm' } } },
+  { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'git   status\n--short' } }], usage: { input_tokens: 2, cache_creation_input_tokens: 443, cache_read_input_tokens: 42_880 } } },
+  { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: true, content: 'fatal: not a git repository' }] } },
+  { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_2', content: 'fine' }] } },
+  { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } },
+  { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '完成' } } },
+  { type: 'result', is_error: false, result: '完成', total_cost_usd: 0.2, usage: { input_tokens: 4, output_tokens: 300, cache_read_input_tokens: 85_760, cache_creation_input_tokens: 886 } },
+]
+
+test('reads live text, thinking, tool calls, tool failures, and request usage from stream-json', () => {
+  const events = STREAM_LINES.flatMap(readClaudeStreamEvents)
+  assert.deepEqual(events.slice(0, -1), [
+    { type: 'request-usage', usage: { inputTokens: 2, cacheReadTokens: 42_880, cacheWriteTokens: 443 } },
+    { type: 'block', kind: 'reasoning' },
+    { type: 'reasoning', text: '想一想' },
+    { type: 'request-usage', usage: { inputTokens: 2, cacheReadTokens: 42_880, cacheWriteTokens: 443 } },
+    { type: 'tool', id: 'toolu_1', summary: 'Bash · git status --short' },
+    { type: 'tool-error', id: 'toolu_1', text: 'fatal: not a git repository' },
+    { type: 'block', kind: 'text' },
+    { type: 'text', text: '完成' },
+  ])
+  assert.equal(events.at(-1).type, 'result')
+})
+
+test('a tool summary names the input a reader looks for', () => {
+  assert.equal(summarizeToolUse('Read', { file_path: '/a/b.cs', limit: 20 }), 'Read · /a/b.cs')
+  assert.equal(summarizeToolUse('Grep', { pattern: 'foo', path: '/x' }), 'Grep · foo')
+  assert.equal(summarizeToolUse('TodoWrite', { todos: [] }), 'TodoWrite')
+  assert.equal(summarizeToolUse('Bash', { command: 'x'.repeat(400) }).length, 'Bash · '.length + 160)
+})
+
+test('the streaming runner yields events as they arrive and closes with the summed accounting', async () => {
+  const { spawnImpl, calls } = stubSpawn({ stdout: `${STREAM_LINES.map(line => JSON.stringify(line)).join('\n')}\n` })
+  const runner = createClaudeRunner({
+    resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-k' }),
+    spawnImpl,
+  })
+  const events = []
+  for await (const event of runner.stream({ prompt: 'x' })) events.push(event)
+  assert.ok(calls[0].args.includes('--include-partial-messages'))
+  assert.equal(events.filter(event => event.type === 'result').length, 1)
+  const { result } = events.at(-1)
+  assert.equal(result.outputTokens, 300)
+  assert.equal(result.cacheReadTokens, 85_760)
+  assert.equal(result.cacheWriteTokens, 886)
+  assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: '完成' }])
+})
+
+/** A spawn stand-in whose stdout is a real byte stream fed the given buffers. */
+function byteStreamSpawn(buffers) {
+  const spawnImpl = () => {
+    const child = new EventEmitter()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.exitCode = null
+    child.signalCode = null
+    child.kill = () => true
+    child.stdout.on('end', () => {
+      child.exitCode = 0
+      child.emit('close', 0, null)
+    })
+    queueMicrotask(async () => {
+      for (const buffer of buffers) {
+        child.stdout.write(buffer)
+        await new Promise(resolve => setTimeout(resolve, 1))
+      }
+      child.stdout.end()
+    })
+    return child
+  }
+  return spawnImpl
+}
+
+test('a multi-byte character split across two pipe reads arrives intact', async () => {
+  const bytes = Buffer.from(`${JSON.stringify({ ...PAYLOAD, result: '中文回答' })}\n`)
+  const cut = bytes.indexOf(Buffer.from('文')) + 1
+  const runner = createClaudeRunner({
+    resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-k' }),
+    spawnImpl: byteStreamSpawn([bytes.subarray(0, cut), bytes.subarray(cut)]),
+  })
+  const value = await runner.run({ prompt: 'x' })
+  assert.equal(value.result, '中文回答')
+})
+
+test('a consumer that stops reading early kills the streaming CLI', async () => {
+  const { spawnImpl } = stubSpawn({ hang: true })
+  let child
+  const runner = createClaudeRunner({
+    resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-k' }),
+    spawnImpl: (...args) => {
+      child = spawnImpl(...args)
+      queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(STREAM_LINES[3])}\n`))
+      return child
+    },
+  })
+  for await (const event of runner.stream({ prompt: 'x' })) {
+    assert.equal(event.type, 'reasoning')
+    break
+  }
+  assert.equal(child.signalCode, 'SIGTERM')
 })
 
 test('an explicit binary path wins and PATH is the fallback', () => {

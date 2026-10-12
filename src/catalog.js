@@ -43,7 +43,11 @@ const DEEPSEEK_LEVELS = Object.freeze({
   max: 'max',
 })
 
-/** Opus 5.5 and GPT-6.1 Sol cannot disable reasoning, so `off` is pinned unsupported. */
+/**
+ * Claude 5.5 models and GPT-6.1 Sol cannot disable reasoning, so `off` is
+ * pinned unsupported. The Claude models run through the CLI, which picks its
+ * own effort, so for them these levels only shape the picker.
+ */
 const ALWAYS_THINKING_LEVELS = Object.freeze({
   off: null,
   minimal: null,
@@ -102,6 +106,40 @@ export const PACKYCODE_MODELS = Object.freeze([
     compat: Object.freeze({
       // Adaptive thinking is always on for Opus 5.x: effort is the depth
       // control, and the model rejects temperature outright.
+      forceAdaptiveThinking: true,
+      supportsTemperature: false,
+    }),
+  }),
+  Object.freeze({
+    id: 'claude-sonnet-5-5',
+    name: 'Claude Sonnet 5.5',
+    api: 'anthropic-messages',
+    provider: PROVIDER,
+    baseUrl: MESSAGES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+    compat: Object.freeze({
+      forceAdaptiveThinking: true,
+      supportsTemperature: false,
+    }),
+  }),
+  Object.freeze({
+    id: 'claude-haiku-5-5',
+    name: 'Claude Haiku 5.5',
+    api: 'anthropic-messages',
+    provider: PROVIDER,
+    baseUrl: MESSAGES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 200_000,
+    maxTokens: 64_000,
+    thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+    compat: Object.freeze({
       forceAdaptiveThinking: true,
       supportsTemperature: false,
     }),

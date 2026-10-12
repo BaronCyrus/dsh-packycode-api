@@ -24,8 +24,8 @@ import {
   CLAUDE_CLI_MODES,
   DEFAULT_CLAUDE_MODE,
   createClaudeRunner,
-  findClaudeBinary,
 } from './claude-cli.js'
+import { createClaudeCliManager } from './claude-install.js'
 import {
   CHANNEL,
   DEFAULT_API_HOST,
@@ -37,6 +37,7 @@ import {
   SETTINGS_NAMESPACE,
 } from './constants.js'
 import { PackyCodeKeyRing } from './key-ring.js'
+import { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeForSession } from './permission.js'
 import { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 import { createPackyCodeRpc, normalizeHost } from './rpc.js'
 
@@ -55,8 +56,11 @@ export const Config = z.object({
   statusHost: z.string().default(DEFAULT_STATUS_HOST),
   /** Path to the Claude Code CLI binary; empty means "look in the usual places, then PATH". */
   claudeCliPath: z.string().default(''),
-  /** What the CLI may do on its own during a CLI-backed turn. */
-  claudeCliMode: z.union(['read-only', 'edit', 'full']).default(DEFAULT_CLAUDE_MODE),
+  /**
+   * What the CLI may do on its own during a CLI-backed turn. `auto` follows the
+   * session's permission preset, so nothing needs configuring here.
+   */
+  claudeCliMode: z.union([AUTO_CLAUDE_MODE, 'read-only', 'edit', 'full']).default(AUTO_CLAUDE_MODE),
   /** Working directory for CLI-backed turns; empty means "the session's workspace". */
   claudeCliCwd: z.string().default(''),
 })
@@ -221,8 +225,9 @@ export function apply(ctx, config) {
    * that CLI itself — with this plugin's endpoint and key, in an isolated
    * config home.
    */
+  const claudeCli = createClaudeCliManager({ explicitPath: () => config?.claudeCliPath })
   const claudeRunner = createClaudeRunner({
-    binary: findClaudeBinary(config?.claudeCliPath),
+    binary: () => claudeCli.binary(),
     resolveCredential: async () => {
       const active = await ring.activeKey()
       if (active === undefined) {
@@ -232,19 +237,34 @@ export function apply(ctx, config) {
     },
   })
 
+  /** The session of the agent this turn runs for, when one is in scope. */
+  const currentSession = () => {
+    try {
+      return ctx.get?.('agents')?.currentInitiator?.()?.session
+    } catch {
+      return undefined
+    }
+  }
+
   /** The session's own workspace, so a CLI turn edits the project in view. */
   const resolveCliCwd = () => {
     const configured = typeof config?.claudeCliCwd === 'string' ? config.claudeCliCwd.trim() : ''
     if (configured !== '') return configured
-    try {
-      const agent = ctx.get?.('agents')?.currentInitiator?.()
-      const cwd = agent?.session?.header?.cwd
-      if (typeof cwd === 'string' && cwd !== '') return cwd
-    } catch {
-      // No agent in scope; the process directory is the honest fallback.
-    }
-    return process.cwd()
+    const cwd = currentSession()?.header?.cwd
+    // No agent in scope; the process directory is the honest fallback.
+    return typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd()
   }
+
+  /**
+   * The most a CLI turn may do: an explicit setting when the profile names
+   * one, otherwise what the session's permission preset allows.
+   */
+  const configuredCliMode = () => {
+    const configured = config?.claudeCliMode
+    return configured === undefined || configured === AUTO_CLAUDE_MODE ? undefined : configured
+  }
+  const cliModeCeiling = session => configuredCliMode() ?? claudeModeForSession(ctx, session)
+  const resolveCliMode = () => cliModeCeiling(currentSession()) ?? DEFAULT_CLAUDE_MODE
 
   const innerAdapter = new PiAiAdapter({
     profiles: () => profiles,
@@ -278,7 +298,7 @@ export function apply(ctx, config) {
   const adapter = createClaudeCliAdapter({
     inner: innerAdapter,
     runner: claudeRunner,
-    resolveMode: () => config?.claudeCliMode ?? DEFAULT_CLAUDE_MODE,
+    resolveMode: resolveCliMode,
     resolveCwd: resolveCliCwd,
   })
 
@@ -317,7 +337,7 @@ export function apply(ctx, config) {
 
   void rememberKeys().catch(() => undefined)
 
-  const handler = createPackyCodeRpc({ ring, balance, hosts, preference })
+  const handler = createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli })
   /**
    * Connection registers a channel through `owner.webServer`, read on its own
    * row's fiber — which is why this plugin ships the `connection` inject patch
@@ -341,7 +361,7 @@ export function apply(ctx, config) {
   ctx.inject(['tools'], toolsCtx => {
     ctx.effect(() => toolsCtx.tools.register(defineTool({
       name: 'claude_code',
-      description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (default; also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands). It starts a fresh CLI session per call, takes tens of seconds, and bills through the same PackyCode key. Its internal tool calls are not part of this session\'s transcript — only the returned answer is.',
+      description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands); it defaults to, and is capped at, what this session\'s permission preset allows. It starts a fresh CLI session per call, takes tens of seconds, and bills through the same PackyCode key. Its internal tool calls are not part of this session\'s transcript — only the returned answer is.',
       parameters: {
         prompt: {
           type: 'string',
@@ -351,11 +371,11 @@ export function apply(ctx, config) {
         mode: {
           type: 'string',
           enum: Object.keys(CLAUDE_CLI_MODES),
-          description: 'What the CLI may do on its own. Defaults to "edit". Use "full" only when the task genuinely needs shell commands.',
+          description: 'What the CLI may do on its own. Defaults to the most this session\'s permission preset allows; a wider mode is capped to it. Ask for "full" only when the task genuinely needs shell commands.',
         },
         model: {
           type: 'string',
-          description: 'Model id passed to the CLI (for example "claude-opus-5-5"). Omit to use the CLI\'s own default.',
+          description: 'Model id passed to the CLI (for example "claude-opus-5-5", "claude-sonnet-5-5", or "claude-haiku-5-5"). Omit to use the CLI\'s own default.',
         },
         cwd: {
           type: 'string',
@@ -387,7 +407,7 @@ export function apply(ctx, config) {
           : isAbsolute(requested) ? requested : (sessionCwd === undefined ? requested : join(sessionCwd, requested))
         return await claudeRunner.run({
           prompt: args.prompt,
-          mode: args.mode ?? DEFAULT_CLAUDE_MODE,
+          mode: capClaudeMode(args.mode, cliModeCeiling(exec?.agent?.session)) ?? DEFAULT_CLAUDE_MODE,
           model: args.model,
           cwd,
           signal: exec?.signal,
@@ -397,8 +417,24 @@ export function apply(ctx, config) {
   })
 }
 
-export { buildClaudeArgs, buildClaudeEnvironment, CLAUDE_CLI_MODES, createClaudeRunner, findClaudeBinary, parseClaudeResult, readClaudeStreamEvent } from './claude-cli.js'
-export { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderDelegatedPrompt } from './claude-adapter.js'
+export {
+  buildClaudeArgs,
+  buildClaudeEnvironment,
+  CLAUDE_CLI_MODES,
+  CLAUDE_MISSING_MESSAGE,
+  CLAUDE_NPM_PACKAGE,
+  claudeBinaryCandidates,
+  createClaudeRunner,
+  findClaudeBinary,
+  locateClaudeBinary,
+  parseClaudeResult,
+  readClaudeStreamEvents,
+  resolveSpawnCommand,
+  summarizeToolUse,
+} from './claude-cli.js'
+export { CLAUDE_INSTALL_COMMAND, createClaudeCliManager, explainNpmFailure, locateNpm, npmCandidates, parseClaudeVersion } from './claude-install.js'
+export { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderAuxiliaryPrompt, renderDelegatedPrompt, TITLE_MODEL_ID } from './claude-adapter.js'
+export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession } from './permission.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
 export {

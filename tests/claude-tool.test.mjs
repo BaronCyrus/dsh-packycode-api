@@ -153,3 +153,38 @@ test('an explicit cwd resolves against the session workspace', async () => {
   assert.equal(seen.cwd, realpathSync(join(workspace, 'sub')))
   assert.equal(seen.argv.includes('--dangerously-skip-permissions'), true)
 })
+
+/** Host permission services as the base bundle provides them. */
+function permissionServices(sandbox, approval) {
+  return name => ({
+    sandboxPolicy: { resolve: () => ({ mode: sandbox }) },
+    approval: { effectivePolicy: () => approval },
+  })[name]
+}
+
+test('without any plugin setting the CLI follows the session permission preset', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
+  const { script, record } = writeStubCli(dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials('sk-stub-tool-key-0003'), dir)
+  ctx.get = permissionServices('danger-full-access', 'never')
+  apply(ctx, { claudeCliPath: script })
+  const exec = { agent: { session: { header: { cwd: dir } } } }
+
+  const value = await registered.tools[0].execute({ prompt: 'run the tests' }, exec)
+  assert.equal(value.mode, 'full')
+  assert.equal(JSON.parse(readFileSync(record, 'utf8')).argv.includes('--dangerously-skip-permissions'), true)
+
+  ctx.get = permissionServices('workspace-write', 'ask')
+  const capped = await registered.tools[0].execute({ prompt: 'run the tests', mode: 'full' }, exec)
+  assert.equal(capped.mode, 'edit', 'a sandboxed session caps a wider request')
+})
+
+test('an explicit plugin mode still wins over the session preset', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
+  const { script } = writeStubCli(dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials('sk-stub-tool-key-0004'), dir)
+  ctx.get = permissionServices('danger-full-access', 'never')
+  apply(ctx, { claudeCliPath: script, claudeCliMode: 'read-only' })
+  const value = await registered.tools[0].execute({ prompt: 'x' }, { agent: { session: { header: { cwd: dir } } } })
+  assert.equal(value.mode, 'read-only')
+})

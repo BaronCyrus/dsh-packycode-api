@@ -56,16 +56,24 @@ dsh plugin --profile <profile> add dsh-packycode-api
 
 ## Claude 模型走本机 Claude Code CLI
 
-PackyCode 的 `cc` 分组只把 Claude 模型提供给**官方 Claude CLI**，API 客户端会被 403 挡住。所以插件的 `claude-opus-5-5` **不是**普通的 HTTP 模型：**在模型选择器里选中它，底层就由本机真正的 `claude` 二进制执行**（其余模型照旧走 pi-ai / HTTP）。
+PackyCode 的 `cc` 分组只把 Claude 模型提供给**官方 Claude CLI**，API 客户端会被 403 挡住。所以插件的 `claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5` **不是**普通的 HTTP 模型：**在模型选择器里选中它，底层就由本机真正的 `claude` 二进制执行**（其余模型照旧走 pi-ai / HTTP）。
 
+- **检测与一键安装**：**设置 → PackyCode** 顶部的「Claude Code CLI」卡片会检测本机是否装了 CLI，并显示版本号（`claude --version`）与位置。没装时会提示「不安装将无法正常使用 Claude Opus 模型」，并给出「安装 Claude Code CLI」按钮：macOS 与 Windows 统一执行 `npm install -g @anthropic-ai/claude-code`（需要 Node.js 18+），安装期间卡片每 2 秒刷新一次，装好后不用重启 DSH 就能用。
+  - 查找顺序：设置项 `claudeCliPath` → 官方安装器位置（`~/.local/bin/claude`，Windows 为 `%USERPROFILE%\.local\bin\claude.exe`）→ npm / Homebrew / Volta / nvm 的常见位置（Windows 为 `%APPDATA%\npm\claude.cmd`）→ `PATH` → `npm prefix -g` 给出的全局目录（从 Finder / 开始菜单启动的 DSH 拿到的 `PATH` 往往比终端短，所以要问 npm）。
+  - Windows 上 npm 装出来的是 `claude.cmd` 启动器。插件**不经过** `cmd.exe` 启动它，而是读出启动器指向的程序（`node …\cli.js` 或包内的 `.exe`）直接运行，所以提示词不会被 `cmd.exe` 解析。只有 `npm install` 本身经 `cmd.exe` 运行，它的参数都是固定的。Windows 上 Claude Code 另外需要 Git for Windows。
+  - 常见失败会给出对应提示：找不到 npm（先装 Node.js）、全局目录没有写权限（`EACCES`/`EPERM`，提示用 `sudo` 或管理员终端）、网络错误、超时；同时显示 npm 输出的最后几行。
+  - 没装 CLI 时选了 Claude 模型，该回合会直接报「Claude Code CLI is not installed on this device…」，并提示去设置页安装。
 - **凭据**：子进程用**插件配置的 baseURL 与当前 Key**（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`），并使用独立的 `CLAUDE_CONFIG_DIR`（`~/.dsh/packycode-claude-cli`）。隔离是必须的：`~/.claude/settings.json` 里的 `env` 会覆盖进程环境，不隔离就等于用你 CLI 自己配置里的 token，插件 Key 完全不生效。
 - **设置项**：
-  - `claudeCliPath` — CLI 路径，空则按 `~/.local/bin`、`/usr/local/bin`、`/opt/homebrew/bin`、`PATH` 顺序查找。
-  - `claudeCliMode` — 默认 `edit`。`read-only`（Read/Grep/Glob）｜`edit`（另加 Edit/Write）｜`full`（`--dangerously-skip-permissions`，含 shell 命令）。
+  - `claudeCliPath` — CLI 路径，空则按上面「查找顺序」自动查找。
+  - `claudeCliMode` — 默认 `auto`：**跟随当前会话的 DSH 权限预设**，不需要额外配置。`read-only` 预设 → `read-only`（Read/Grep/Glob）；`workspace-write` 预设 → `edit`（另加 Edit/Write）；`danger-full-access` 且审批为 `never` → `full`（`--dangerously-skip-permissions`，含 shell 命令）。CLI 无法向 DSH 用户发起审批，所以只要会话还需要审批，就不会给它 `full`。也可以显式填 `read-only` / `edit` / `full` 固定下来。
   - `claudeCliCwd` — 工作目录，空则用**当前会话的工作区**（取不到时退回进程目录）。
-- **语义**：一个 CLI 回合 = 一次委派。CLI 用**它自己的**工具与权限系统完成任务并给出最终答案；它无法调用 harness 的工具，所以插件**不会**把工具清单转发给它；系统提示也用 CLI 自己的（只把最近的对话作为上下文，过长按尾部截断）。因此对 `claude-opus-5-5` 而言：DSH 的沙箱/审批不约束子进程内部动作，会话记录里只有最终答案，看不到中间的 Read/Edit 调用。
+- **语义**：一个 CLI 回合 = 一次委派。CLI 用**它自己的**工具与权限系统完成任务并给出最终答案；它无法调用 harness 的工具，所以插件**不会**把工具清单转发给它；系统提示也用 CLI 自己的（只把最近的对话作为上下文，过长按尾部截断）。因此对 `claude-opus-5-5` 而言：DSH 的沙箱/审批不约束子进程内部动作。
+- **实时输出**：CLI 的思考过程与每一次工具调用（`▸ Bash · git status`、`▸ Read · …`，失败时追加 `✗ …`）会实时出现在该回合的「思考」区，回答正文实时流式输出。它们只是进度展示，不是 DSH 的工具调用，也不会带进下一回合的委派提示。
+- **用量**：上下文占用与缓存命中取自 CLI 本回合**最后一次**请求（未缓存输入 / 缓存读 / 缓存写），输出 token 为整回合合计。CLI 几乎全部输入都命中缓存，所以缓存命中率通常很高。
+- **会话标题**：会话跑在 Claude 模型上时，生成标题固定改用 `claude-haiku-5-5`，只读、在临时目录下运行（不加载项目记忆），只把标题请求本身作为提示词，不再为起个标题跑一整轮 Opus 委派。
 - **代价**：每次数秒到数十秒，按 PackyCode 计费（实测单次约 **$0.19**，因 CLI 自带大量系统提示与工具说明）。
-- 另有 `claude_code` **工具**：当会话由 `gpt-6.1-sol` / `deepseek-flash` 驱动时，可以让模型显式把某个任务委派给 Claude Code（参数含 `prompt` / `mode` / `model` / `cwd`），与上面共用同一个 runner。
+- 另有 `claude_code` **工具**：当会话由 `gpt-6.1-sol` / `deepseek-flash` 驱动时，可以让模型显式把某个任务委派给 Claude Code（参数含 `prompt` / `mode` / `model` / `cwd`），与上面共用同一个 runner。模型请求的 `mode` 不会超过会话权限预设允许的上限。
 
 ## 安全
 

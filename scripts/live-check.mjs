@@ -220,7 +220,7 @@ async function main() {
   console.log(`   finish: ${JSON.stringify(reason)?.slice(0, 160)}`)
 
   if (process.argv.includes('--with-cli')) {
-    console.log('\n5) the model-shaped bridge: choosing claude-opus-5-5 runs the CLI')
+    console.log('\n5) the model-shaped bridge: choosing a Claude model runs the CLI')
     const bridgeRoute = routeWithRing(ring)
     const bridged = createClaudeCliAdapter({
       inner: bridgeRoute.adapter,
@@ -230,23 +230,25 @@ async function main() {
       resolveMode: () => 'read-only',
       resolveCwd: () => process.cwd(),
     })
-    const started = Date.now()
-    const prepared = await bridged.prepareCall(PROVIDER, 'claude-opus-5-5')
-    let text = ''
-    let finish
-    for await (const chunk of prepared.stream({
-      provider: PROVIDER,
-      model: 'claude-opus-5-5',
-      sessionId: SESSION_ID,
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'Reply with exactly: cli-bridge-ok' }], source: { kind: 'user' } })],
-      signal: undefined,
-    })) {
-      if (chunk.type === 'text-delta') text += chunk.text
-      if (chunk.type === 'finish') finish = chunk.reason
+    for (const id of CLI_BACKED_MODEL_IDS) {
+      const started = Date.now()
+      const prepared = await bridged.prepareCall(PROVIDER, id)
+      let text = ''
+      let finish
+      for await (const chunk of prepared.stream({
+        provider: PROVIDER,
+        model: id,
+        sessionId: SESSION_ID,
+        messages: [createUserMessage({ content: [{ type: 'text', text: 'Reply with exactly: cli-bridge-ok' }], source: { kind: 'user' } })],
+        signal: undefined,
+      })) {
+        if (chunk.type === 'text-delta') text += chunk.text
+        if (chunk.type === 'finish') finish = chunk.reason
+      }
+      console.log(finish?.kind === 'stop'
+        ? `   ${id.padEnd(18)} → ${text.slice(0, 60)} (${Math.round((Date.now() - started) / 1000)}s)`
+        : `   ${id.padEnd(18)} → FAILED: ${String(finish?.failure?.message ?? 'no finish').slice(0, 160)}`)
     }
-    console.log(finish?.kind === 'stop'
-      ? `   ${text.slice(0, 60)} (${Math.round((Date.now() - started) / 1000)}s)`
-      : `   FAILED: ${String(finish?.failure?.message ?? 'no finish').slice(0, 160)}`)
   } else {
     console.log('\n5) model-shaped bridge skipped (pass --with-cli to run the real CLI)')
     console.log(`   CLI-backed models: ${CLI_BACKED_MODEL_IDS.join(', ')} · modes: ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)

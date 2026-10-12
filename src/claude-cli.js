@@ -13,9 +13,11 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+import { nvmBinDirs, pathFor, searchPath, withProgramDirOnPath } from './locate.js'
 
 /**
  * What the delegated CLI may do on its own. The CLI runs its own tool loop;
@@ -37,33 +39,119 @@ const MAX_PROMPT_CHARS = 100_000
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 const KILL_GRACE_MS = 3_000
 
-const CANDIDATE_BINARIES = Object.freeze([
-  join(homedir(), '.local', 'bin', 'claude'),
-  '/usr/local/bin/claude',
-  '/opt/homebrew/bin/claude',
-])
+/** The npm package the official CLI ships as. */
+export const CLAUDE_NPM_PACKAGE = '@anthropic-ai/claude-code'
+
+/** What the turn reports when no CLI could be started at all. */
+export const CLAUDE_MISSING_MESSAGE = 'Claude Code CLI is not installed on this device, and Claude models on the PackyCode route run through it. Install it under Settings → PackyCode, or run: npm install -g @anthropic-ai/claude-code'
+
+/** The CLI's file names on PATH: the native installer ships an `.exe`, npm a `.cmd` launcher. */
+export const claudeFileNames = platform => (platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'])
+
+/**
+ * Where the official installer, npm, and the common Node managers put the CLI,
+ * in the order they are tried. PATH is searched after these.
+ * @param options - platform, home directory, environment, and a directory reader.
+ * @returns absolute candidate paths.
+ */
+export function claudeBinaryCandidates({ platform = process.platform, home = homedir(), env = process.env, readdir } = {}) {
+  const path = pathFor(platform)
+  if (platform === 'win32') {
+    const appData = env.APPDATA ?? path.join(home, 'AppData', 'Roaming')
+    return [
+      path.join(home, '.local', 'bin', 'claude.exe'),
+      path.join(appData, 'npm', 'claude.cmd'),
+      ...(env.NVM_SYMLINK ? [path.join(env.NVM_SYMLINK, 'claude.cmd')] : []),
+      path.join(env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', 'claude.cmd'),
+    ]
+  }
+  return [
+    path.join(home, '.local', 'bin', 'claude'),
+    path.join(home, '.claude', 'local', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    path.join(home, '.npm-global', 'bin', 'claude'),
+    path.join(home, '.volta', 'bin', 'claude'),
+    ...nvmBinDirs({ home, env, platform, readdir }).map(directory => path.join(directory, 'claude')),
+  ]
+}
+
+/**
+ * Locate an installed Claude Code CLI.
+ * @param options - a configured path (wins when it exists), plus platform,
+ *   home, environment, and file-system seams.
+ * @returns an absolute path, or undefined when none is installed.
+ */
+export function locateClaudeBinary({ explicit, platform = process.platform, home = homedir(), env = process.env, exists = existsSync, readdir } = {}) {
+  const configured = typeof explicit === 'string' ? explicit.trim() : ''
+  if (configured !== '') {
+    if (pathFor(platform).isAbsolute(configured)) return exists(configured) ? configured : undefined
+    const names = platform === 'win32' && !/\.[a-z]+$/iu.test(configured) ? [`${configured}.exe`, `${configured}.cmd`] : [configured]
+    return searchPath(names, { platform, env, exists })
+  }
+  for (const candidate of claudeBinaryCandidates({ platform, home, env, readdir })) {
+    if (exists(candidate)) return candidate
+  }
+  return searchPath(claudeFileNames(platform), { platform, env, exists })
+}
 
 /**
  * Locate the Claude Code CLI.
  * @param explicit - a configured path, when the deployment names one.
- * @returns an absolute path when one exists, otherwise the bare name so PATH decides.
+ * @returns an absolute path when one exists, otherwise the configured value or
+ *   the bare name, so starting it reports what is missing.
  */
 export function findClaudeBinary(explicit) {
   const configured = typeof explicit === 'string' ? explicit.trim() : ''
-  if (configured !== '') return configured
-  for (const candidate of CANDIDATE_BINARIES) {
-    if (existsSync(candidate)) return candidate
+  return locateClaudeBinary({ explicit: configured }) ?? (configured === '' ? 'claude' : configured)
+}
+
+/** The program an npm `.cmd` launcher runs, relative to the launcher's own directory. */
+const SHIM_TARGET = /"%(?:~dp0|dp0%)\\([^"%]+?\.(?:c?js|mjs|exe))"/giu
+
+/**
+ * Turn a located CLI into something `spawn` can start without a shell.
+ *
+ * On Windows npm installs `claude.cmd`, and Node refuses to start a `.cmd`
+ * without `shell: true` — which would hand the prompt to `cmd.exe` to parse.
+ * The launcher only forwards to a program beside it, so that program is
+ * started directly instead: `node <cli.js>` or the packaged `.exe`.
+ * @param binary - the located CLI.
+ * @param options - platform and file-system seams.
+ * @returns the command and the arguments that precede the CLI's own.
+ */
+export function resolveSpawnCommand(binary, { platform = process.platform, exists = existsSync, readFile = file => readFileSync(file, 'utf8') } = {}) {
+  if (platform !== 'win32' || !/\.(?:cmd|bat)$/iu.test(binary)) return { command: binary, args: [] }
+  const path = pathFor(platform)
+  const directory = path.dirname(binary)
+  let relative
+  try {
+    relative = [...readFile(binary).matchAll(SHIM_TARGET)]
+      .map(match => match[1])
+      .find(target => !/^node\.exe$/iu.test(target))
+  } catch {
+    // Unreadable launcher; fall back to npm's standard layout below.
   }
-  return 'claude'
+  const target = relative === undefined
+    ? path.join(directory, 'node_modules', ...CLAUDE_NPM_PACKAGE.split('/'), 'cli.js')
+    : path.join(directory, relative)
+  if (!exists(target)) {
+    throw new Error(`Claude Code CLI launcher ${binary} points at a missing program; reinstall it with npm install -g ${CLAUDE_NPM_PACKAGE}`)
+  }
+  if (/\.exe$/iu.test(target)) return { command: target, args: [] }
+  const bundledNode = path.join(directory, 'node.exe')
+  return { command: exists(bundledNode) ? bundledNode : 'node', args: [target] }
 }
 
 /**
  * Build the CLI arguments for one delegated task.
- * @param options - the prompt, the permission mode, an optional model, and
- *   whether the caller consumes the streaming protocol.
+ * @param options - the prompt, the permission mode, an optional model, whether
+ *   the caller consumes the streaming protocol, and optional instructions
+ *   appended to the CLI's own system prompt. The CLI's system prompt and tool
+ *   set are never replaced: they are part of what the official client sends.
  * @returns argv after the binary name.
  */
-export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model, stream = false } = {}) {
+export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt } = {}) {
   const text = typeof prompt === 'string' ? prompt : ''
   if (text.trim() === '') throw new Error('claude_code needs a non-empty prompt')
   if (text.length > MAX_PROMPT_CHARS) {
@@ -77,6 +165,8 @@ export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model, str
   if (stream) args.push('--include-partial-messages', '--verbose')
   const named = typeof model === 'string' ? model.trim() : ''
   if (named !== '') args.push('--model', named)
+  const appended = typeof appendSystemPrompt === 'string' ? appendSystemPrompt.trim() : ''
+  if (appended !== '') args.push('--append-system-prompt', appended)
   if (spec.skipPermissions === true) args.push('--dangerously-skip-permissions')
   else args.push('--allowedTools', ...spec.allowedTools)
   return args
@@ -140,27 +230,104 @@ function failureMessage(parsed, exitCode, stderr) {
     : `Claude Code CLI exited with code ${exitCode ?? 'unknown'}: ${detail}`
 }
 
+const MAX_TOOL_SUMMARY_CHARS = 160
+/** Tool inputs worth showing, in the order a reader looks for them. */
+const TOOL_SUMMARY_FIELDS = Object.freeze(['command', 'file_path', 'notebook_path', 'pattern', 'url', 'query', 'description', 'prompt', 'path'])
+
+function oneLine(text, limit = MAX_TOOL_SUMMARY_CHARS) {
+  const flat = String(text).replace(/\s+/gu, ' ').trim()
+  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat
+}
+
 /**
- * Read one `--output-format stream-json` event.
- * @param event - a parsed stream-json line.
- * @returns what the caller can act on, or undefined for noise.
+ * A one-line description of one tool call, for progress display.
+ * @param name - the CLI tool name.
+ * @param input - the tool call's input object.
+ * @returns e.g. `Bash · git status`.
  */
-export function readClaudeStreamEvent(event) {
-  if (event === null || typeof event !== 'object') return undefined
+export function summarizeToolUse(name, input) {
+  const label = typeof name === 'string' && name !== '' ? name : 'tool'
+  if (input === null || typeof input !== 'object') return label
+  for (const field of TOOL_SUMMARY_FIELDS) {
+    const value = input[field]
+    if (typeof value === 'string' && value.trim() !== '') return `${label} · ${oneLine(value)}`
+  }
+  return label
+}
+
+/** One API request's prompt side, in the harness's disjoint buckets. */
+function promptUsageOf(usage) {
+  if (usage === null || typeof usage !== 'object' || typeof usage.input_tokens !== 'number') return undefined
+  return {
+    inputTokens: usage.input_tokens,
+    cacheReadTokens: typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0,
+    cacheWriteTokens: typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0,
+  }
+}
+
+function toolResultText(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map(part => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join(' ')
+}
+
+/**
+ * Read one `--output-format stream-json` line.
+ *
+ * The CLI prints both partial deltas (`stream_event`) and each finished
+ * message (`assistant`/`user`); deltas carry the live text and thinking, the
+ * finished messages carry complete tool inputs and results.
+ * @param event - a parsed stream-json line.
+ * @returns what the caller can act on; empty for noise.
+ */
+export function readClaudeStreamEvents(event) {
+  if (event === null || typeof event !== 'object') return []
   if (event.type === 'stream_event') {
     const inner = event.event
-    if (inner?.type === 'content_block_delta' && inner.delta?.type === 'text_delta' && typeof inner.delta.text === 'string') {
-      return { type: 'text', text: inner.delta.text }
+    switch (inner?.type) {
+      case 'message_start': {
+        const usage = promptUsageOf(inner.message?.usage)
+        return usage === undefined ? [] : [{ type: 'request-usage', usage }]
+      }
+      case 'content_block_start': {
+        const kind = inner.content_block?.type
+        if (kind === 'text') return [{ type: 'block', kind: 'text' }]
+        if (kind === 'thinking') return [{ type: 'block', kind: 'reasoning' }]
+        return []
+      }
+      case 'content_block_delta': {
+        const delta = inner.delta
+        if (delta?.type === 'text_delta' && typeof delta.text === 'string') return [{ type: 'text', text: delta.text }]
+        if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return [{ type: 'reasoning', text: delta.thinking }]
+        return []
+      }
+      default:
+        return []
     }
-    return undefined
   }
-  if (event.type === 'result') return { type: 'result', result: event }
-  return undefined
+  if (event.type === 'assistant') {
+    const content = Array.isArray(event.message?.content) ? event.message.content : []
+    const events = content
+      .filter(block => block?.type === 'tool_use')
+      .map(block => ({ type: 'tool', id: String(block.id ?? ''), summary: summarizeToolUse(block.name, block.input) }))
+    const usage = promptUsageOf(event.message?.usage)
+    return usage === undefined ? events : [{ type: 'request-usage', usage }, ...events]
+  }
+  if (event.type === 'user') {
+    const content = Array.isArray(event.message?.content) ? event.message.content : []
+    return content
+      .filter(block => block?.type === 'tool_result' && block.is_error === true)
+      .map(block => ({ type: 'tool-error', id: String(block.tool_use_id ?? ''), text: oneLine(toolResultText(block.content)) }))
+  }
+  if (event.type === 'result') return [{ type: 'result', result: event }]
+  return []
 }
 
 /**
  * A Claude Code CLI runner.
- * @param options - binary, config home, credential resolution, and process seams.
+ * @param options - binary (a path, or a function resolving one per run so a
+ *   CLI installed after startup is picked up), config home, credential
+ *   resolution, and process seams.
  * @returns `{ run({ prompt, mode, model, cwd, signal }) }`.
  */
 export function createClaudeRunner({
@@ -169,6 +336,7 @@ export function createClaudeRunner({
   resolveCredential,
   spawnImpl = spawn,
   timeoutMs = DEFAULT_CLAUDE_TIMEOUT_MS,
+  platform = process.platform,
 } = {}) {
   if (typeof resolveCredential !== 'function') throw new Error('the Claude Code CLI runner needs resolveCredential')
 
@@ -177,11 +345,13 @@ export function createClaudeRunner({
    * timeout, and kill the process — with a grace period — when the caller
    * aborts. Both public entry points share it.
    */
-  const start = async ({ prompt, mode, model, cwd, signal, stream, onStdout }) => {
-    const args = buildClaudeArgs({ prompt, mode, model, stream })
+  const start = async ({ prompt, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout }) => {
+    const args = buildClaudeArgs({ prompt, mode, model, stream, appendSystemPrompt })
     const { baseUrl, token } = await resolveCredential()
-    const env = buildClaudeEnvironment({ baseUrl, token, configDir })
-    const child = spawnImpl(binary, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const program = typeof binary === 'function' ? await binary() : binary
+    const command = resolveSpawnCommand(program, { platform })
+    const env = withProgramDirOnPath(buildClaudeEnvironment({ baseUrl, token, configDir }), program, platform)
+    const child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     const state = { stdout: '', stderr: '', timedOut: false, settled: false }
     const kill = () => {
       if (child.exitCode !== null || child.signalCode !== null) return
@@ -211,7 +381,10 @@ export function createClaudeRunner({
       signal?.removeEventListener('abort', onAbort)
     }
     // Both pipes are owned here: a caller that awaits before attaching would
-    // otherwise miss the first chunks a fast CLI writes.
+    // otherwise miss the first chunks a fast CLI writes. Decoding on the stream
+    // keeps a multi-byte character split across two pipe reads intact.
+    child.stdout?.setEncoding?.('utf8')
+    child.stderr?.setEncoding?.('utf8')
     child.stdout?.on('data', chunk => {
       const text = String(chunk)
       state.stdout = (state.stdout + text).slice(-MAX_CAPTURE_BYTES)
@@ -223,7 +396,12 @@ export function createClaudeRunner({
     const closed = new Promise((resolve, reject) => {
       child.on('error', error => {
         release()
-        reject(new Error(`claude_code could not run ${binary}: ${error.message}`, { cause: error }))
+        // ENOENT also means a missing working directory; only blame the CLI
+        // when the program itself is not there.
+        const missing = error.code === 'ENOENT' && !(pathFor(platform).isAbsolute(program) && existsSync(program))
+        reject(missing
+          ? new Error(CLAUDE_MISSING_MESSAGE, { cause: error })
+          : new Error(`claude_code could not run ${program}: ${error.message}`, { cause: error }))
       })
       child.on('close', (code, killSignal) => {
         release()
@@ -239,7 +417,7 @@ export function createClaudeRunner({
       })
     })
     closed.catch(() => undefined)
-    return { child, state, closed }
+    return { child, state, closed, kill }
   }
 
   return Object.freeze({
@@ -269,19 +447,23 @@ export function createClaudeRunner({
 
     /**
      * Run one delegated task, yielding its answer as the CLI produces it.
-     * The final `result` event carries the CLI's own accounting.
-     * @param options - as {@link run}.
-     * @returns an async generator of `text` and one closing `result` event.
+     * The final `result` event carries the CLI's own accounting, summed over
+     * every request the CLI made.
+     * @param options - as {@link run}, plus optional `appendSystemPrompt`
+     *   instructions.
+     * @returns an async generator of {@link readClaudeStreamEvents} events and
+     *   one closing `result` event.
      */
-    async *stream({ prompt, mode = DEFAULT_CLAUDE_MODE, model, cwd, signal } = {}) {
+    async *stream({ prompt, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal } = {}) {
       const startedAt = Date.now()
       let buffer = ''
       let sawResult
       const lines = []
-      const { state, closed } = await start({
+      const { state, closed, kill } = await start({
         prompt,
         mode,
         model,
+        appendSystemPrompt,
         cwd,
         signal,
         stream: true,
@@ -305,13 +487,17 @@ export function createClaudeRunner({
           } catch {
             continue
           }
-          const event = readClaudeStreamEvent(parsed)
-          if (event === undefined) continue
-          if (event.type === 'result') sawResult = event.result
-          yield event
+          for (const event of readClaudeStreamEvents(parsed)) {
+            if (event.type === 'result') sawResult = event.result
+            else yield event
+          }
         }
       }
       let finished = false
+      // A consumer that stops reading early must not leave the CLI running.
+      const stopIfAbandoned = () => {
+        if (!finished) kill()
+      }
       const completion = closed.then(() => {
         finished = true
       }, error => {
@@ -319,19 +505,23 @@ export function createClaudeRunner({
         throw error
       })
       completion.catch(() => undefined)
-      while (!finished || lines.length > 0) {
-        if (lines.length === 0) {
-          if (finished) break
-          await new Promise(resolve => setTimeout(resolve, 15))
-          continue
+      try {
+        while (!finished || lines.length > 0) {
+          if (lines.length === 0) {
+            if (finished) break
+            await new Promise(resolve => setTimeout(resolve, 15))
+            continue
+          }
+          yield* drain()
         }
-        yield* drain()
+      } finally {
+        stopIfAbandoned()
       }
       await completion
       if (buffer.trim().startsWith('{')) {
         try {
-          const event = readClaudeStreamEvent(JSON.parse(buffer.trim()))
-          if (event?.type === 'result') sawResult = event.result
+          const event = readClaudeStreamEvents(JSON.parse(buffer.trim())).find(item => item.type === 'result')
+          if (event !== undefined) sawResult = event.result
         } catch {
           // A truncated tail is not a result.
         }
@@ -351,6 +541,8 @@ export function createClaudeRunner({
           durationMs: typeof sawResult.duration_ms === 'number' ? sawResult.duration_ms : Date.now() - startedAt,
           inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
           outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+          cacheReadTokens: typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0,
+          cacheWriteTokens: typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0,
         },
       }
     },

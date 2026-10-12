@@ -2,8 +2,8 @@
  * The loopback RPC surface behind the settings panel and the composer chip.
  *
  * Every reply carries only what this plugin owns: key labels and state, the
- * balance projection the host built, and host overrides. Key material never
- * crosses this boundary.
+ * balance projection the host built, host overrides, and whether this device
+ * has the Claude Code CLI. Key material never crosses this boundary.
  *
  * @module dsh-packycode-api/rpc
  */
@@ -32,10 +32,16 @@ export function normalizeHost(value, fallback) {
 
 /**
  * Build the RPC handler.
- * @param options - the key ring, balance reader, and host preference.
+ * @param options - the key ring, balance reader, host preference, and the
+ *   Claude Code CLI manager (optional: without it the CLI endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, hosts, preference }) {
+export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli }) {
+  const requireCli = () => {
+    if (claudeCli === undefined) throw new Error('PackyCode Claude Code CLI support is unavailable in this runtime')
+    return claudeCli
+  }
+
   const status = async () => ({
     ...(await ring.list()),
     hosts: hosts(),
@@ -85,6 +91,15 @@ export function createPackyCodeRpc({ ring, balance, hosts, preference }) {
           })
           balance.invalidate()
           return ok(await status())
+        }
+        case 'claude-cli/status':
+          return ok(await requireCli().status({ force: payload?.force === true }))
+        case 'claude-cli/install': {
+          // Starts the install and answers at once; the panel polls the status
+          // instead of holding one request open for minutes.
+          const cli = requireCli()
+          cli.install()
+          return ok(await cli.status())
         }
         default:
           return failed('Unknown PackyCode endpoint')
