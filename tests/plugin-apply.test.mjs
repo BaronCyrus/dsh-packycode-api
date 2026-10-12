@@ -29,7 +29,7 @@ function fakeCredentials() {
  * at the user's next boot.
  */
 function stubContext() {
-  const registered = { adapters: [], directories: [], rpc: [], effects: [] }
+  const registered = { adapters: [], directories: [], rpc: [], effects: [], tools: [] }
   const ctx = {
     credentials: fakeCredentials(),
     injected: [],
@@ -52,6 +52,12 @@ function stubContext() {
           registered.rpc.push({ channel, handler })
           return () => {}
         },
+      },
+    },
+    tools: {
+      register(definition) {
+        registered.tools.push(definition)
+        return () => {}
       },
     },
     get: () => undefined,
@@ -91,10 +97,20 @@ test('registers one route and one directory entry, and defers the browser surfac
   // Both optional surfaces are requested through ctx.inject, never injected.
   // `webServer` rides with `connection`: channel registration writes through
   // `owner.webServer`, so a scope holding only `connection` cannot register.
-  assert.deepEqual(ctx.injected, [['settings'], ['connection', 'webServer']])
+  assert.deepEqual(ctx.injected, [['settings'], ['connection', 'webServer'], ['tools']])
   assert.equal(registered.rpc.length, 1)
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))
+
+  // The Claude Code bridge registers one tool with a bounded schema.
+  assert.equal(registered.tools.length, 1)
+  const tool = registered.tools[0]
+  assert.equal(tool.name, 'claude_code')
+  // defineTool converts the field spec into JSON Schema before registration.
+  assert.deepEqual(Object.keys(tool.parameters.properties), ['prompt', 'mode', 'model', 'cwd'])
+  assert.deepEqual(tool.parameters.required, ['prompt'])
+  assert.deepEqual([...tool.parameters.properties.mode.enum], ['read-only', 'edit', 'full'])
+  assert.equal(typeof tool.execute, 'function')
 })
 
 test('a profile without a connection service still registers the route', () => {

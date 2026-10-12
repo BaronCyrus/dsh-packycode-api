@@ -24,7 +24,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
 import {
+  CLAUDE_CLI_MODES,
   PackyCodeKeyRing,
+  createClaudeRunner,
   createBalanceReader,
   createPackyCodeProfile,
   createPackyCodeProvider,
@@ -215,7 +217,24 @@ async function main() {
   const reason = await adapterFailure(rejected.adapter, 'deepseek-flash')
   console.log(`   finish: ${JSON.stringify(reason)?.slice(0, 160)}`)
 
-  console.log('\n5) what the settings panel receives over RPC')
+  if (process.argv.includes('--with-cli')) {
+    console.log('\n5) the Claude Code bridge (real CLI, real gateway)')
+    const runner = createClaudeRunner({
+      resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: key }),
+    })
+    const started = Date.now()
+    try {
+      const value = await runner.run({ prompt: 'Reply with exactly: cli-bridge-ok', mode: 'read-only', cwd: process.cwd() })
+      console.log(`   ${value.result.slice(0, 60)} (${value.model || 'default'}, ${Math.round((Date.now() - started) / 1000)}s, $${value.costUsd.toFixed(4)})`)
+    } catch (error) {
+      console.log(`   FAILED: ${String(error.message).slice(0, 160)}`)
+    }
+  } else {
+    console.log('\n5) Claude Code bridge skipped (pass --with-cli to run the real CLI)')
+    console.log(`   modes: ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
+  }
+
+  console.log('\n6) what the settings panel receives over RPC')
   const rpcRing = new PackyCodeKeyRing(fakeCredentials())
   const rpcBalance = createBalanceReader({
     listKeys: () => rpcRing.secrets(),

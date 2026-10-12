@@ -11,12 +11,20 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { isAbsolute, join } from 'node:path'
 
 import { LlmError, QUOTA_EXCEEDED_CODE, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 
 import { createBalanceReader } from './balance.js'
+import {
+  CLAUDE_CLI_MODES,
+  DEFAULT_CLAUDE_MODE,
+  createClaudeRunner,
+  findClaudeBinary,
+} from './claude-cli.js'
 import {
   CHANNEL,
   DEFAULT_API_HOST,
@@ -44,6 +52,8 @@ export const inject = ['llm', 'credentials']
 export const Config = z.object({
   apiHost: z.string().default(DEFAULT_API_HOST),
   statusHost: z.string().default(DEFAULT_STATUS_HOST),
+  /** Path to the Claude Code CLI binary; empty means "look in the usual places, then PATH". */
+  claudeCliPath: z.string().default(''),
 })
 
 /**
@@ -275,8 +285,84 @@ export function apply(ctx, config) {
       'packycode-api: loopback account RPC',
     )
   })
+
+  /**
+   * The Claude Code bridge. PackyCode's `cc` group serves its Claude models
+   * only to the official CLI, so a delegated task is run by that CLI itself —
+   * with this plugin's endpoint and key, in an isolated config home. The CLI
+   * keeps its own tool loop and permission switches, which is why the tool
+   * exposes a `mode` rather than the harness's sandbox.
+   */
+  const claudeRunner = createClaudeRunner({
+    binary: findClaudeBinary(config?.claudeCliPath),
+    resolveCredential: async () => {
+      const active = await ring.activeKey()
+      if (active === undefined) {
+        throw new Error('claude_code needs a usable PackyCode API key; add one under Settings → PackyCode')
+      }
+      return { baseUrl: hosts().apiHost, token: active.key }
+    },
+  })
+  ctx.inject(['tools'], toolsCtx => {
+    ctx.effect(() => toolsCtx.tools.register(defineTool({
+      name: 'claude_code',
+      description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (default; also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands). It starts a fresh CLI session per call, takes tens of seconds, and bills through the same PackyCode key. Its internal tool calls are not part of this session\'s transcript — only the returned answer is.',
+      parameters: {
+        prompt: {
+          type: 'string',
+          required: true,
+          description: 'The task for Claude Code, written as a self-contained instruction (it does not see this conversation).',
+        },
+        mode: {
+          type: 'string',
+          enum: Object.keys(CLAUDE_CLI_MODES),
+          description: 'What the CLI may do on its own. Defaults to "edit". Use "full" only when the task genuinely needs shell commands.',
+        },
+        model: {
+          type: 'string',
+          description: 'Model id passed to the CLI (for example "claude-opus-5-5"). Omit to use the CLI\'s own default.',
+        },
+        cwd: {
+          type: 'string',
+          description: 'Working directory for the CLI. Defaults to this session\'s workspace; a relative path resolves against it.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            result: { type: 'string', required: true },
+            model: { type: 'string', required: true },
+            mode: { type: 'string', required: true },
+            costUsd: { type: 'number', required: true },
+            durationMs: { type: 'number', required: true },
+          },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: `${value.result}\n\n— Claude Code CLI · ${value.model || 'default model'} · ${value.mode} · ${Math.round(value.durationMs / 1000)}s · $${value.costUsd.toFixed(4)}`,
+        }],
+      },
+      async execute(args, exec) {
+        const sessionCwd = exec?.agent?.session?.header?.cwd
+        const requested = typeof args.cwd === 'string' ? args.cwd.trim() : ''
+        const cwd = requested === ''
+          ? sessionCwd
+          : isAbsolute(requested) ? requested : (sessionCwd === undefined ? requested : join(sessionCwd, requested))
+        return await claudeRunner.run({
+          prompt: args.prompt,
+          mode: args.mode ?? DEFAULT_CLAUDE_MODE,
+          model: args.model,
+          cwd,
+          signal: exec?.signal,
+        })
+      },
+    })), 'packycode-api: claude_code tool')
+  })
 }
 
+export { buildClaudeArgs, buildClaudeEnvironment, CLAUDE_CLI_MODES, createClaudeRunner, findClaudeBinary, parseClaudeResult } from './claude-cli.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
 export {

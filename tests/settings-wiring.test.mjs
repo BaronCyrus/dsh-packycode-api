@@ -60,6 +60,9 @@ function makeContext({ installSection = true, update = true } = {}) {
         }
         return callback({ settings })
       }
+      if (services.includes('tools')) {
+        return callback({ tools: { register: () => () => {} } })
+      }
       if (services.includes('connection')) {
         return callback({
           connection: {
@@ -135,6 +138,6 @@ test('a profile without a settings provider still serves its route', () => {
   apply(ctx)
   assert.equal(seen.installed, undefined)
   assert.equal(seen.adapters.length, 1)
-  assert.deepEqual(seen.injected, [['settings'], ['connection', 'webServer']])
+  assert.deepEqual(seen.injected, [['settings'], ['connection', 'webServer'], ['tools']])
   assert.equal(seen.channel, '/packycode-api')
 })

@@ -54,6 +54,22 @@ dsh plugin --profile <profile> add dsh-packycode-api
   - 换分组时别把这三个分组一起去掉，否则对应模型会失效。
 - 插件识别这类"只允许官方客户端"的拒绝：**不重试、不切换也不停用 Key**，并直接给出中文说明（而不是让你看到"API Key 无效"）。
 
+## Claude Code 桥接（`claude_code` 工具）
+
+PackyCode 的 `cc` 分组只把 Claude 模型提供给**官方 Claude CLI**，API 客户端会被 403 挡住。为此插件注册了一个全局工具 `claude_code`：需要 Claude 时，由**本机真正的 `claude` 二进制**去完成任务，结果作为工具输出回到会话。
+
+- **用法**：用别的模型（`gpt-6.1-sol` / `deepseek-flash`）编排，然后直接说"**用 Claude Code 做 X**"，或让模型自己决定调用；工具参数是 `prompt`（自包含的任务描述）、`mode`、`model`、`cwd`。
+- **`mode`**（限制 CLI 自己能做什么）：
+  - `read-only` — 只给 `Read/Grep/Glob`
+  - `edit`（默认）— 再加 `Edit/Write/NotebookEdit`
+  - `full` — `--dangerously-skip-permissions`，包含 shell 命令，**风险自负**
+- **凭据**：子进程用**插件配置的 baseURL 和当前 Key**（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`），并强制使用独立的 `CLAUDE_CONFIG_DIR`（`~/.dsh/packycode-claude-cli`）。这一点是必须的：`~/.claude/settings.json` 里的 `env` 会覆盖进程环境，不隔离就等于用你 CLI 自己配置里的 token，插件 Key 完全不生效。
+- **已知代价**（都属于 CLI 自身特性，不是插件 bug）：
+  - 每次调用会启动一个新的 CLI 会话，**耗时数秒到数十秒**，按 PackyCode 计费（实测一次"说 ok"约 **$0.19**，因为 CLI 自带大量系统提示词与工具说明）。
+  - Claude Code 用的是**它自己的**工具与权限系统：DSH 的沙箱/审批不会约束子进程内部的动作，会话记录里也只有这一次工具调用与最终答案，看不到中间的 Read/Edit 调用。
+  - 因此它是"**把任务委派给 Claude Code**"，而不是"把 Claude 当成 DSH 的模型"——后者受分组策略限制，做不到（插件不会去冒充官方 CLI 身份）。
+- **模型名**：不传 `model` 时用 CLI 自己的默认（当前是 `claude-opus-5`，带 1M 上下文）；要指定就传营销名，例如 `claude-opus-5-5`。
+
 ## 安全
 
 - API Key 只存在本机 DSH 凭据文件（`~/.dsh/.credentials.yaml`，权限 0600），由 DSH 的 credential record 管理；不会写进设置文档、日志或对话记录。
