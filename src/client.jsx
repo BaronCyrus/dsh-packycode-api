@@ -87,6 +87,25 @@ const zh = {
   cliTimeout: '安装超时，请检查网络后重试。',
   cliNotFoundAfterInstall: 'npm 显示安装完成，但仍找不到 claude 命令。请在终端执行 claude --version 确认，然后点「重新检测」。',
   cliWindowsNote: 'Windows 上 Claude Code 还需要 Git for Windows（https://git-scm.com/downloads/win）。',
+  versionTitle: '插件版本',
+  versionCurrent: '当前版本',
+  versionLatest: '最新版本',
+  versionCheck: '检查更新',
+  versionChecking: '正在检查更新…',
+  versionFailed: '无法检查最新版本。',
+  versionUpToDate: '已是最新版本。',
+  versionAvailable: '发现新版本 v{version}。',
+  versionLinked: '当前是本地开发安装，请在插件仓库拉取代码并重新构建。',
+  versionManual: '无法在这里更新。请在桌面应用的插件页重新安装 dsh-packycode-api。',
+  versionUpdate: '更新插件',
+  versionUpdating: '正在更新…',
+  versionUpdateFailed: '更新失败，请重试，或在插件页重新安装。',
+  versionUpdated: '已更新到 v{version}。',
+  versionUpdatedHint: '新版本需要完全退出并重新打开桌面应用才会生效；只刷新页面不会重载 Host 里的插件。',
+  versionRestart: '如何重启',
+  versionRestartHint: '插件无法安全地重启桌面应用。请完全退出 DSH，再重新打开。',
+  versionRefresh: '刷新界面',
+  versionLater: '稍后',
 }
 
 const en = {
@@ -159,6 +178,25 @@ const en = {
   cliTimeout: 'The install timed out. Check your network and retry.',
   cliNotFoundAfterInstall: 'npm reported success, but the claude command still cannot be found. Run claude --version in a terminal, then click Check again.',
   cliWindowsNote: 'On Windows, Claude Code also needs Git for Windows (https://git-scm.com/downloads/win).',
+  versionTitle: 'Plugin version',
+  versionCurrent: 'Current version',
+  versionLatest: 'Latest version',
+  versionCheck: 'Check for updates',
+  versionChecking: 'Checking for updates…',
+  versionFailed: 'Could not check the latest version.',
+  versionUpToDate: 'You are on the latest version.',
+  versionAvailable: 'A new version v{version} is available.',
+  versionLinked: 'Installed from a local checkout. Pull and rebuild the plugin repository instead.',
+  versionManual: 'This install cannot be updated here. Reinstall dsh-packycode-api from the desktop Plugins page.',
+  versionUpdate: 'Update plugin',
+  versionUpdating: 'Updating…',
+  versionUpdateFailed: 'The update failed. Try again, or reinstall from the Plugins page.',
+  versionUpdated: 'Updated to v{version}.',
+  versionUpdatedHint: 'Quit and reopen the desktop application. Refreshing the page does not reload the plugin inside the Host.',
+  versionRestart: 'How to restart',
+  versionRestartHint: 'The plugin cannot safely restart the desktop application. Quit DSH completely, then open it again.',
+  versionRefresh: 'Refresh page',
+  versionLater: 'Later',
 }
 
 const STYLE = `
@@ -194,6 +232,9 @@ const STYLE = `
 .packyCodeWarning{color:var(--dsw-alias-state-warning-primary,#c27c0e);font-weight:500}
 .packyCodeDetail{margin:0;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow:auto}
 .packyCodeMono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+.packyCodeVersionRows{display:flex;flex-direction:column;gap:6px}
+.packyCodeVersionRow{display:flex;justify-content:space-between;gap:12px}
+.packyCodeVersionValue{font-variant-numeric:tabular-nums;font-weight:600}
 .packyCodeComposer{display:inline-flex;align-items:center;flex:0 0 auto;height:28px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;user-select:none}
 @media(max-width:640px){.packyCodeRow{align-items:flex-start;flex-direction:column}.packyCodeActions{width:100%}}
 `
@@ -355,6 +396,94 @@ function ClaudeCliCard({ call, t }) {
   )
 }
 
+function VersionCard({ call, t }) {
+  const [info, setInfo] = react.useState()
+  const [loading, setLoading] = react.useState(true)
+  const [error, setError] = react.useState(false)
+  const [updating, setUpdating] = react.useState(false)
+  const [updateFailed, setUpdateFailed] = react.useState(false)
+  const [updated, setUpdated] = react.useState()
+  const [restartHint, setRestartHint] = react.useState(false)
+  const generation = react.useRef(0)
+
+  const load = force => {
+    const current = ++generation.current
+    setLoading(true)
+    setError(false)
+    call('plugin/version', { force }).then(value => {
+      if (generation.current === current) setInfo(value)
+    }).catch(() => {
+      if (generation.current === current) setError(true)
+    }).finally(() => {
+      if (generation.current === current) setLoading(false)
+    })
+  }
+
+  react.useEffect(() => {
+    load(false)
+    return () => { generation.current += 1 }
+  }, [])
+
+  const update = () => {
+    setUpdating(true)
+    setUpdateFailed(false)
+    call('plugin/update').then(value => {
+      setUpdated(value)
+      setRestartHint(false)
+    }).catch(() => setUpdateFailed(true)).finally(() => setUpdating(false))
+  }
+
+  const installKind = info?.install?.kind
+  const showStatus = info !== undefined && updated === undefined
+  return (
+    <section className="packyCodeCard">
+      <header className="packyCodeCardHeader">
+        <span className="packyCodeCardTitle">{t('versionTitle')}</span>
+        {updated === undefined && (
+          <button type="button" className="packyCodeButton" disabled={loading || updating} onClick={() => load(true)}>
+            {loading ? t('versionChecking') : t('versionCheck')}
+          </button>
+        )}
+      </header>
+      {loading && info === undefined && <span className="packyCodeNote" role="status">{t('versionChecking')}</span>}
+      {error && <span className="packyCodeError" role="alert">{t('versionFailed')}</span>}
+      {info !== undefined && (
+        <div className="packyCodeVersionRows">
+          <div className="packyCodeVersionRow"><span>{t('versionCurrent')}</span><span className="packyCodeVersionValue">v{info.current}</span></div>
+          <div className="packyCodeVersionRow"><span>{t('versionLatest')}</span><span className="packyCodeVersionValue">v{info.latest}</span></div>
+        </div>
+      )}
+      {showStatus && (
+        <span className="packyCodeNote" role="status">
+          {info.updateAvailable ? t('versionAvailable').replace('{version}', info.latest) : t('versionUpToDate')}
+        </span>
+      )}
+      {showStatus && info.updateAvailable && installKind === 'npm' && (
+        <div className="packyCodeActions">
+          <button type="button" className="packyCodeButton packyCodeButtonPrimary" disabled={updating} onClick={update}>
+            {updating ? t('versionUpdating') : t('versionUpdate')}
+          </button>
+        </div>
+      )}
+      {showStatus && installKind === 'link' && <span className="packyCodeNote">{t('versionLinked')}</span>}
+      {showStatus && info.updateAvailable && installKind === 'unknown' && <span className="packyCodeNote">{t('versionManual')}</span>}
+      {updateFailed && <span className="packyCodeError" role="alert">{t('versionUpdateFailed')}</span>}
+      {updated !== undefined && (
+        <div role="status">
+          <span className="packyCodeNote">{t('versionUpdated').replace('{version}', updated.version)}</span>
+          <span className="packyCodeNote">{t('versionUpdatedHint')}</span>
+          {restartHint && <span className="packyCodeNote">{t('versionRestartHint')}</span>}
+          <div className="packyCodeActions">
+            <button type="button" className="packyCodeButton" onClick={() => setRestartHint(true)}>{t('versionRestart')}</button>
+            <button type="button" className="packyCodeButton packyCodeButtonPrimary" onClick={() => window.location.reload()}>{t('versionRefresh')}</button>
+            <button type="button" className="packyCodeButton" onClick={() => setUpdated(undefined)}>{t('versionLater')}</button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function PackyCodeSection({ rpc, t }) {
   const call = react.useMemo(
     // The transport drops an `undefined` payload, and the channel's envelope
@@ -459,6 +588,8 @@ function PackyCodeSection({ rpc, t }) {
   return (
     <div className="packyCodeSection">
       <p className="packyCodeIntro">{t('intro')}</p>
+
+      <VersionCard call={call} t={t} />
 
       <ClaudeCliCard call={call} t={t} />
 

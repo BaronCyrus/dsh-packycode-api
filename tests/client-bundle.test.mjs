@@ -49,6 +49,8 @@ test('every channel call carries a payload object', () => {
   const source = readFileSync(path.join(root, 'src', 'client.jsx'), 'utf8')
   const helpers = [...source.matchAll(/\(endpoint, payload([^)]*)\) => rpc\.call\(/gu)]
   assert.equal(helpers.length, 2, 'the settings panel and the composer each own one caller')
+  assert.match(source, /plugin\/update/u)
+  assert.match(source, /更新插件/u)
   for (const [, params] of helpers) assert.match(params, /=\s*\{\}/u)
 })
 

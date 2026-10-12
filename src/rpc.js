@@ -36,10 +36,14 @@ export function normalizeHost(value, fallback) {
  *   Claude Code CLI manager (optional: without it the CLI endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli }) {
+export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli, pluginManager }) {
   const requireCli = () => {
     if (claudeCli === undefined) throw new Error('PackyCode Claude Code CLI support is unavailable in this runtime')
     return claudeCli
+  }
+  const requireManager = () => {
+    if (pluginManager === undefined) throw new Error('PackyCode plugin version is unavailable')
+    return pluginManager
   }
 
   const status = async () => ({
@@ -49,7 +53,7 @@ export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli
     defaults: { apiHost: DEFAULT_API_HOST, statusHost: DEFAULT_STATUS_HOST },
   })
 
-  return async (endpoint, payload) => {
+  return async (endpoint, payload, signal) => {
     try {
       switch (endpoint) {
         case 'status':
@@ -106,6 +110,10 @@ export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli
           cli.install()
           return ok(await cli.status())
         }
+        case 'plugin/version':
+          return ok(await requireManager().read({ force: payload?.force === true, signal }))
+        case 'plugin/update':
+          return ok(await requireManager().update({ signal }))
         default:
           return failed('Unknown PackyCode endpoint')
       }

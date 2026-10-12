@@ -38,6 +38,7 @@ import {
 } from './constants.js'
 import { PackyCodeKeyRing } from './key-ring.js'
 import { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeForSession } from './permission.js'
+import { createPackyCodePluginManager } from './plugin-version.js'
 import { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 import { createPackyCodeRpc, normalizeHost } from './rpc.js'
 
@@ -337,7 +338,14 @@ export function apply(ctx, config) {
 
   void rememberKeys().catch(() => undefined)
 
-  const handler = createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli })
+  const handler = createPackyCodeRpc({
+    ring,
+    balance,
+    hosts,
+    preference,
+    claudeCli,
+    pluginManager: createPackyCodePluginManager(),
+  })
   /**
    * Connection registers a channel through `owner.webServer`, read on its own
    * row's fiber — which is why this plugin ships the `connection` inject patch
