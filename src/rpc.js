@@ -59,6 +59,11 @@ export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli
           balance.invalidate()
           return ok(await status())
         }
+        case 'keys/rename': {
+          await ring.rename(String(payload?.id ?? ''), payload?.label)
+          balance.invalidate()
+          return ok(await status())
+        }
         case 'keys/remove': {
           await ring.remove(String(payload?.id ?? ''))
           balance.invalidate()

@@ -188,6 +188,18 @@ export class PackyCodeKeyRing {
     }))
   }
 
+  async rename(id, label) {
+    const name = text(label).trim().slice(0, 60)
+    if (name === '') throw new Error('That PackyCode key name cannot be empty')
+    return projection(await this.#write(state => {
+      if (!state.keys.some(candidate => candidate.id === id)) throw new Error('Unknown PackyCode key')
+      return {
+        activeId: state.activeId,
+        keys: state.keys.map(candidate => candidate.id === id ? { ...candidate, label: name } : candidate),
+      }
+    }))
+  }
+
   async remove(id) {
     return projection(await this.#write(state => {
       const remaining = state.keys.filter(candidate => candidate.id !== id)

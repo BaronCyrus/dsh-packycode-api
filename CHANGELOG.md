@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Keys can be renamed from the settings panel (`keys/rename`, up to 60 characters, empty names refused). Before, a label was fixed at add time, so keys stored under a duplicate default name could only be fixed by removing and re-adding them.
+- The account-balance rows now show the key's own name instead of the PackyCode token name, so a rename shows up in both lists; the token name moves to the row's detail line when it differs.
+
 ## 1.0.1
 
 - The balance card no longer shows PackyCode's account-level billing line (`PackyCode 账号（含同账号其它用量）：剩余 … · 已用 … · 额度 …`). It counts every token on the account, including usage from keys not stored here, so it could read as a large negative remaining beside the per-key totals. The headline figures — the sum of the listed keys — are unchanged.

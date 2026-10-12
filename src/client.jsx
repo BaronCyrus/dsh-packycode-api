@@ -29,12 +29,16 @@ const zh = {
   refresh: '刷新',
   refreshing: '刷新中…',
   keysTitle: 'API Key',
-  keysHint: '按顺序使用：当前 Key 不可用时自动切到下一个可用 Key。上方的账户余额按 PackyCode 账户名逐条列出。',
+  keysHint: '按顺序使用：当前 Key 不可用时自动切到下一个可用 Key。上方的账户余额按备注名逐条列出，可用「重命名」修改备注。',
   keyActive: '使用中',
   keyDisabled: '已停用',
   keyUse: '切到此 Key',
   keyEnable: '重新启用',
   keyRemove: '删除',
+  keyRename: '重命名',
+  keyRenameSave: '保存',
+  keyRenameCancel: '取消',
+  keyRenamePlaceholder: '新的备注名',
   keyUnlimited: '不限额度',
   keyNoBalance: '余额未知',
   keyRemaining: '剩余',
@@ -97,12 +101,16 @@ const en = {
   refresh: 'Refresh',
   refreshing: 'Refreshing…',
   keysTitle: 'API keys',
-  keysHint: 'Used in order: when the active key cannot serve a request, the next usable one takes over. The balances above are listed per PackyCode account.',
+  keysHint: 'Used in order: when the active key cannot serve a request, the next usable one takes over. The balances above are listed by these names; use Rename to change one.',
   keyActive: 'Active',
   keyDisabled: 'Disabled',
   keyUse: 'Use this key',
   keyEnable: 'Re-enable',
   keyRemove: 'Remove',
+  keyRename: 'Rename',
+  keyRenameSave: 'Save',
+  keyRenameCancel: 'Cancel',
+  keyRenamePlaceholder: 'New name',
   keyUnlimited: 'No quota limit',
   keyNoBalance: 'Balance unknown',
   keyRemaining: 'Remaining',
@@ -359,6 +367,7 @@ function PackyCodeSection({ rpc, t }) {
   const [busy, setBusy] = react.useState(false)
   const [error, setError] = react.useState()
   const [draft, setDraft] = react.useState({ key: '', label: '' })
+  const [renaming, setRenaming] = react.useState()
   const generation = react.useRef(0)
 
   const load = react.useCallback((force = false) => {
@@ -405,6 +414,12 @@ function PackyCodeSection({ rpc, t }) {
     mutate('keys/add')({ key: draft.key, label: draft.label }).then(() => setDraft({ key: '', label: '' }))
   }
 
+  const submitRename = event => {
+    event.preventDefault()
+    if (renaming === undefined || renaming.label.trim() === '') return
+    mutate('keys/rename')({ id: renaming.id, label: renaming.label }).then(() => setRenaming(undefined))
+  }
+
   const rows = balance?.keys ?? []
   const usageOf = id => rows.find(row => row.id === id)
   const keys = status?.keys ?? []
@@ -424,16 +439,17 @@ function PackyCodeSection({ rpc, t }) {
       usage?.limitUsd === undefined ? undefined : `${t('accountLimit')} ${formatUsd(usage.limitUsd)}`,
       resetLabel(usage?.resetPeriod, t) === undefined ? undefined : resetLabel(usage.resetPeriod, t),
     ].filter(Boolean)
+    const tokenName = usage?.name !== undefined && usage.name !== row.label ? `${t('keyName')} ${usage.name}` : undefined
     return (
       <div className="packyCodeRow" key={row.id}>
         <span className="packyCodeRowMain">
           <span className="packyCodeRowName">
-            {usage?.name ?? row.label}
+            {row.label}
             {row.id === status?.activeId && <span className="packyCodeChip packyCodeChipActive">{t('keyActive')}</span>}
             {row.disabled && <span className="packyCodeChip">{t('keyDisabled')}</span>}
           </span>
           <span className="packyCodeRowMeta">
-            {figures.length > 0 ? figures.join(' · ') : (row.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`)}
+            {figures.length > 0 ? [tokenName, ...figures].filter(Boolean).join(' · ') : (row.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`)}
           </span>
         </span>
       </div>
@@ -504,7 +520,28 @@ function PackyCodeSection({ rpc, t }) {
                   <div className="packyCodeRow" key={key.id}>
                     <span className="packyCodeRowMain">
                       <span className="packyCodeRowName">
-                        {key.label}
+                        {renaming?.id === key.id
+                          ? (
+                            <form className="packyCodeForm" onSubmit={submitRename}>
+                              <input
+                                className="packyCodeInput"
+                                type="text"
+                                maxLength={60}
+                                autoFocus
+                                placeholder={t('keyRenamePlaceholder')}
+                                value={renaming.label}
+                                onChange={event => setRenaming({ id: key.id, label: event.target.value })}
+                                onKeyDown={event => event.key === 'Escape' && setRenaming(undefined)}
+                              />
+                              <button type="submit" className="packyCodeButton" disabled={busy || renaming.label.trim() === ''}>
+                                {t('keyRenameSave')}
+                              </button>
+                              <button type="button" className="packyCodeButton" onClick={() => setRenaming(undefined)}>
+                                {t('keyRenameCancel')}
+                              </button>
+                            </form>
+                          )
+                          : key.label}
                         {key.active && <span className="packyCodeChip packyCodeChipActive">{t('keyActive')}</span>}
                         {key.disabled && <span className="packyCodeChip">{`${t('keyDisabled')}: ${key.disabledReason ?? ''}`.trim()}</span>}
                       </span>
@@ -521,6 +558,11 @@ function PackyCodeSection({ rpc, t }) {
                       {key.disabled && (
                         <button type="button" className="packyCodeButton" disabled={busy} onClick={() => mutate('keys/enable')({ id: key.id })}>
                           {t('keyEnable')}
+                        </button>
+                      )}
+                      {renaming?.id !== key.id && (
+                        <button type="button" className="packyCodeButton" disabled={busy} onClick={() => setRenaming({ id: key.id, label: key.label })}>
+                          {t('keyRename')}
                         </button>
                       )}
                       <button type="button" className="packyCodeButton" disabled={busy} onClick={() => mutate('keys/remove')({ id: key.id })}>

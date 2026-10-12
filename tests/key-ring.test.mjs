@@ -151,3 +151,28 @@ test('an explicit label is kept verbatim and may repeat', async () => {
   const labels = (await ring.list()).keys.map(candidate => candidate.label)
   assert.deepEqual(labels, ['战魂铭人-张洋凡', '战魂铭人-张洋凡'])
 })
+
+test('rename replaces a label, keeps the key and active pointer, and trims', async () => {
+  const credentials = fakeCredentials()
+  const ring = new PackyCodeKeyRing(credentials)
+  await ring.add(KEY_A)
+  await ring.add(KEY_B)
+  const [first, second] = (await ring.list()).keys
+  const state = await ring.rename(second.id, '  备用 Key  ')
+  assert.deepEqual(state.keys.map(candidate => candidate.label), [first.label, '备用 Key'])
+  assert.equal(state.activeId, first.id)
+  assert.equal(credentials.payload().keys[1].key, KEY_B)
+  assert.equal((await ring.rename(first.id, 'x'.repeat(80))).keys[0].label.length, 60)
+})
+
+test('rename keeps a disabled mark and rejects an empty name or an unknown id', async () => {
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  await ring.add(KEY_A)
+  const [a] = (await ring.list()).keys
+  await ring.disable(a.id, 'quota')
+  const [renamed] = (await ring.rename(a.id, 'main')).keys
+  assert.equal(renamed.disabled, true)
+  assert.equal(renamed.disabledReason, 'quota')
+  await assert.rejects(ring.rename(a.id, '   '), /cannot be empty/)
+  await assert.rejects(ring.rename('nope', 'x'), /Unknown PackyCode key/)
+})
