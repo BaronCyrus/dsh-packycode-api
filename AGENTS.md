@@ -46,4 +46,52 @@ Live gateway behavior is verified with `node scripts/live-check.mjs` after a bui
 
 ## Release authorization
 
-`npm publish`, Git tags, GitHub Releases, and version publication are externally visible and partially irreversible. Execute them only when the user explicitly asks and confirms the version. Never reuse or move a published version or tag; publish a new patch version instead.
+`npm publish`, Git tags, GitHub Releases, and version publication are externally visible and partially irreversible. Execute them only when the user explicitly asks to publish or release and confirms the target version. A request to modify, test, or commit alone is not release authorization.
+
+Never reuse, move, delete, or overwrite a published npm version or Git tag. If a published version needs a correction, create a new patch version.
+
+## Release checklist
+
+1. Synchronize and confirm a clean base:
+
+   ```sh
+   git fetch origin --tags --prune
+   git status --short --branch
+   git log --oneline HEAD..origin/main
+   ```
+
+   Fast-forward clean remote changes before editing. Never discard remote changes.
+
+2. Confirm the requested SemVer is unused:
+
+   ```sh
+   npm view dsh-packycode-api@<version> version --json
+   git ls-remote --exit-code --tags origin refs/tags/v<version>
+   ```
+
+   For an unused npm version, `npm view` normally returns `E404`. An existing npm version or Git tag requires choosing a new version.
+
+3. Update all release metadata together: `package.json` version, `CHANGELOG.md`, and any version pinned in `README.md` / `README.en.md`.
+
+4. Validate and inspect the exact release artifact:
+
+   ```sh
+   pnpm install --frozen-lockfile
+   pnpm run check
+   npm publish .artifacts/dsh-packycode-api-<version>.tgz --access public --dry-run --json
+   ```
+
+5. Commit the release and push `main` without force. [`.github/workflows/publish.yml`](.github/workflows/publish.yml) must already be on the commit that will be tagged. Do not push the tag in this step.
+
+6. Confirm the package has a GitHub Actions trusted publisher before pushing the tag: repository `BaronCyrus/dsh-packycode-api`, workflow filename `publish.yml`, environment empty. Never request that a token, password, or one-time code be pasted into chat.
+
+7. Create the annotated tag and push it. That push publishes with GitHub OIDC. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
+
+   ```sh
+   git tag -a v<version> -m "dsh-packycode-api v<version>"
+   git push origin v<version>
+   ```
+
+   `workflow_dispatch` on the same workflow only prints the OIDC identity npm will match. It does not publish.
+
+8. Confirm the publish workflow succeeded for that tag before declaring the release public. On an OIDC `package not found` error, fix the trusted publisher and re-run the same workflow. Do not move the tag. If the tagged tree itself must change, publish a new patch version.

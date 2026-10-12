@@ -5,6 +5,7 @@
   "description": "Use a PackyCode (PackyAPI) API key in DeepSeek Harness through a built-in multi-protocol model route with key rotation and balance display",
   "type": "module",
   "main": "./lib/index.js",
+  "icon": "./icon-subscription.webp",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
@@ -12,9 +13,12 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "icon-subscription.webp",
     "lib/*.js",
     "cordis.patch.yml",
     "README.md",
+    "README.en.md",
+    "docs/assets/dsh-packycode-mascot.png",
     "AGENTS.md",
     "CHANGELOG.md",
     "SECURITY.md",
