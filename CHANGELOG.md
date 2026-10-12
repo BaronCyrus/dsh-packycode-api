@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- The Claude CLI timeout test holds the event loop open. The runner unrefs its timer and the test stub is not a real process, so Node 22's test runner cancelled the still-pending test and stopped the publish workflow. Plugin behavior is unchanged. `1.0.2` was tagged but not published.
+
 ## 1.0.2
 
 - The plugin card and both READMEs show the PackyCode mascot. The package declares a top-level `icon` and ships a 512×512 transparent lossless WebP, under DSH's 256 KiB icon limit. The original README PNG is unchanged.

@@ -158,7 +158,15 @@ test('a timeout stops a hung CLI', async () => {
     spawnImpl,
     timeoutMs: 20,
   })
-  await assert.rejects(() => runner.run({ prompt: 'x' }), /timed out/u)
+  // The runner unrefs its timer, and this stub is not a real process, so
+  // nothing else keeps the loop alive. Node 22's test runner then cancels the
+  // still-pending assertion instead of waiting for the timeout.
+  const pin = setInterval(() => {}, 1000)
+  try {
+    await assert.rejects(() => runner.run({ prompt: 'x' }), /timed out/u)
+  } finally {
+    clearInterval(pin)
+  }
 })
 
 const STREAM_LINES = [
