@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.6
 
 - New model `gpt-6-astra` (GPT-6 Astra), on the same route as `gpt-6.1-sol`: `openai-responses` at `https://cf.api.fan/v1`, text and image input, 1,050,000-token context, 128,000 output tokens, and `reasoning.effort` `low` / `medium` / `high` / `xhigh` / `max` (reasoning cannot be turned off). All of these are from OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6-astra). The gateway lists it in `/v1/models` as `gpt-6-astra`, and it needs a key whose group covers Codex (`codex`, `codex-sale`). Verified live through the built bundle: `live-check` answered `ok` from it alongside `deepseek-flash` and `gpt-6.1-sol`, and each of the five effort levels answered `ok`. One `medium` request first hit a transient `Connection error` and answered on retry.
 
