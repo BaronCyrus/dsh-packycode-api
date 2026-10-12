@@ -19,6 +19,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 
 import { createBalanceReader } from './balance.js'
+import { createClaudeCliAdapter } from './claude-adapter.js'
 import {
   CLAUDE_CLI_MODES,
   DEFAULT_CLAUDE_MODE,
@@ -54,6 +55,10 @@ export const Config = z.object({
   statusHost: z.string().default(DEFAULT_STATUS_HOST),
   /** Path to the Claude Code CLI binary; empty means "look in the usual places, then PATH". */
   claudeCliPath: z.string().default(''),
+  /** What the CLI may do on its own during a CLI-backed turn. */
+  claudeCliMode: z.union(['read-only', 'edit', 'full']).default(DEFAULT_CLAUDE_MODE),
+  /** Working directory for CLI-backed turns; empty means "the session's workspace". */
+  claudeCliCwd: z.string().default(''),
 })
 
 /**
@@ -210,7 +215,38 @@ export function apply(ctx, config) {
   const profile = createPackyCodeProfile(provider)
   const profiles = new Map([[PROVIDER, profile]])
 
-  const adapter = new PiAiAdapter({
+  /**
+   * The Claude Code CLI runner. PackyCode's `cc` group serves its Claude
+   * models only to the official CLI, so CLI-backed models below are run by
+   * that CLI itself — with this plugin's endpoint and key, in an isolated
+   * config home.
+   */
+  const claudeRunner = createClaudeRunner({
+    binary: findClaudeBinary(config?.claudeCliPath),
+    resolveCredential: async () => {
+      const active = await ring.activeKey()
+      if (active === undefined) {
+        throw new Error('Claude Code CLI needs a usable PackyCode API key; add one under Settings → PackyCode')
+      }
+      return { baseUrl: hosts().apiHost, token: active.key }
+    },
+  })
+
+  /** The session's own workspace, so a CLI turn edits the project in view. */
+  const resolveCliCwd = () => {
+    const configured = typeof config?.claudeCliCwd === 'string' ? config.claudeCliCwd.trim() : ''
+    if (configured !== '') return configured
+    try {
+      const agent = ctx.get?.('agents')?.currentInitiator?.()
+      const cwd = agent?.session?.header?.cwd
+      if (typeof cwd === 'string' && cwd !== '') return cwd
+    } catch {
+      // No agent in scope; the process directory is the honest fallback.
+    }
+    return process.cwd()
+  }
+
+  const innerAdapter = new PiAiAdapter({
     profiles: () => profiles,
     resolveApiKey: async () => {
       await rememberKeys()
@@ -233,6 +269,17 @@ export function apply(ctx, config) {
       }),
     }),
     resolveAttachments: () => ctx.get?.('attachments') ?? ctx.attachments,
+  })
+
+  /**
+   * Dispatch per model: CLI-backed ids run the Claude Code CLI, everything
+   * else keeps the pi-ai path.
+   */
+  const adapter = createClaudeCliAdapter({
+    inner: innerAdapter,
+    runner: claudeRunner,
+    resolveMode: () => config?.claudeCliMode ?? DEFAULT_CLAUDE_MODE,
+    resolveCwd: resolveCliCwd,
   })
 
   ctx.llm.registerAdapter([PROVIDER], adapter)
@@ -287,22 +334,10 @@ export function apply(ctx, config) {
   })
 
   /**
-   * The Claude Code bridge. PackyCode's `cc` group serves its Claude models
-   * only to the official CLI, so a delegated task is run by that CLI itself —
-   * with this plugin's endpoint and key, in an isolated config home. The CLI
-   * keeps its own tool loop and permission switches, which is why the tool
-   * exposes a `mode` rather than the harness's sandbox.
+   * The explicit delegation tool, for asking Claude Code for something while
+   * another model drives the session. It shares the runner the CLI-backed
+   * models use.
    */
-  const claudeRunner = createClaudeRunner({
-    binary: findClaudeBinary(config?.claudeCliPath),
-    resolveCredential: async () => {
-      const active = await ring.activeKey()
-      if (active === undefined) {
-        throw new Error('claude_code needs a usable PackyCode API key; add one under Settings → PackyCode')
-      }
-      return { baseUrl: hosts().apiHost, token: active.key }
-    },
-  })
   ctx.inject(['tools'], toolsCtx => {
     ctx.effect(() => toolsCtx.tools.register(defineTool({
       name: 'claude_code',
@@ -362,7 +397,8 @@ export function apply(ctx, config) {
   })
 }
 
-export { buildClaudeArgs, buildClaudeEnvironment, CLAUDE_CLI_MODES, createClaudeRunner, findClaudeBinary, parseClaudeResult } from './claude-cli.js'
+export { buildClaudeArgs, buildClaudeEnvironment, CLAUDE_CLI_MODES, createClaudeRunner, findClaudeBinary, parseClaudeResult, readClaudeStreamEvent } from './claude-cli.js'
+export { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderDelegatedPrompt } from './claude-adapter.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
 export {

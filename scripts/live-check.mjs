@@ -25,7 +25,9 @@ import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
 import {
   CLAUDE_CLI_MODES,
+  CLI_BACKED_MODEL_IDS,
   PackyCodeKeyRing,
+  createClaudeCliAdapter,
   createClaudeRunner,
   createBalanceReader,
   createPackyCodeProfile,
@@ -218,20 +220,36 @@ async function main() {
   console.log(`   finish: ${JSON.stringify(reason)?.slice(0, 160)}`)
 
   if (process.argv.includes('--with-cli')) {
-    console.log('\n5) the Claude Code bridge (real CLI, real gateway)')
-    const runner = createClaudeRunner({
-      resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: key }),
+    console.log('\n5) the model-shaped bridge: choosing claude-opus-5-5 runs the CLI')
+    const bridgeRoute = routeWithRing(ring)
+    const bridged = createClaudeCliAdapter({
+      inner: bridgeRoute.adapter,
+      runner: createClaudeRunner({
+        resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: key }),
+      }),
+      resolveMode: () => 'read-only',
+      resolveCwd: () => process.cwd(),
     })
     const started = Date.now()
-    try {
-      const value = await runner.run({ prompt: 'Reply with exactly: cli-bridge-ok', mode: 'read-only', cwd: process.cwd() })
-      console.log(`   ${value.result.slice(0, 60)} (${value.model || 'default'}, ${Math.round((Date.now() - started) / 1000)}s, $${value.costUsd.toFixed(4)})`)
-    } catch (error) {
-      console.log(`   FAILED: ${String(error.message).slice(0, 160)}`)
+    const prepared = await bridged.prepareCall(PROVIDER, 'claude-opus-5-5')
+    let text = ''
+    let finish
+    for await (const chunk of prepared.stream({
+      provider: PROVIDER,
+      model: 'claude-opus-5-5',
+      sessionId: SESSION_ID,
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'Reply with exactly: cli-bridge-ok' }], source: { kind: 'user' } })],
+      signal: undefined,
+    })) {
+      if (chunk.type === 'text-delta') text += chunk.text
+      if (chunk.type === 'finish') finish = chunk.reason
     }
+    console.log(finish?.kind === 'stop'
+      ? `   ${text.slice(0, 60)} (${Math.round((Date.now() - started) / 1000)}s)`
+      : `   FAILED: ${String(finish?.failure?.message ?? 'no finish').slice(0, 160)}`)
   } else {
-    console.log('\n5) Claude Code bridge skipped (pass --with-cli to run the real CLI)')
-    console.log(`   modes: ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
+    console.log('\n5) model-shaped bridge skipped (pass --with-cli to run the real CLI)')
+    console.log(`   CLI-backed models: ${CLI_BACKED_MODEL_IDS.join(', ')} · modes: ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
   }
 
   console.log('\n6) what the settings panel receives over RPC')

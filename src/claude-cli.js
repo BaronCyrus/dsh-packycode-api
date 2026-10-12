@@ -59,10 +59,11 @@ export function findClaudeBinary(explicit) {
 
 /**
  * Build the CLI arguments for one delegated task.
- * @param options - the prompt, the permission mode, and an optional model.
+ * @param options - the prompt, the permission mode, an optional model, and
+ *   whether the caller consumes the streaming protocol.
  * @returns argv after the binary name.
  */
-export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model } = {}) {
+export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model, stream = false } = {}) {
   const text = typeof prompt === 'string' ? prompt : ''
   if (text.trim() === '') throw new Error('claude_code needs a non-empty prompt')
   if (text.length > MAX_PROMPT_CHARS) {
@@ -72,7 +73,8 @@ export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model } = 
   if (spec === undefined) {
     throw new Error(`claude_code mode must be one of ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
   }
-  const args = ['-p', text, '--output-format', 'json']
+  const args = ['-p', text, '--output-format', stream ? 'stream-json' : 'json']
+  if (stream) args.push('--include-partial-messages', '--verbose')
   const named = typeof model === 'string' ? model.trim() : ''
   if (named !== '') args.push('--model', named)
   if (spec.skipPermissions === true) args.push('--dangerously-skip-permissions')
@@ -139,6 +141,24 @@ function failureMessage(parsed, exitCode, stderr) {
 }
 
 /**
+ * Read one `--output-format stream-json` event.
+ * @param event - a parsed stream-json line.
+ * @returns what the caller can act on, or undefined for noise.
+ */
+export function readClaudeStreamEvent(event) {
+  if (event === null || typeof event !== 'object') return undefined
+  if (event.type === 'stream_event') {
+    const inner = event.event
+    if (inner?.type === 'content_block_delta' && inner.delta?.type === 'text_delta' && typeof inner.delta.text === 'string') {
+      return { type: 'text', text: inner.delta.text }
+    }
+    return undefined
+  }
+  if (event.type === 'result') return { type: 'result', result: event }
+  return undefined
+}
+
+/**
  * A Claude Code CLI runner.
  * @param options - binary, config home, credential resolution, and process seams.
  * @returns `{ run({ prompt, mode, model, cwd, signal }) }`.
@@ -151,97 +171,188 @@ export function createClaudeRunner({
   timeoutMs = DEFAULT_CLAUDE_TIMEOUT_MS,
 } = {}) {
   if (typeof resolveCredential !== 'function') throw new Error('the Claude Code CLI runner needs resolveCredential')
+
+  /**
+   * Spawn one CLI process and own its lifetime: capture both pipes, enforce the
+   * timeout, and kill the process — with a grace period — when the caller
+   * aborts. Both public entry points share it.
+   */
+  const start = async ({ prompt, mode, model, cwd, signal, stream, onStdout }) => {
+    const args = buildClaudeArgs({ prompt, mode, model, stream })
+    const { baseUrl, token } = await resolveCredential()
+    const env = buildClaudeEnvironment({ baseUrl, token, configDir })
+    const child = spawnImpl(binary, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const state = { stdout: '', stderr: '', timedOut: false, settled: false }
+    const kill = () => {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      child.kill('SIGTERM')
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }, KILL_GRACE_MS)
+      timer.unref?.()
+    }
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+        state.timedOut = true
+        kill()
+      }, timeoutMs)
+      : undefined
+    timer?.unref?.()
+    const onAbort = () => kill()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const release = () => {
+      if (state.settled) return
+      state.settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    // Both pipes are owned here: a caller that awaits before attaching would
+    // otherwise miss the first chunks a fast CLI writes.
+    child.stdout?.on('data', chunk => {
+      const text = String(chunk)
+      state.stdout = (state.stdout + text).slice(-MAX_CAPTURE_BYTES)
+      onStdout?.(text)
+    })
+    child.stderr?.on('data', chunk => {
+      state.stderr = (state.stderr + String(chunk)).slice(-MAX_CAPTURE_BYTES)
+    })
+    const closed = new Promise((resolve, reject) => {
+      child.on('error', error => {
+        release()
+        reject(new Error(`claude_code could not run ${binary}: ${error.message}`, { cause: error }))
+      })
+      child.on('close', (code, killSignal) => {
+        release()
+        if (state.timedOut) {
+          reject(new Error(`claude_code timed out after ${Math.round(timeoutMs / 1000)}s`))
+          return
+        }
+        if (signal?.aborted === true) {
+          reject(new Error('claude_code was aborted'))
+          return
+        }
+        resolve({ code, killSignal })
+      })
+    })
+    closed.catch(() => undefined)
+    return { child, state, closed }
+  }
+
   return Object.freeze({
     /**
-     * Run one delegated task to completion.
+     * Run one delegated task to completion, reading only its final result.
      * @param options - prompt, mode, model, working directory, and cancellation.
      * @returns the CLI's answer plus its own accounting.
      */
-    async run({ prompt, mode, model, cwd, signal } = {}) {
-      const args = buildClaudeArgs({ prompt, mode, model })
-      const { baseUrl, token } = await resolveCredential()
-      const env = buildClaudeEnvironment({ baseUrl, token, configDir })
-      const effectiveMode = mode ?? DEFAULT_CLAUDE_MODE
-      return await new Promise((resolve, reject) => {
-        let child
-        try {
-          child = spawnImpl(binary, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
-        } catch (error) {
-          reject(new Error(`claude_code could not start ${binary}: ${error.message}`, { cause: error }))
-          return
-        }
-        let stdout = ''
-        let stderr = ''
-        let settled = false
-        let timedOut = false
-        const startedAt = Date.now()
-        const kill = () => {
-          if (child.exitCode !== null || child.signalCode !== null) return
-          child.kill('SIGTERM')
-          const timer = setTimeout(() => {
-            try {
-              child.kill('SIGKILL')
-            } catch {
-              // Already gone.
-            }
-          }, KILL_GRACE_MS)
-          timer.unref?.()
-        }
-        const timer = timeoutMs > 0 ? setTimeout(() => {
-          timedOut = true
-          kill()
-        }, timeoutMs) : undefined
-        timer?.unref?.()
-        const onAbort = () => kill()
-        signal?.addEventListener('abort', onAbort, { once: true })
-        const capture = (target, chunk) => (target + chunk).slice(-MAX_CAPTURE_BYTES)
-        child.stdout?.on('data', chunk => {
-          stdout = capture(stdout, String(chunk))
-        })
-        child.stderr?.on('data', chunk => {
-          stderr = capture(stderr, String(chunk))
-        })
-        const finish = () => {
-          if (settled) return
-          settled = true
-          if (timer !== undefined) clearTimeout(timer)
-          signal?.removeEventListener('abort', onAbort)
-        }
-        child.on('error', error => {
-          finish()
-          reject(new Error(`claude_code could not run ${binary}: ${error.message}`, { cause: error }))
-        })
-        child.on('close', (code, killSignal) => {
-          finish()
-          const parsed = parseClaudeResult(stdout)
-          if (timedOut) {
-            reject(new Error(`claude_code timed out after ${Math.round(timeoutMs / 1000)}s`))
-            return
+    async run({ prompt, mode = DEFAULT_CLAUDE_MODE, model, cwd, signal } = {}) {
+      const startedAt = Date.now()
+      const { state, closed } = await start({ prompt, mode, model, cwd, signal, stream: false })
+      const { code, killSignal } = await closed
+      const parsed = parseClaudeResult(state.stdout)
+      if (parsed === undefined) throw new Error(failureMessage(undefined, code ?? killSignal, state.stderr))
+      if (parsed.is_error === true || code !== 0) throw new Error(failureMessage(parsed, code, state.stderr))
+      const usage = parsed.usage ?? {}
+      return {
+        result: typeof parsed.result === 'string' ? parsed.result : '',
+        model: typeof parsed.model === 'string' ? parsed.model : (model ?? ''),
+        mode,
+        costUsd: typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : 0,
+        durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : Date.now() - startedAt,
+        inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
+        outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+      }
+    },
+
+    /**
+     * Run one delegated task, yielding its answer as the CLI produces it.
+     * The final `result` event carries the CLI's own accounting.
+     * @param options - as {@link run}.
+     * @returns an async generator of `text` and one closing `result` event.
+     */
+    async *stream({ prompt, mode = DEFAULT_CLAUDE_MODE, model, cwd, signal } = {}) {
+      const startedAt = Date.now()
+      let buffer = ''
+      let sawResult
+      const lines = []
+      const { state, closed } = await start({
+        prompt,
+        mode,
+        model,
+        cwd,
+        signal,
+        stream: true,
+        onStdout: chunk => {
+          buffer += chunk
+          let index = buffer.indexOf('\n')
+          while (index !== -1) {
+            lines.push(buffer.slice(0, index))
+            buffer = buffer.slice(index + 1)
+            index = buffer.indexOf('\n')
           }
-          if (signal?.aborted === true) {
-            reject(new Error('claude_code was aborted'))
-            return
-          }
-          if (parsed === undefined) {
-            reject(new Error(failureMessage(undefined, code ?? killSignal, stderr)))
-            return
-          }
-          if (parsed.is_error === true || code !== 0) {
-            reject(new Error(failureMessage(parsed, code, stderr)))
-            return
-          }
-          const usage = parsed.usage ?? {}
-          resolve({
-            result: typeof parsed.result === 'string' ? parsed.result : '',
-            model: typeof parsed.model === 'string' ? parsed.model : (model ?? ''),
-            mode: effectiveMode,
-            costUsd: typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : 0,
-            durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : Date.now() - startedAt,
-            inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
-            outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
-          })
-        })
+        },
       })
+      const drain = function* () {
+        while (lines.length > 0) {
+          const line = lines.shift().trim()
+          if (line === '' || !line.startsWith('{')) continue
+          let parsed
+          try {
+            parsed = JSON.parse(line)
+          } catch {
+            continue
+          }
+          const event = readClaudeStreamEvent(parsed)
+          if (event === undefined) continue
+          if (event.type === 'result') sawResult = event.result
+          yield event
+        }
+      }
+      let finished = false
+      const completion = closed.then(() => {
+        finished = true
+      }, error => {
+        finished = true
+        throw error
+      })
+      completion.catch(() => undefined)
+      while (!finished || lines.length > 0) {
+        if (lines.length === 0) {
+          if (finished) break
+          await new Promise(resolve => setTimeout(resolve, 15))
+          continue
+        }
+        yield* drain()
+      }
+      await completion
+      if (buffer.trim().startsWith('{')) {
+        try {
+          const event = readClaudeStreamEvent(JSON.parse(buffer.trim()))
+          if (event?.type === 'result') sawResult = event.result
+        } catch {
+          // A truncated tail is not a result.
+        }
+      }
+      if (sawResult === undefined) {
+        throw new Error(failureMessage(undefined, undefined, state.stderr))
+      }
+      if (sawResult.is_error === true) throw new Error(failureMessage(sawResult, 0, state.stderr))
+      const usage = sawResult.usage ?? {}
+      yield {
+        type: 'result',
+        result: {
+          result: typeof sawResult.result === 'string' ? sawResult.result : '',
+          model: typeof sawResult.model === 'string' ? sawResult.model : (model ?? ''),
+          mode,
+          costUsd: typeof sawResult.total_cost_usd === 'number' ? sawResult.total_cost_usd : 0,
+          durationMs: typeof sawResult.duration_ms === 'number' ? sawResult.duration_ms : Date.now() - startedAt,
+          inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
+          outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+        },
+      }
     },
   })
 }
