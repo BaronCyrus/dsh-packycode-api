@@ -54,7 +54,7 @@ Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label 
 
 ### 3. Select a model
 
-Choose a model from the `PackyCode` group. `deepseek-flash` and `gpt-6.1-sol` work once a key is stored. The three Claude models also need the Claude Code CLI on this device; see below.
+Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, and `gpt-6-astra` work once a key is stored. The three Claude models also need the Claude Code CLI on this device; see below.
 
 <details>
 <summary>Verify the install / other profiles / a local checkout</summary>
@@ -92,6 +92,7 @@ A profile without a browser can still use the model route. It just has no settin
 | --- | --- | --- | --- |
 | `deepseek-flash` | HTTP, chat/completions | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
+| `gpt-6-astra` | Same | Same | Same |
 | `claude-opus-5-5` | Local Claude Code CLI | The picker offers the same levels; the CLI chooses the actual effort | A group the official CLI is allowed to use; see below |
 | `claude-sonnet-5-5` | Same | Same | Same |
 | `claude-haiku-5-5` | Same; session titles always use this model | Same | Same |
@@ -101,7 +102,7 @@ A model in the list does not mean the current token group allows it. When changi
 <details>
 <summary>Protocol, group, and CLI constraints</summary>
 
-- OpenAI / Codex traffic must use the Responses protocol. `gpt-6.1-sol` is pinned to `openai-responses` at `https://cf.api.fan/v1`. Do not put `/responses` in the base URL.
+- OpenAI / Codex traffic must use the Responses protocol. `gpt-6.1-sol` and `gpt-6-astra` are pinned to `openai-responses` at `https://cf.api.fan/v1`. Do not put `/responses` in the base URL.
 - Codex-group Responses requests must include `prompt_cache_key` or the gateway returns 403. The harness supplies the session id; the plugin adds a fallback when a caller does not.
 - The Anthropic base URL has no `/v1` (the client appends `/v1/messages`). The three Claude models declare the Messages protocol in the catalog, but their requests are made by the local CLI.
 - The `cc` group accepts only the official Claude CLI. A normal API client gets `403 This API endpoint is only accessible via the official Claude CLI`. This plugin runs the local `claude` binary for that group instead of switching the token to `cc-sale` or pretending to be the official client. If the token has no group the official CLI may use, the three Claude models still will not run.
@@ -113,7 +114,7 @@ A model in the list does not mean the current token group allows it. When changi
 - The conversation and its images reach the CLI over stdin (`--input-format stream-json`), not argv: a Windows command line is length-limited and cannot carry an image. Images in the conversation are sent to Claude as images, at the HTTP route's request size (at most 2048×2048, about 1 MiB each; at most 20 images and 20 MiB per turn, dropping the oldest first). An image left out is named with its read-only local copy, which the CLI can open with Read.
 - Every run carries `--append-system-prompt` (the delegation note). In `-p` mode the official CLI introduces itself as "You are Claude Code, Anthropic's official CLI for Claude …" when it has appended instructions and as "You are a Claude agent, built on Anthropic's Claude Agent SDK." when it has none; the latter was refused upstream as not coming from the official CLI (403 `only accepts requests from the official Claude Code CLI`). That is the official CLI's own behavior; the plugin does not rewrite its system prompt.
 - While the session model is a Claude model, titles are generated with `claude-haiku-5-5`, read-only, in a temporary directory, instead of a full Opus turn.
-- The `claude_code` tool can delegate one task to the local CLI while the session model is `gpt-6.1-sol` or `deepseek-flash`. The requested `mode` cannot exceed what the session preset allows.
+- The `claude_code` tool can delegate one task to the local CLI while the session model is `gpt-6.1-sol`, `gpt-6-astra`, or `deepseek-flash`. The requested `mode` cannot exceed what the session preset allows.
 - An effort level the model does not support is rejected before the request is sent. Do not edit a model's effort map casually.
 
 </details>

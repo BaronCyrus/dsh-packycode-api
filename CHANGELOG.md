@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- New model `gpt-6-astra` (GPT-6 Astra), on the same route as `gpt-6.1-sol`: `openai-responses` at `https://cf.api.fan/v1`, text and image input, 1,050,000-token context, 128,000 output tokens, and `reasoning.effort` `low` / `medium` / `high` / `xhigh` / `max` (reasoning cannot be turned off). All of these are from OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6-astra). The gateway lists it in `/v1/models` as `gpt-6-astra`, and it needs a key whose group covers Codex (`codex`, `codex-sale`). Verified live through the built bundle: `live-check` answered `ok` from it alongside `deepseek-flash` and `gpt-6.1-sol`, and each of the five effort levels answered `ok`. One `medium` request first hit a transient `Connection error` and answered on retry.
+
 ## 1.0.5
 
 - **Balance on mainland networks.** The default balance host is now `https://www.packyapi.ai` (PackyAPI's current site). `www.packyapi.com`, the default through 1.0.4, is DNS-poisoned on mainland networks: every public resolver checked (AliDNS, DNSPod, 1.1.1.1, 8.8.8.8, even AliDNS over HTTPS) returned an unrelated foreign IP, and a direct Node fetch failed with `ECONNREFUSED`. Without a proxy every key read `fetch failed` from it, which is what a Windows user saw. With a proxy it worked, so the failure came and went. A profile that saved the old host keeps it as a fallback, but `.ai` is tried first. Verified live without a proxy: `.ai` answers in about 1.3 s.

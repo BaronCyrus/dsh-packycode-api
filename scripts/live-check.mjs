@@ -182,7 +182,7 @@ async function main() {
   console.log(`   key "${row.label}": available $${row.usage?.availableUsd} / limit $${row.usage?.limitUsd} (${row.usage?.resetPeriod ?? 'no period'})${row.error === undefined ? '' : ` ERROR ${row.error}`}\n`)
 
   console.log('2) one answer per model (one per protocol)')
-  for (const id of ['deepseek-flash', 'gpt-6.1-sol', 'claude-opus-5-5']) {
+  for (const id of ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'claude-opus-5-5']) {
     const active = await ring.activeKey()
     try {
       const text = await streamOnce(models, id, active.key)

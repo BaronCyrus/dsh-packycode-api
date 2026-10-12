@@ -12,9 +12,9 @@
  *
  * Effort levels come from each vendor's documentation, because an effort the
  * model does not support is refused before the request is sent: Claude Opus
- * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol `reasoning.effort`
- * (developers.openai.com model page), DeepSeek thinking mode (`thinking`
- * toggle plus `low|high|max` effort).
+ * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol and GPT-6 Astra
+ * `reasoning.effort` (developers.openai.com model pages), DeepSeek thinking
+ * mode (`thinking` toggle plus `low|high|max` effort).
  *
  * @module dsh-packycode-api/catalog
  */
@@ -44,7 +44,7 @@ const DEEPSEEK_LEVELS = Object.freeze({
 })
 
 /**
- * Claude 5.5 models and GPT-6.1 Sol cannot disable reasoning, so `off` is
+ * Claude 5.5 models, GPT-6.1 Sol, and GPT-6 Astra cannot disable reasoning, so `off` is
  * pinned unsupported. The Claude models run through the CLI, which picks its
  * own effort, so for them these levels only shape the picker.
  */
@@ -81,6 +81,22 @@ export const PACKYCODE_MODELS = Object.freeze([
   Object.freeze({
     id: 'gpt-6.1-sol',
     name: 'GPT-6.1 Sol',
+    api: 'openai-responses',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+  }),
+  Object.freeze({
+    // developers.openai.com/api/docs/models/gpt-6-astra: Responses and Chat
+    // Completions; text and image input; 1,050,000 context, 128,000 output;
+    // `reasoning.effort` low | medium | high | xhigh | max (no `none`).
+    id: 'gpt-6-astra',
+    name: 'GPT-6 Astra',
     api: 'openai-responses',
     provider: PROVIDER,
     baseUrl: RESPONSES_BASE,

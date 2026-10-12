@@ -54,7 +54,7 @@ dsh-packycode-api
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。`deepseek-flash` 和 `gpt-6.1-sol` 添加 Key 后即可用。三个 Claude 模型还需要本机装有 Claude Code CLI，见下文。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。`deepseek-flash`、`gpt-6.1-sol` 和 `gpt-6-astra` 添加 Key 后即可用。三个 Claude 模型还需要本机装有 Claude Code CLI，见下文。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
@@ -92,6 +92,7 @@ dsh-packycode-api
 | --- | --- | --- | --- |
 | `deepseek-flash` | HTTP，chat/completions | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
+| `gpt-6-astra` | 同上 | 同上 | 同上 |
 | `claude-opus-5-5` | 本机 Claude Code CLI | 选择器档位同上，实际档位由 CLI 决定 | 要能给官方 CLI 用的分组，见下 |
 | `claude-sonnet-5-5` | 同上 | 同上 | 同上 |
 | `claude-haiku-5-5` | 同上；会话标题也固定走它 | 同上 | 同上 |
@@ -101,7 +102,7 @@ dsh-packycode-api
 <details>
 <summary>协议、分组和 CLI 的具体约束</summary>
 
-- OpenAI / Codex 必须走 Responses。`gpt-6.1-sol` 已固定为 `openai-responses`，base URL 是 `https://cf.api.fan/v1`，不要把 `/responses` 写进根地址。
+- OpenAI / Codex 必须走 Responses。`gpt-6.1-sol` 和 `gpt-6-astra` 已固定为 `openai-responses`，base URL 是 `https://cf.api.fan/v1`，不要把 `/responses` 写进根地址。
 - Codex 分组的 Responses 请求必须带 `prompt_cache_key`，否则 403。harness 会带会话 id；没有会话 id 时插件补一个兜底值。
 - Anthropic 的 base URL 不带 `/v1`（客户端自己拼 `/v1/messages`）。三个 Claude 模型虽然目录里声明了 Messages 协议，实际请求由本机 CLI 发出。
 - `cc`（Claude Code 专用）只接受官方 Claude CLI。用普通 API 客户端调 Claude 会 403：`This API endpoint is only accessible via the official Claude CLI`。本插件因此调用本机 `claude`，而不是改去 `cc-sale`，也不是伪造客户端身份。令牌如果没有开放给官方 CLI 的分组，这三个模型仍然不可用。
@@ -113,7 +114,7 @@ dsh-packycode-api
 - 对话记录和图片通过 stdin 交给 CLI（`--input-format stream-json`），不走命令行参数：Windows 命令行长度有上限，而且命令行带不了图片。对话里的图片会以图片形式发给 Claude（与 HTTP 路由相同的压缩规格：每张不超过 2048×2048、约 1 MiB；一回合最多 20 张、合计 20 MiB，超出时先舍弃最早的）。没随消息发出的图片会写明本机只读副本的路径，CLI 需要时可以用 Read 读取。
 - 每次运行都带 `--append-system-prompt`（委派说明）。在 `-p` 模式下，官方 CLI 有追加说明时会以 "You are Claude Code, Anthropic's official CLI for Claude …" 自我介绍，没有时是 "You are a Claude agent, built on Anthropic's Claude Agent SDK."；后者曾被上游当成非官方 CLI 拒绝（403 `only accepts requests from the official Claude Code CLI`）。这是官方 CLI 自己的行为，插件没有改写它的系统提示词。
 - 会话跑在 Claude 模型上时，生成标题改用 `claude-haiku-5-5`，只读、临时目录，避免为起标题跑一整轮 Opus。
-- 另有 `claude_code` 工具：当前模型是 `gpt-6.1-sol` 或 `deepseek-flash` 时，可以把一个任务委派给本机 Claude Code。请求的 `mode` 不会超过会话权限允许的上限。
+- 另有 `claude_code` 工具：当前模型是 `gpt-6.1-sol`、`gpt-6-astra` 或 `deepseek-flash` 时，可以把一个任务委派给本机 Claude Code。请求的 `mode` 不会超过会话权限允许的上限。
 - 声明了模型不支持的推理档位会被 harness 在发请求前拒绝，不要随手改档位映射。
 
 </details>
