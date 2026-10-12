@@ -136,7 +136,7 @@ test('the RPC surface refuses key material and answers status without one', asyn
   assert.deepEqual(status.value.keys, [])
   assert.equal(status.value.activeId, undefined)
   assert.equal(status.value.hosts.apiHost, 'https://cf.api.fan')
-  assert.equal(status.value.hosts.statusHost, 'https://www.packyapi.com')
+  assert.equal(status.value.hosts.statusHost, 'https://www.packyapi.ai')
 
   const added = await handler('keys/add', { key: 'sk-abcdefgh12345678', label: 'first' })
   assert.equal(added.ok, true)

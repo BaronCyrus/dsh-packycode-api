@@ -25,6 +25,9 @@ const zh = {
   totalUsed: '合计已用',
   totalLimit: '合计额度',
   totalPartial: '有 {count} 个 Key 未读到余额，未计入合计。',
+  totalStale: '其中 {count} 个 Key 本次读取失败，显示的是上次读到的余额。',
+  staleNote: '上次读取于 {time}，本次读取失败：{error}',
+  composerStale: '上次读取于 {time}，本次读取失败',
   accountLimit: '额度',
   refresh: '刷新',
   refreshing: '刷新中…',
@@ -62,6 +65,7 @@ const zh = {
   notWritable: '当前 profile 不允许写入设置，改动只在本次运行内生效。',
   composerLabel: 'PackyCode 剩余额度',
   composerNoKey: '无可用 Key',
+  composerUnread: '余额读取失败',
   error: '读取 PackyCode 状态失败',
   loadFailed: '读取失败',
   cliTitle: 'Claude Code CLI',
@@ -153,6 +157,10 @@ const en = {
   notWritable: 'This profile does not allow settings writes; changes apply to this run only.',
   composerLabel: 'PackyCode remaining balance',
   composerNoKey: 'No usable key',
+  composerUnread: 'Balance unavailable',
+  totalStale: '{count} of these keys failed this read and show their last read balance.',
+  staleNote: 'Last read at {time}; this read failed: {error}',
+  composerStale: 'last read at {time}; this read failed',
   error: 'Could not read PackyCode status',
   loadFailed: 'Read failed',
   cliTitle: 'Claude Code CLI',
@@ -266,6 +274,16 @@ function resetLabel(period, t) {
 function activeUsage(balance) {
   if (balance === undefined) return undefined
   return balance.keys?.find(entry => entry.id === balance.activeId) ?? balance.keys?.[0]
+}
+
+/** The clock time of an epoch-millisecond reading, for a "last read at" note. */
+function readTime(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '—'
+  try {
+    return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return new Date(ms).toISOString().slice(11, 16)
+  }
 }
 
 function clearMessage(error) {
@@ -580,6 +598,11 @@ function PackyCodeSection({ rpc, t }) {
           <span className="packyCodeRowMeta">
             {figures.length > 0 ? [tokenName, ...figures].filter(Boolean).join(' · ') : (row.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`)}
           </span>
+          {row.stale !== undefined && (
+            <span className="packyCodeRowMeta">
+              {t('staleNote').replace('{time}', readTime(row.stale.fetchedAt)).replace('{error}', row.stale.error ?? '')}
+            </span>
+          )}
         </span>
       </div>
     )
@@ -620,12 +643,15 @@ function PackyCodeSection({ rpc, t }) {
                 <span className="packyCodeFigure">
                   <span className="packyCodeFigureLabel">{t('totalLimit')}</span>
                   <span className="packyCodeFigureValue">
-                    {totals.counted === 0 || totals.unlimited > 0 ? t('keyUnlimited') : formatUsd(totals.limitUsd) ?? '—'}
+                    {totals.counted === 0 ? '—' : totals.unlimited > 0 ? t('keyUnlimited') : formatUsd(totals.limitUsd) ?? '—'}
                   </span>
                 </span>
               </div>
               {totals.unread > 0 && (
                 <span className="packyCodeNote">{t('totalPartial').replace('{count}', String(totals.unread))}</span>
+              )}
+              {rows.some(row => row.stale !== undefined) && (
+                <span className="packyCodeNote">{t('totalStale').replace('{count}', String(rows.filter(row => row.stale !== undefined).length))}</span>
               )}
             </>
           )}
@@ -795,13 +821,20 @@ function PackyCodeComposerQuota({ rpc, t, directory }) {
   if (!enabled || balance === undefined) return null
   const row = activeUsage(balance)
   const usage = row?.usage
+  // A key whose balance read failed is still usable; say the read failed
+  // instead of claiming there is no key.
   const display = usage?.unlimitedQuota === true
     ? t('keyUnlimited')
-    : formatUsd(usage?.availableUsd) ?? t('composerNoKey')
-  const label = `${t('composerLabel')}: ${display}`
+    : formatUsd(usage?.availableUsd) ?? (row?.error === undefined ? t('composerNoKey') : t('composerUnread'))
+  // A balance carried over from an earlier read is marked as approximate.
+  const stale = row?.stale !== undefined && usage !== undefined
+  const shown = stale ? `≈${display}` : display
+  const label = stale
+    ? `${t('composerLabel')}: ${display}（${t('composerStale').replace('{time}', readTime(row.stale.fetchedAt))}）`
+    : `${t('composerLabel')}: ${display}`
   return (
     <span className="packyCodeComposer" role="status" aria-label={label} title={label}>
-      {display}
+      {shown}
     </span>
   )
 }

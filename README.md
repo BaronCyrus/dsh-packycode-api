@@ -73,7 +73,7 @@ dsh-packycode-api
 
 **换 Key。** Key 按添加顺序使用。点「切到此 Key」可以指定当前 Key；「重命名」改备注（最多 60 字，不能为空）；充值或更换后点「重新启用」。
 
-**看余额。** 设置页的合计是**已列出的这些 Key** 的剩余、已用与额度，不是 PackyCode 账号下全部令牌的账单。读失败的 Key 不计入合计，并会注明个数。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.com`，可在「高级：接口地址」里改。
+**看余额。** 设置页的合计是**已列出的这些 Key** 的剩余、已用与额度，不是 PackyCode 账号下全部令牌的账单。读失败的 Key 不计入合计，并会注明个数；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
 
 **用 Claude。** 设置页顶部的「Claude Code CLI」卡片会检测本机 CLI。没装时点「安装 Claude Code CLI」，本机执行 `npm install -g @anthropic-ai/claude-code`（需要 Node.js 18+）。装好后不用重启 DSH。Windows 上另外需要 [Git for Windows](https://git-scm.com/downloads/win)。
 
@@ -109,6 +109,9 @@ dsh-packycode-api
 - CLI 使用插件配置的地址和当前 Key（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`），以及独立配置目录 `~/.dsh/packycode-claude-cli`。不隔离的话，`~/.claude/settings.json` 里的 `env` 会盖掉插件 Key。
 - CLI 权限默认跟随当前会话：`read-only` → 只读，`workspace-write` → 可编辑，`danger-full-access` 且不再审批 → `full`。CLI 不能向 DSH 弹审批，所以只要会话还要审批，就不会给它 `full`。也可把设置项 `claudeCliMode` 固定成 `read-only` / `edit` / `full`。`claudeCliPath` 留空则自动查找；`claudeCliCwd` 留空则用当前会话工作区。
 - 思考过程和工具调用（`▸ Bash`、`▸ Read`，失败时带 `✗`）会出现在这一回合的思考区。它们是进度，不是 DSH 的工具调用。CLI 自己的工具不受 DSH 沙箱约束。
+- 思考区第一行是「▸ 启动 Claude Code CLI…」，CLI 起来后显示版本和模型。网关限流或繁忙（429、503 `账号并发排队已满` 等）时，CLI 会自己重试最多 10 次，每次重试都会显示成 `↻ 网关返回 HTTP 503，CLI 自动重试 n/10`，不再像卡住。重试用完仍失败时，会说明是 PackyCode 的 Claude 上游繁忙，不是 Key 的问题。CLI 启动后 2 分钟内没有任何输出会被停止并报告原因。
+- 对话记录和图片通过 stdin 交给 CLI（`--input-format stream-json`），不走命令行参数：Windows 命令行长度有上限，而且命令行带不了图片。对话里的图片会以图片形式发给 Claude（与 HTTP 路由相同的压缩规格：每张不超过 2048×2048、约 1 MiB；一回合最多 20 张、合计 20 MiB，超出时先舍弃最早的）。没随消息发出的图片会写明本机只读副本的路径，CLI 需要时可以用 Read 读取。
+- 每次运行都带 `--append-system-prompt`（委派说明）。在 `-p` 模式下，官方 CLI 有追加说明时会以 "You are Claude Code, Anthropic's official CLI for Claude …" 自我介绍，没有时是 "You are a Claude agent, built on Anthropic's Claude Agent SDK."；后者曾被上游当成非官方 CLI 拒绝（403 `only accepts requests from the official Claude Code CLI`）。这是官方 CLI 自己的行为，插件没有改写它的系统提示词。
 - 会话跑在 Claude 模型上时，生成标题改用 `claude-haiku-5-5`，只读、临时目录，避免为起标题跑一整轮 Opus。
 - 另有 `claude_code` 工具：当前模型是 `gpt-6.1-sol` 或 `deepseek-flash` 时，可以把一个任务委派给本机 Claude Code。请求的 `mode` 不会超过会话权限允许的上限。
 - 声明了模型不支持的推理档位会被 harness 在发请求前拒绝，不要随手改档位映射。
@@ -126,6 +129,10 @@ dsh-packycode-api
 **某个模型不可用，但 Key 是有效的？** 先看令牌分组是否覆盖这个模型。`cc` 分组不会把 Claude 交给普通 API 客户端；本插件的 Claude 模型要靠本机 CLI。分组拒绝不会停用 Key，也不会切到下一个 Key。
 
 **余额对不上账号账单？** 设置页合计的是这里列出的 Key，不含同账号下没添加到本插件的其它令牌。个别 Key 读失败时会单独注明，不会被算成 0。
+
+**余额显示 `读取失败: https://www.packyapi.com: fetch failed`？** 这是 1.0.4 及更早版本的默认余额接口在国内网络下被 DNS 污染，开了代理才能连上，所以有时正常、有时失败。新版本默认改用 `https://www.packyapi.ai`。模型列表是插件内置的，不需要向 PackyCode 查询，不受影响。
+
+**选了 Claude 模型一直显示「深度求索中」？** 看思考区：有 `↻ 网关返回 HTTP 503/429` 说明 PackyCode 的 Claude 上游在排队或限流，CLI 正在自动重试；只有「▸ 启动 Claude Code CLI…」没有「已启动」，说明本机 CLI 没起来（Windows 上先确认装了 Git for Windows，并在终端执行 `claude --version`）。
 
 **限速之后 Key 被停用了？** 不该发生。429 不会切换 Key。额度用尽或 401 才会停用；充值后点「重新启用」。
 

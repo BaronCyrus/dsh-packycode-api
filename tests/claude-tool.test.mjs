@@ -15,21 +15,27 @@ function writeStubCli(dir) {
   const script = join(dir, 'claude-stub.mjs')
   writeFileSync(script, `#!/usr/bin/env node
 import { writeFileSync } from 'node:fs'
-writeFileSync(${JSON.stringify(record)}, JSON.stringify({
-  argv: process.argv.slice(2),
-  baseUrl: process.env.ANTHROPIC_BASE_URL,
-  token: process.env.ANTHROPIC_AUTH_TOKEN,
-  configDir: process.env.CLAUDE_CONFIG_DIR,
-  apiKey: process.env.ANTHROPIC_API_KEY ?? null,
-  cwd: process.cwd(),
-}))
-process.stdout.write(JSON.stringify({
-  is_error: false,
-  result: 'stub-answer',
-  duration_ms: 1234,
-  total_cost_usd: 0.5,
-  usage: { input_tokens: 3, output_tokens: 4 },
-}) + '\\n')
+let stdin = ''
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', chunk => { stdin += chunk })
+process.stdin.on('end', () => {
+  writeFileSync(${JSON.stringify(record)}, JSON.stringify({
+    argv: process.argv.slice(2),
+    stdin,
+    baseUrl: process.env.ANTHROPIC_BASE_URL,
+    token: process.env.ANTHROPIC_AUTH_TOKEN,
+    configDir: process.env.CLAUDE_CONFIG_DIR,
+    apiKey: process.env.ANTHROPIC_API_KEY ?? null,
+    cwd: process.cwd(),
+  }))
+  process.stdout.write(JSON.stringify({
+    is_error: false,
+    result: 'stub-answer',
+    duration_ms: 1234,
+    total_cost_usd: 0.5,
+    usage: { input_tokens: 3, output_tokens: 4 },
+  }) + '\\n')
+})
 `)
   chmodSync(script, 0o755)
   return { script, record }
@@ -118,7 +124,12 @@ test('the registered tool runs the CLI with the plugin endpoint, key, and sessio
   assert.match(seen.configDir, /packycode-claude-cli/u)
   // The default working directory is the session workspace.
   assert.equal(seen.cwd, realpathSync(workspace))
-  assert.deepEqual(seen.argv, ['-p', 'summarize the repo', '--output-format', 'json', '--allowedTools', 'Read', 'Grep', 'Glob'])
+  // The task arrives on stdin; argv carries the switches and the delegation note.
+  assert.equal(seen.stdin, 'summarize the repo')
+  assert.equal(seen.argv.includes('summarize the repo'), false)
+  assert.deepEqual(seen.argv.slice(0, 4), ['-p', '--output-format', 'json', '--append-system-prompt'])
+  assert.match(seen.argv[4], /claude_code tool/u)
+  assert.deepEqual(seen.argv.slice(5), ['--allowedTools', 'Read', 'Grep', 'Glob'])
 
   // A rendered result carries the answer plus the CLI's accounting.
   const [block] = tool.output.render({}, value)

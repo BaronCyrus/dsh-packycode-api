@@ -24,7 +24,7 @@ const INVALID_KEY_STATUS = /\b401\b/
  * an invalid-API-key problem — the opposite of what happened, and a condition
  * no retry can clear.
  */
-const CLIENT_POLICY_WORDING = /only accessible via the official|official claude cli|官方\s*claude\s*cli|请使用标准\s*codex\s*客户端|客户端存在异常|二次分发|API\s*转接/iu
+const CLIENT_POLICY_WORDING = /only accessible via the official|only accepts requests from the official|official\s+claude(?:\s+code)?\s+cli|官方\s*claude(?:\s*code)?\s*cli|请使用标准\s*codex\s*客户端|客户端存在异常|二次分发|API\s*转接/iu
 
 /** The key's quota is exhausted; move to the next key. */
 export const QUOTA_FAILURE = 'quota'
@@ -91,6 +91,57 @@ export function explainClientPolicyFailure() {
     + '请改用允许 API 调用的分组（例如 cc-sale 或 claude-officially），'
     + '或改用 PackyCode 的 gpt-6.1-sol / deepseek-flash。'
     + ' / This group only serves the vendor’s official client; the API key is fine and retrying cannot help.'
+}
+
+/**
+ * The gateway is out of capacity for the moment: its Claude pool's
+ * per-account wait queue is full, or it throttled or shed the request. The
+ * CLI retries these on its own; this matches what is left when it gave up.
+ */
+const CAPACITY_WORDING = /concurrency_queue_full|并发排队已满|wait queues? (?:are|is) full|负载已饱和|overloaded|rate[_\s-]?limit|API Error:\s*(?:429|502|503|504|529)\b/iu
+
+/**
+ * Whether a CLI failure is the gateway being busy rather than a fault of the
+ * key, the client, or the request.
+ * @param message - the CLI failure text.
+ * @returns true for throttling and capacity refusals.
+ */
+export function classifyCapacity(message) {
+  return CAPACITY_WORDING.test(typeof message === 'string' ? message : '')
+}
+
+/**
+ * Explain a CLI turn that failed because the gateway stayed busy.
+ * @param message - the CLI failure text.
+ * @param retries - how many retries the CLI reported before giving up.
+ * @returns the replacement sentence, with the gateway's own words kept.
+ */
+export function explainCliCapacityFailure(message, retries) {
+  const detail = (typeof message === 'string' ? message : '').replace(/^Claude Code CLI failed:\s*/u, '').slice(0, 600)
+  const tried = typeof retries === 'number' && retries > 0 ? `Claude Code CLI 已自动重试 ${retries} 次仍未成功。` : ''
+  return `PackyCode 的 Claude 上游暂时繁忙（并发排队已满或被限流）。${tried}`
+    + '这不是 API Key 或插件的问题，稍后再发一次即可；着急的话可以先切到 gpt-6.1-sol 或 deepseek-flash。'
+    + ` / PackyCode's Claude upstream is busy right now; retry shortly. Gateway said: ${detail}`
+}
+
+/**
+ * Explain a client-policy refusal of a request the local Claude Code CLI made.
+ *
+ * The request did come from the official CLI, so the HTTP-route advice above
+ * (switch to a CLI) does not apply. The gateway's own words are kept, without
+ * their HTTP status, so a support request can quote the request ids.
+ * @param message - the CLI failure text.
+ * @returns the replacement sentence.
+ */
+export function explainCliClientPolicyFailure(message) {
+  const detail = (typeof message === 'string' ? message : '')
+    .replace(/^Claude Code CLI failed:\s*/u, '')
+    .replace(/\b(?:401|403)\b/gu, 'HTTP')
+    .slice(0, 600)
+  return 'PackyCode 的上游拒绝了这次 Claude Code CLI 请求，认为它不是官方 Claude Code CLI 发出的。'
+    + '这不是 API Key 失效。请先把插件和 Claude Code CLI 都更新到最新版本再试；'
+    + '仍然失败时，请把下面的原始错误（含 request id）发给 PackyCode 客服，确认所用分组是否支持 Claude Code 的 -p（非交互）模式。'
+    + ` / The gateway refused this Claude Code CLI request as not coming from the official CLI; the API key is fine. Gateway said: ${detail}`
 }
 
 /**

@@ -7,9 +7,11 @@ import {
   CLIENT_POLICY_FAILURE,
   INVALID_KEY_FAILURE,
   QUOTA_FAILURE,
+  classifyCapacity,
   classifyClientPolicy,
   classifyGatewayFailure,
   explainClientPolicyFailure,
+  explainCliCapacityFailure,
   normalizeFailureMessage,
 } from '../src/failures.js'
 
@@ -90,4 +92,22 @@ test('the policy explanation reaches the user instead of an API-key error', () =
   for (const pattern of OTHER_CLASSES) {
     assert.equal(pattern.test(normalized), false, `${pattern} must not match the policy sentence`)
   }
+})
+
+test('the upstream wording for a Claude Code-only route is a client-policy refusal, not a key fault', () => {
+  const raw = '403 {"error":{"type":"packy_<nil>","message":"Request blocked: this endpoint only accepts requests from the official Claude Code CLI. (request id: x)"}}'
+  assert.equal(classifyClientPolicy(raw), true)
+  assert.equal(classifyGatewayFailure(raw), undefined)
+})
+
+test('a busy gateway is told apart from key, quota, and client faults', () => {
+  assert.equal(classifyCapacity('API Error: 503 {"error":{"type":"packy_concurrency_queue_full","message":"账号并发排队已满，请稍后重试。"}}'), true)
+  assert.equal(classifyCapacity('API Error: 429 rate_limit_error'), true)
+  assert.equal(classifyCapacity('API Error: 529 overloaded_error'), true)
+  assert.equal(classifyCapacity('API Error: 401 无效的令牌'), false)
+  assert.equal(classifyCapacity('Request blocked: official Claude Code CLI only'), false)
+  const text = explainCliCapacityFailure('Claude Code CLI failed: API Error: 503 queue full', 10)
+  assert.match(text, /已自动重试 10 次/u)
+  assert.match(text, /Gateway said: API Error: 503 queue full$/u)
+  assert.equal(explainCliCapacityFailure('x', 0).includes('已自动重试'), false)
 })

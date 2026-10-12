@@ -9,9 +9,12 @@
  * A CLI-backed turn is a *delegation*: the CLI runs its own agent loop with
  * its own tools and returns one answer. The CLI cannot call the harness's
  * tools, so `options.tools` is deliberately not forwarded, and the harness's
- * system prompt is dropped in favour of the CLI's own. While it works, its
- * thinking and tool activity stream into a reasoning block and its answer
- * streams as text.
+ * system prompt is dropped in favour of the CLI's own. The delegation
+ * instructions travel as `--append-system-prompt`; the recent conversation
+ * travels as one user message whose images are real image blocks, read from
+ * the attachment store, so the CLI's model sees them as images. While it
+ * works, its thinking and tool activity stream into a reasoning block and its
+ * answer streams as text.
  *
  * A session-title request is not a delegation: it runs on the small model,
  * read-only and outside the workspace, with the title instructions appended,
@@ -24,6 +27,8 @@ import { tmpdir } from 'node:os'
 
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 
+import { classifyCapacity, classifyClientPolicy, explainCliCapacityFailure, explainCliClientPolicyFailure } from './failures.js'
+
 /** Models this route serves through the CLI rather than an HTTP API. */
 export const CLI_BACKED_MODEL_IDS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 
@@ -33,21 +38,319 @@ export const TITLE_MODEL_ID = 'claude-haiku-5-5'
 /** How much of the conversation a delegated prompt carries. */
 const MAX_PROMPT_CHARS = 48_000
 const MAX_BLOCK_CHARS = 8_000
+const TRUNCATED_MARK = '…（较早对话已截断）'
 
-/** Render one content block as text a CLI prompt can carry. */
-function renderBlock(block) {
-  if (block === null || typeof block !== 'object') return ''
-  if (block.type === 'text' && typeof block.text === 'string') return block.text
-  if (block.type === 'image') return '[图片]'
-  if (block.type === 'tool-call' || block.type === 'tool-call-delta') {
-    return `[调用工具 ${block.name ?? block.id ?? ''}]`
+/**
+ * Image bounds for one delegated turn. Each image is re-encoded by the
+ * attachment store to the same request version the HTTP route sends (at most
+ * 2048×2048 pixels, about 1 MiB); the oldest images are left out once the turn
+ * would carry more than 20 of them or 20 MiB of base64.
+ */
+export const CLI_IMAGE_LIMITS = Object.freeze({
+  maxPixels: 2048 * 2048,
+  maxBytesPerImage: 1024 * 1024,
+  maxTotalBase64Bytes: 20 * 1024 * 1024,
+  maxImages: 20,
+})
+/** The vendor's per-image cap on base64 data; a fallback read above it is not sent. */
+const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024
+
+const base64Length = bytes => Math.ceil(bytes / 3) * 4
+
+/** A short name for an image or file a reader can match to the chat. */
+function attachmentName(ref) {
+  if (typeof ref?.name === 'string' && ref.name !== '') return ref.name
+  const id = String(ref?.attachmentId ?? '')
+  return id.startsWith('sha256:') ? id.slice(7, 15) : id.slice(0, 8)
+}
+
+/** The host path of a stored attachment, when the store is file-backed. */
+function hostPath(lookup) {
+  try {
+    const value = lookup()
+    return typeof value === 'string' && value !== '' ? value : undefined
+  } catch {
+    return undefined
   }
-  if (block.type === 'tool-result') {
-    const text = typeof block.content === 'string' ? block.content : ''
-    return `[工具结果] ${text.slice(0, MAX_BLOCK_CHARS)}`
+}
+
+/**
+ * Flatten one message's content into ordered parts: text, image, and file.
+ * Tool calls and results become short text so a turn that started on another
+ * model still reads coherently; reasoning is not carried.
+ */
+function collectParts(blocks, parts) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (block === null || typeof block !== 'object') continue
+    switch (block.type) {
+      case 'text':
+        if (typeof block.text === 'string' && block.text !== '') parts.push({ kind: 'text', text: block.text })
+        break
+      case 'image':
+        if (block.attachment !== undefined) parts.push({ kind: 'image', ref: block.attachment })
+        else parts.push({ kind: 'text', text: '[图片]' })
+        break
+      case 'file':
+        if (block.attachment !== undefined) parts.push({ kind: 'file', ref: block.attachment })
+        break
+      case 'tool-call':
+      case 'tool-call-delta':
+        parts.push({ kind: 'text', text: `[调用工具 ${block.name ?? block.id ?? ''}]` })
+        break
+      case 'tool-result': {
+        if (typeof block.content === 'string') {
+          parts.push({ kind: 'text', text: `[工具结果] ${block.content.slice(0, MAX_BLOCK_CHARS)}` })
+          break
+        }
+        const nested = []
+        collectParts(block.content, nested)
+        let budget = MAX_BLOCK_CHARS
+        parts.push({ kind: 'text', text: '[工具结果]' })
+        for (const part of nested) {
+          if (part.kind !== 'text') {
+            parts.push(part)
+            continue
+          }
+          if (budget <= 0) continue
+          parts.push({ kind: 'text', text: part.text.slice(0, budget) })
+          budget -= part.text.length
+        }
+        break
+      }
+      default:
+        break
+    }
   }
-  if (block.type === 'reasoning') return ''
-  return ''
+  return parts
+}
+
+const textLength = parts => parts.reduce((sum, part) => sum + (part.kind === 'text' ? part.text.length : 0), 0)
+
+/**
+ * The conversation as labelled turns, newest last, trimmed to the prompt
+ * budget by dropping whole older turns; a single newest turn that is larger
+ * than the budget keeps its tail.
+ */
+function delegatedTurns(options) {
+  const messages = Array.isArray(options?.messages) ? options.messages : []
+  const turns = []
+  for (const message of messages) {
+    if (message === null || typeof message !== 'object' || message.role === 'system') continue
+    const parts = collectParts(message.content, [])
+    if (parts.length === 0 || (textLength(parts) === 0 && !parts.some(part => part.kind !== 'text'))) continue
+    const label = message.role === 'user' ? '用户' : message.role === 'assistant' ? '助手' : String(message.role)
+    turns.push({ label, parts })
+  }
+  const kept = []
+  let used = 0
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]
+    const size = textLength(turn.parts) + turn.label.length + 3
+    if (used + size <= MAX_PROMPT_CHARS) {
+      kept.unshift(turn)
+      used += size
+      continue
+    }
+    if (kept.length === 0) kept.unshift({ label: turn.label, parts: tailOf(turn.parts, MAX_PROMPT_CHARS - turn.label.length - 3), clipped: true })
+    break
+  }
+  return { turns: kept, truncated: kept.length < turns.length || kept[0]?.clipped === true }
+}
+
+/** Keep the last `budget` characters of a turn's text, and every part after them. */
+function tailOf(parts, budget) {
+  const result = []
+  let remaining = budget
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]
+    if (part.kind !== 'text') {
+      result.unshift(part)
+      continue
+    }
+    if (remaining <= 0) continue
+    result.unshift({ kind: 'text', text: part.text.length > remaining ? part.text.slice(-remaining) : part.text })
+    remaining -= part.text.length
+  }
+  return result
+}
+
+/** How a part reads when it is carried as text only. */
+function partText(part, describe) {
+  if (part.kind === 'text') return part.text
+  return describe(part)
+}
+
+/** Render turns as one transcript, with non-text parts described by `describe`. */
+function renderTurns({ turns, truncated }, describe) {
+  const transcript = turns
+    .map(turn => `${turn.label}：${turn.parts.map(part => partText(part, describe)).join('\n').trim()}`)
+    .join('\n\n')
+  return truncated ? `${TRUNCATED_MARK}\n\n${transcript}` : transcript
+}
+
+const plainDescription = part => (part.kind === 'image' ? `[图片 ${attachmentName(part.ref)}]` : `[文件 ${attachmentName(part.ref)}]`)
+
+/**
+ * The delegation instructions, appended to the CLI's own system prompt.
+ *
+ * The harness system prompt describes tools this model cannot call, so only
+ * its opening is passed on, marked as context.
+ * @param options - the assembled request.
+ * @param cwd - the working directory the CLI will run in, when known.
+ * @returns the instructions text.
+ */
+export function delegationInstructions(options, cwd) {
+  const system = typeof options?.system === 'string' && options.system.trim() !== '' ? options.system.trim() : ''
+  return [
+    '本回合由 DeepSeek Harness 委派给 Claude Code 执行。用户消息是 DeepSeek Harness 会话的近期对话记录，最后一条是当前请求；'
+      + '其中的图片已作为图片随消息附上，「只读副本」路径也可以用 Read 工具读取。'
+      + '请用你自己的工具完成任务，直接输出最终结果；不要反问、不要复述流程。',
+    cwd === undefined ? undefined : `工作目录：${cwd}`,
+    system === '' ? undefined : `补充说明（来自 DeepSeek Harness，其中提到的工具你未必拥有）：${system.slice(0, 2_000)}`,
+  ].filter(part => part !== undefined).join('\n')
+}
+
+/**
+ * The recent conversation as one text transcript. Images and files are named
+ * in place; {@link buildDelegatedContent} is what carries the images.
+ * @param options - the assembled request.
+ * @returns the transcript text.
+ */
+export function renderDelegatedPrompt(options) {
+  return renderTurns(delegatedTurns(options), plainDescription).trim()
+}
+
+/**
+ * The recent conversation as content blocks for the CLI's stream-json input:
+ * the transcript, with every image that fits the turn's bounds as an image
+ * block at the place it was sent, labelled with its read-only host copy.
+ * An image that is left out, or that cannot be read, is described in text
+ * instead; it never fails the turn.
+ * @param options - the assembled request.
+ * @param context - the attachment store (`ctx.attachments`), image bounds,
+ *   and cancellation.
+ * @returns text and image blocks, in conversation order.
+ */
+export async function buildDelegatedContent(options, { attachments, limits = CLI_IMAGE_LIMITS, signal } = {}) {
+  const shape = delegatedTurns(options)
+  const images = shape.turns.flatMap(turn => turn.parts.filter(part => part.kind === 'image'))
+  const pathOf = ref => hostPath(() => attachments?.imageHostPath?.(ref))
+  const filePathOf = ref => hostPath(() => attachments?.fileHostPath?.(ref))
+
+  // Newest first: when the bounds bite, the oldest images are the ones left out.
+  const carried = new Map()
+  const reasons = new Map()
+  const reads = new Map()
+  let total = 0
+  let count = 0
+  let full = false
+  for (const part of [...images].reverse()) {
+    if (attachments === undefined || attachments === null) {
+      reasons.set(part, 'unavailable')
+      continue
+    }
+    if (full) {
+      reasons.set(part, 'limit')
+      continue
+    }
+    const id = String(part.ref.attachmentId)
+    try {
+      if (!reads.has(id)) reads.set(id, readRequestImage(attachments, part.ref, limits, signal))
+      const image = await reads.get(id)
+      const size = base64Length(image.data.byteLength)
+      if (size > MAX_IMAGE_BASE64_BYTES) {
+        reasons.set(part, 'too-large')
+        continue
+      }
+      if (count + 1 > limits.maxImages || total + size > limits.maxTotalBase64Bytes) {
+        full = true
+        reasons.set(part, 'limit')
+        continue
+      }
+      count += 1
+      total += size
+      carried.set(part, image)
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      reasons.set(part, 'unreadable')
+    }
+  }
+
+  const blocks = []
+  let text = shape.truncated ? `${TRUNCATED_MARK}\n\n` : ''
+  const flush = () => {
+    if (text !== '') blocks.push({ type: 'text', text })
+    text = ''
+  }
+  for (const [turnIndex, turn] of shape.turns.entries()) {
+    text += `${turnIndex === 0 ? '' : '\n\n'}${turn.label}：`
+    for (const [partIndex, part] of turn.parts.entries()) {
+      const separator = partIndex === 0 ? '' : '\n'
+      if (part.kind === 'text') {
+        text += separator + part.text
+        continue
+      }
+      if (part.kind === 'file') {
+        const path = filePathOf(part.ref)
+        text += `${separator}[文件 ${attachmentName(part.ref)}${path === undefined ? '' : `；只读副本：${path}`}]`
+        continue
+      }
+      const path = pathOf(part.ref)
+      const copy = path === undefined ? '' : `；只读副本：${path}`
+      const image = carried.get(part)
+      if (image === undefined) {
+        text += `${separator}[图片 ${attachmentName(part.ref)}：${imageOmission(reasons.get(part))}${copy}]`
+        continue
+      }
+      text += `${separator}[图片 ${attachmentName(part.ref)}（${image.width}x${image.height}px）${copy}]`
+      flush()
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: image.mediaType, data: Buffer.from(image.data).toString('base64') },
+      })
+    }
+  }
+  flush()
+  return blocks
+}
+
+function imageOmission(reason) {
+  switch (reason) {
+    case 'limit': return '超出本回合的图片上限，未随消息附上，需要时请用 Read 工具读取'
+    case 'too-large': return '图片过大，未随消息附上，需要时请用 Read 工具读取'
+    case 'unavailable': return '当前运行环境无法读取附件'
+    default: return '读取失败，未随消息附上'
+  }
+}
+
+/**
+ * One request-sized version of a stored image: the store's own request
+ * encoder when it has one, otherwise the stored normalized bytes.
+ */
+async function readRequestImage(attachments, ref, limits, signal) {
+  if (typeof attachments.readImageRequest === 'function') {
+    const version = await attachments.readImageRequest(ref, { maxPixels: limits.maxPixels, maxBytes: limits.maxBytesPerImage }, signal)
+    return { data: version.data, mediaType: version.mediaType ?? ref.mediaType, width: version.width ?? ref.width, height: version.height ?? ref.height }
+  }
+  const stored = await attachments.readImage(ref, signal)
+  return { data: stored.data, mediaType: stored.mediaType ?? ref.mediaType, width: ref.width, height: ref.height }
+}
+
+/**
+ * The prompt of a one-shot auxiliary request: its messages' text, verbatim.
+ * The caller frames its own input, so nothing is added around it.
+ * @param options - the assembled request.
+ * @returns the prompt text.
+ */
+export function renderAuxiliaryPrompt(options) {
+  const messages = Array.isArray(options?.messages) ? options.messages : []
+  return messages
+    .filter(message => message !== null && typeof message === 'object' && message.role !== 'system')
+    .flatMap(message => (Array.isArray(message.content) ? message.content : []))
+    .filter(block => block?.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('\n\n')
+    .trim()
 }
 
 /**
@@ -121,56 +424,13 @@ function turnUsage(lastRequest, finished) {
   }
 }
 
-/**
- * Turn an assembled request into one CLI prompt.
- *
- * The leading system message carries the harness's system prompt, which
- * describes tools this model cannot call; the CLI brings its own instead.
- * @param options - the assembled request.
- * @param cwd - the working directory the CLI will run in, when known.
- * @returns the prompt text.
- */
-export function renderDelegatedPrompt(options, cwd) {
-  const messages = Array.isArray(options?.messages) ? options.messages : []
-  const turns = []
-  for (const message of messages) {
-    if (message === null || typeof message !== 'object') continue
-    if (message.role === 'system') continue
-    const content = Array.isArray(message.content) ? message.content : []
-    const text = content.map(renderBlock).filter(part => part !== '').join('\n').trim()
-    if (text === '') continue
-    const label = message.role === 'user' ? '用户' : message.role === 'assistant' ? '助手' : String(message.role)
-    turns.push(`${label}：${text}`)
-  }
-  let transcript = turns.join('\n\n')
-  if (transcript.length > MAX_PROMPT_CHARS) {
-    transcript = `…（较早对话已截断）\n\n${transcript.slice(-MAX_PROMPT_CHARS)}`
-  }
-  const system = typeof options?.system === 'string' && options.system.trim() !== '' ? options.system.trim() : ''
-  const header = [
-    '[本回合由 DeepSeek Harness 委派给 Claude Code CLI 执行。请用你自己的工具完成任务，'
-      + '直接输出最终结果；不要反问、不要复述流程。]',
-    cwd === undefined ? undefined : `[工作目录：${cwd}]`,
-    system === '' ? undefined : `[补充说明：${system.slice(0, 2_000)}]`,
-  ].filter(part => part !== undefined).join('\n')
-  return `${header}\n\n${transcript}`.trim()
-}
-
-/**
- * The prompt of a one-shot auxiliary request: its messages' text, verbatim.
- * The caller frames its own input, so nothing is added around it.
- * @param options - the assembled request.
- * @returns the prompt text.
- */
-export function renderAuxiliaryPrompt(options) {
-  const messages = Array.isArray(options?.messages) ? options.messages : []
-  return messages
-    .filter(message => message !== null && typeof message === 'object' && message.role !== 'system')
-    .flatMap(message => (Array.isArray(message.content) ? message.content : []))
-    .filter(block => block?.type === 'text' && typeof block.text === 'string')
-    .map(block => block.text)
-    .join('\n\n')
-    .trim()
+/** One line describing a retry the CLI is making on its own. */
+function retryNote(event) {
+  const status = event.status === undefined ? '出错' : `HTTP ${event.status}`
+  const reason = typeof event.error === 'string' && event.error !== '' ? `（${event.error}）` : ''
+  const attempt = event.attempt === undefined ? '' : event.maxRetries === undefined ? ` ${event.attempt}` : ` ${event.attempt}/${event.maxRetries}`
+  const delay = event.delayMs === undefined ? '' : `，${(event.delayMs / 1000).toFixed(1)} 秒后`
+  return `网关返回 ${status}${reason}，CLI 自动重试${attempt}${delay}`
 }
 
 /**
@@ -180,7 +440,7 @@ export function renderAuxiliaryPrompt(options) {
  * The CLI's own system prompt and tool set stay in place even for a title:
  * they are part of what the gateway sees from the official client.
  */
-function cliCall(options, { titleModel, cwdOf, modeOf }) {
+async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imageLimits }) {
   if (options?.purpose === 'session-title') {
     return {
       prompt: renderAuxiliaryPrompt(options),
@@ -192,34 +452,62 @@ function cliCall(options, { titleModel, cwdOf, modeOf }) {
     }
   }
   const cwd = cwdOf()
-  return { prompt: renderDelegatedPrompt(options, cwd), model: options.model, mode: modeOf(), cwd }
+  const content = await buildDelegatedContent(options, { attachments: attachmentsOf(), limits: imageLimits, signal: options?.signal })
+  return {
+    content,
+    appendSystemPrompt: delegationInstructions(options, cwd),
+    model: options.model,
+    mode: modeOf(),
+    cwd,
+  }
 }
 
 /**
  * Wrap an adapter so the CLI-backed models run through the local CLI.
  *
  * @param options - the inner adapter, the CLI runner, the CLI-backed model ids,
- *   the model session titles run on, and the mode and working directory each
- *   turn runs with.
+ *   the model session titles run on, the mode and working directory each
+ *   turn runs with, and the attachment store images are read from.
  * @returns an adapter with the same provider surface.
  */
-export function createClaudeCliAdapter({ inner, runner, modelIds = CLI_BACKED_MODEL_IDS, titleModel = TITLE_MODEL_ID, resolveMode, resolveCwd }) {
+export function createClaudeCliAdapter({
+  inner,
+  runner,
+  modelIds = CLI_BACKED_MODEL_IDS,
+  titleModel = TITLE_MODEL_ID,
+  resolveMode,
+  resolveCwd,
+  resolveAttachments,
+  imageLimits = CLI_IMAGE_LIMITS,
+}) {
   if (inner === undefined || inner === null) throw new Error('the CLI adapter needs an inner adapter')
   if (runner === undefined || runner === null) throw new Error('the CLI adapter needs a runner')
   const cliModels = new Set(modelIds)
   /** The mode is read per turn so a settings change applies without a reload. */
   const modeOf = () => (typeof resolveMode === 'function' ? resolveMode() : undefined)
   const cwdOf = () => (typeof resolveCwd === 'function' ? resolveCwd() : undefined)
+  const attachmentsOf = () => {
+    try {
+      return typeof resolveAttachments === 'function' ? resolveAttachments() ?? undefined : undefined
+    } catch {
+      return undefined
+    }
+  }
 
   async function* cliStream(options) {
+    // A title is read back as text; progress notes belong to delegated turns.
+    const quiet = options?.purpose === 'session-title'
+    const blocks = createBlockWriter()
+    // Shown at once, so a turn that waits on the CLI never looks idle.
+    if (!quiet) yield* blocks.note('▸ 启动 Claude Code CLI…\n')
     let call
     try {
-      call = cliCall(options, { titleModel, cwdOf, modeOf })
+      call = await cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imageLimits })
     } catch (error) {
+      yield* blocks.close()
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'PI_AI_ERROR', message: String(error?.message ?? error) } } }
       return
     }
-    const blocks = createBlockWriter()
     // The CLI may print a finished message more than once as it grows.
     const seen = new Set()
     const firstSighting = key => {
@@ -228,11 +516,22 @@ export function createClaudeCliAdapter({ inner, runner, modelIds = CLI_BACKED_MO
       seen.add(key)
       return true
     }
+    let retries = 0
     try {
       let finished
       let lastRequest
       for await (const event of runner.stream({ ...call, signal: options.signal })) {
         switch (event.type) {
+          case 'started':
+            if (!quiet) {
+              const detail = [event.version, event.model].filter(part => typeof part === 'string' && part !== '').join(' · ')
+              yield* blocks.note(`▸ Claude Code CLI 已启动${detail === '' ? '' : `（${detail}）`}\n`)
+            }
+            break
+          case 'retry':
+            retries = Math.max(retries, event.attempt ?? retries + 1)
+            if (!quiet) yield* blocks.note(`  ↻ ${retryNote(event)}\n`)
+            break
           case 'block':
             blocks.boundary(event.kind)
             break
@@ -262,7 +561,14 @@ export function createClaudeCliAdapter({ inner, runner, modelIds = CLI_BACKED_MO
       yield { type: 'usage', usage: turnUsage(lastRequest, finished) }
       yield { type: 'finish', reason: { kind: 'stop' } }
     } catch (error) {
-      const message = String(error?.message ?? error)
+      yield* blocks.close()
+      const raw = String(error?.message ?? error)
+      // The request came from the official CLI, so a client-policy refusal
+      // gets its own explanation rather than the HTTP route's advice, and a
+      // busy gateway is named as such after the CLI's own retries ran out.
+      const message = classifyClientPolicy(raw)
+        ? explainCliClientPolicyFailure(raw)
+        : classifyCapacity(raw) ? explainCliCapacityFailure(raw, retries) : raw
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'PI_AI_ERROR', message } } }
     }
   }

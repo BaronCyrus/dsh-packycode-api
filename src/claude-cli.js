@@ -33,9 +33,34 @@ export const DEFAULT_CLAUDE_MODE = 'edit'
 /** Isolated CLI home; the plugin owns the endpoint and key it runs with. */
 export const DEFAULT_CLAUDE_CONFIG_DIR = join(homedir(), '.dsh', 'packycode-claude-cli')
 export const DEFAULT_CLAUDE_TIMEOUT_MS = 30 * 60 * 1000
+/**
+ * How long a streaming run may stay silent after starting. The CLI prints its
+ * `system/init` line within a second or two once it runs; one that prints
+ * nothing for this long is stuck before its first request and is stopped, so
+ * the turn reports it instead of spinning until the overall timeout.
+ */
+export const DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS = 2 * 60 * 1000
 
-/** Argument lists travel through argv, which the kernel bounds. */
+/**
+ * Upper bound on one run's prompt text. The prompt travels over stdin, so this
+ * is a sanity cap rather than an OS limit.
+ */
 const MAX_PROMPT_CHARS = 100_000
+/** Upper bound on the images one run carries. */
+const MAX_INPUT_IMAGES = 20
+
+/**
+ * Instructions a run carries when its caller supplies none.
+ *
+ * In print mode the official CLI chooses its own identity line from whether
+ * it was given appended instructions: with them it introduces itself to the
+ * model as "Claude Code, Anthropic's official CLI for Claude, running within
+ * the Claude Agent SDK"; without them as "a Claude agent, built on Anthropic's
+ * Claude Agent SDK". PackyCode routes Claude only to Claude Code, and a run
+ * without instructions was refused upstream as not coming from it, so every
+ * run states what it was delegated to do.
+ */
+export const DEFAULT_APPEND_SYSTEM_PROMPT = 'This task was delegated to Claude Code by DeepSeek Harness. Complete it with your own tools and reply with the final result.'
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 const KILL_GRACE_MS = 3_000
 
@@ -145,31 +170,62 @@ export function resolveSpawnCommand(binary, { platform = process.platform, exist
 
 /**
  * Build the CLI arguments for one delegated task.
- * @param options - the prompt, the permission mode, an optional model, whether
- *   the caller consumes the streaming protocol, and optional instructions
- *   appended to the CLI's own system prompt. The CLI's system prompt and tool
- *   set are never replaced: they are part of what the official client sends.
+ *
+ * The prompt is not among them: it travels over stdin (see
+ * {@link buildClaudeInput}). An argv is bounded — about 32K UTF-16 units on
+ * Windows — and cannot carry an image; stdin carries both.
+ * @param options - the permission mode, an optional model, whether the caller
+ *   consumes the streaming protocol, and instructions appended to the CLI's
+ *   own system prompt ({@link DEFAULT_APPEND_SYSTEM_PROMPT} when blank). The
+ *   CLI's system prompt and tool set are never replaced: they are part of
+ *   what the official client sends.
  * @returns argv after the binary name.
  */
-export function buildClaudeArgs({ prompt, mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt } = {}) {
-  const text = typeof prompt === 'string' ? prompt : ''
-  if (text.trim() === '') throw new Error('claude_code needs a non-empty prompt')
-  if (text.length > MAX_PROMPT_CHARS) {
-    throw new Error(`claude_code prompt is too long (${text.length} > ${MAX_PROMPT_CHARS} characters)`)
-  }
+export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt } = {}) {
   const spec = CLAUDE_CLI_MODES[mode]
   if (spec === undefined) {
     throw new Error(`claude_code mode must be one of ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
   }
-  const args = ['-p', text, '--output-format', stream ? 'stream-json' : 'json']
-  if (stream) args.push('--include-partial-messages', '--verbose')
+  const args = stream
+    ? ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose']
+    : ['-p', '--output-format', 'json']
   const named = typeof model === 'string' ? model.trim() : ''
   if (named !== '') args.push('--model', named)
   const appended = typeof appendSystemPrompt === 'string' ? appendSystemPrompt.trim() : ''
-  if (appended !== '') args.push('--append-system-prompt', appended)
+  args.push('--append-system-prompt', appended === '' ? DEFAULT_APPEND_SYSTEM_PROMPT : appended)
   if (spec.skipPermissions === true) args.push('--dangerously-skip-permissions')
   else args.push('--allowedTools', ...spec.allowedTools)
   return args
+}
+
+/**
+ * Build what the CLI reads from stdin for one run.
+ *
+ * A streaming run reads one `stream-json` user message, whose content may mix
+ * text and Anthropic image blocks; the CLI forwards those images to the model
+ * as images. A non-streaming run reads plain prompt text.
+ * @param options - the prompt text, or `content` blocks (`text` and
+ *   `image` with a base64 `source`), and whether the run streams.
+ * @returns the stdin payload.
+ */
+export function buildClaudeInput({ prompt, content, stream = false } = {}) {
+  const blocks = Array.isArray(content)
+    ? content.filter(block => (block?.type === 'text' && typeof block.text === 'string' && block.text !== '') || block?.type === 'image')
+    : [{ type: 'text', text: typeof prompt === 'string' ? prompt : '' }]
+  const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
+  const images = blocks.filter(block => block.type === 'image')
+  if (text.trim() === '' && images.length === 0) throw new Error('claude_code needs a non-empty prompt')
+  if (text.length > MAX_PROMPT_CHARS) {
+    throw new Error(`claude_code prompt is too long (${text.length} > ${MAX_PROMPT_CHARS} characters)`)
+  }
+  if (images.length > MAX_INPUT_IMAGES) {
+    throw new Error(`claude_code carries at most ${MAX_INPUT_IMAGES} images per run (got ${images.length})`)
+  }
+  if (!stream) {
+    if (images.length > 0) throw new Error('claude_code images need the streaming CLI input')
+    return text
+  }
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content: blocks } })}\n`
 }
 
 /**
@@ -319,6 +375,30 @@ export function readClaudeStreamEvents(event) {
       .filter(block => block?.type === 'tool_result' && block.is_error === true)
       .map(block => ({ type: 'tool-error', id: String(block.tool_use_id ?? ''), text: oneLine(toolResultText(block.content)) }))
   }
+  if (event.type === 'system') {
+    // The CLI says it is up, and when the gateway pushes back it retries on
+    // its own — for minutes with the default ten attempts — printing nothing
+    // else meanwhile. Both are worth showing, or a throttled turn looks hung.
+    if (event.subtype === 'init') {
+      return [{
+        type: 'started',
+        version: typeof event.claude_code_version === 'string' ? event.claude_code_version : '',
+        model: typeof event.model === 'string' ? event.model : '',
+      }]
+    }
+    if (event.subtype === 'api_retry') {
+      const count = value => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+      return [{
+        type: 'retry',
+        attempt: count(event.attempt),
+        maxRetries: count(event.max_retries),
+        delayMs: count(event.retry_delay_ms),
+        status: count(event.error_status),
+        error: typeof event.error === 'string' ? event.error : '',
+      }]
+    }
+    return []
+  }
   if (event.type === 'result') return [{ type: 'result', result: event }]
   return []
 }
@@ -327,8 +407,9 @@ export function readClaudeStreamEvents(event) {
  * A Claude Code CLI runner.
  * @param options - binary (a path, or a function resolving one per run so a
  *   CLI installed after startup is picked up), config home, credential
- *   resolution, and process seams.
- * @returns `{ run({ prompt, mode, model, cwd, signal }) }`.
+ *   resolution, the overall and (streaming) startup time limits, and process
+ *   seams.
+ * @returns `{ run(options), stream(options) }`.
  */
 export function createClaudeRunner({
   binary = findClaudeBinary(),
@@ -336,6 +417,7 @@ export function createClaudeRunner({
   resolveCredential,
   spawnImpl = spawn,
   timeoutMs = DEFAULT_CLAUDE_TIMEOUT_MS,
+  startupTimeoutMs = DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS,
   platform = process.platform,
 } = {}) {
   if (typeof resolveCredential !== 'function') throw new Error('the Claude Code CLI runner needs resolveCredential')
@@ -345,14 +427,20 @@ export function createClaudeRunner({
    * timeout, and kill the process — with a grace period — when the caller
    * aborts. Both public entry points share it.
    */
-  const start = async ({ prompt, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout }) => {
-    const args = buildClaudeArgs({ prompt, mode, model, stream, appendSystemPrompt })
+  const start = async ({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout }) => {
+    const args = buildClaudeArgs({ mode, model, stream, appendSystemPrompt })
+    const input = buildClaudeInput({ prompt, content, stream })
     const { baseUrl, token } = await resolveCredential()
     const program = typeof binary === 'function' ? await binary() : binary
     const command = resolveSpawnCommand(program, { platform })
     const env = withProgramDirOnPath(buildClaudeEnvironment({ baseUrl, token, configDir }), program, platform)
-    const child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-    const state = { stdout: '', stderr: '', timedOut: false, settled: false }
+    const child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    // The prompt goes over stdin, then stdin closes so the CLI knows the turn
+    // is complete. A CLI that exits before reading it must not take the host
+    // down with an unhandled EPIPE; its exit is reported through `close`.
+    child.stdin?.on?.('error', () => undefined)
+    child.stdin?.end?.(input)
+    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false }
     const kill = () => {
       if (child.exitCode !== null || child.signalCode !== null) return
       child.kill('SIGTERM')
@@ -372,12 +460,26 @@ export function createClaudeRunner({
       }, timeoutMs)
       : undefined
     timer?.unref?.()
+    // Only a streaming run prints as it goes; a JSON run prints once, at the end.
+    let startupTimer = stream && startupTimeoutMs > 0
+      ? setTimeout(() => {
+        if (state.sawOutput) return
+        state.silent = true
+        kill()
+      }, startupTimeoutMs)
+      : undefined
+    startupTimer?.unref?.()
+    const clearStartup = () => {
+      if (startupTimer !== undefined) clearTimeout(startupTimer)
+      startupTimer = undefined
+    }
     const onAbort = () => kill()
     signal?.addEventListener('abort', onAbort, { once: true })
     const release = () => {
       if (state.settled) return
       state.settled = true
       if (timer !== undefined) clearTimeout(timer)
+      clearStartup()
       signal?.removeEventListener('abort', onAbort)
     }
     // Both pipes are owned here: a caller that awaits before attaching would
@@ -386,6 +488,8 @@ export function createClaudeRunner({
     child.stdout?.setEncoding?.('utf8')
     child.stderr?.setEncoding?.('utf8')
     child.stdout?.on('data', chunk => {
+      state.sawOutput = true
+      clearStartup()
       const text = String(chunk)
       state.stdout = (state.stdout + text).slice(-MAX_CAPTURE_BYTES)
       onStdout?.(text)
@@ -409,6 +513,11 @@ export function createClaudeRunner({
           reject(new Error(`claude_code timed out after ${Math.round(timeoutMs / 1000)}s`))
           return
         }
+        if (state.silent) {
+          const detail = state.stderr.trim().split('\n').slice(-4).join(' ').slice(0, 400)
+          reject(new Error(`Claude Code CLI printed nothing within ${Math.round(startupTimeoutMs / 1000)}s of starting and was stopped${detail === '' ? '' : `: ${detail}`}`))
+          return
+        }
         if (signal?.aborted === true) {
           reject(new Error('claude_code was aborted'))
           return
@@ -426,9 +535,9 @@ export function createClaudeRunner({
      * @param options - prompt, mode, model, working directory, and cancellation.
      * @returns the CLI's answer plus its own accounting.
      */
-    async run({ prompt, mode = DEFAULT_CLAUDE_MODE, model, cwd, signal } = {}) {
+    async run({ prompt, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal } = {}) {
       const startedAt = Date.now()
-      const { state, closed } = await start({ prompt, mode, model, cwd, signal, stream: false })
+      const { state, closed } = await start({ prompt, mode, model, appendSystemPrompt, cwd, signal, stream: false })
       const { code, killSignal } = await closed
       const parsed = parseClaudeResult(state.stdout)
       if (parsed === undefined) throw new Error(failureMessage(undefined, code ?? killSignal, state.stderr))
@@ -449,18 +558,19 @@ export function createClaudeRunner({
      * Run one delegated task, yielding its answer as the CLI produces it.
      * The final `result` event carries the CLI's own accounting, summed over
      * every request the CLI made.
-     * @param options - as {@link run}, plus optional `appendSystemPrompt`
-     *   instructions.
+     * @param options - as {@link run}, plus optional `content` blocks (text
+     *   and base64 images) that replace `prompt`.
      * @returns an async generator of {@link readClaudeStreamEvents} events and
      *   one closing `result` event.
      */
-    async *stream({ prompt, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal } = {}) {
+    async *stream({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal } = {}) {
       const startedAt = Date.now()
       let buffer = ''
       let sawResult
       const lines = []
       const { state, closed, kill } = await start({
         prompt,
+        content,
         mode,
         model,
         appendSystemPrompt,

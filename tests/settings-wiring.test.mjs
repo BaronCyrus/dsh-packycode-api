@@ -91,7 +91,7 @@ test('installs its host-override section under its own namespace', () => {
   apply(ctx)
   assert.equal(seen.installed.ns, 'packycode-api')
   assert.equal(seen.installed.entry.apiHost, 'https://cf.api.fan')
-  assert.equal(seen.installed.entry.statusHost, 'https://www.packyapi.com')
+  assert.equal(seen.installed.entry.statusHost, 'https://www.packyapi.ai')
   assert.equal(typeof seen.installed.hooks.setSource, 'function')
   assert.equal(typeof seen.installed.hooks.onChange, 'function')
 })

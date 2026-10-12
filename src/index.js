@@ -51,6 +51,9 @@ export const name = PLUGIN_ID
  */
 export const inject = ['llm', 'credentials']
 
+/** What a `claude_code` tool run is told about where its task came from. */
+const CLAUDE_TOOL_INSTRUCTIONS = 'This task was delegated to Claude Code by another agent in DeepSeek Harness through its claude_code tool. The task text is self-contained; complete it with your own tools and reply with the final result only.'
+
 /** Host overrides; a profile that never installs this section keeps the defaults. */
 export const Config = z.object({
   apiHost: z.string().default(DEFAULT_API_HOST),
@@ -301,6 +304,9 @@ export function apply(ctx, config) {
     runner: claudeRunner,
     resolveMode: resolveCliMode,
     resolveCwd: resolveCliCwd,
+    // Images in a CLI-backed turn are read from the same store the HTTP
+    // route reads them from, and sent to the CLI as image blocks.
+    resolveAttachments: () => ctx.get?.('attachments') ?? ctx.attachments,
   })
 
   ctx.llm.registerAdapter([PROVIDER], adapter)
@@ -417,6 +423,7 @@ export function apply(ctx, config) {
           prompt: args.prompt,
           mode: capClaudeMode(args.mode, cliModeCeiling(exec?.agent?.session)) ?? DEFAULT_CLAUDE_MODE,
           model: args.model,
+          appendSystemPrompt: CLAUDE_TOOL_INSTRUCTIONS,
           cwd,
           signal: exec?.signal,
         })
@@ -428,11 +435,13 @@ export function apply(ctx, config) {
 export {
   buildClaudeArgs,
   buildClaudeEnvironment,
+  buildClaudeInput,
   CLAUDE_CLI_MODES,
   CLAUDE_MISSING_MESSAGE,
   CLAUDE_NPM_PACKAGE,
   claudeBinaryCandidates,
   createClaudeRunner,
+  DEFAULT_APPEND_SYSTEM_PROMPT,
   findClaudeBinary,
   locateClaudeBinary,
   parseClaudeResult,
@@ -441,20 +450,36 @@ export {
   summarizeToolUse,
 } from './claude-cli.js'
 export { CLAUDE_INSTALL_COMMAND, createClaudeCliManager, explainNpmFailure, locateNpm, npmCandidates, parseClaudeVersion } from './claude-install.js'
-export { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderAuxiliaryPrompt, renderDelegatedPrompt, TITLE_MODEL_ID } from './claude-adapter.js'
+export {
+  buildDelegatedContent,
+  CLI_BACKED_MODEL_IDS,
+  CLI_IMAGE_LIMITS,
+  createClaudeCliAdapter,
+  delegationInstructions,
+  renderAuxiliaryPrompt,
+  renderDelegatedPrompt,
+  TITLE_MODEL_ID,
+} from './claude-adapter.js'
 export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession } from './permission.js'
-export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
+export { accountHostOrder, createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage, statusHostOrder } from './balance.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
 export {
   CHANNEL,
   DEFAULT_API_HOST,
   DEFAULT_STATUS_HOST,
   DISPLAY_NAME,
+  LEGACY_STATUS_HOSTS,
   PLUGIN_ID,
   PROVIDER,
   SETTINGS_NAMESPACE,
 } from './constants.js'
-export { classifyClientPolicy, classifyGatewayFailure, explainClientPolicyFailure, normalizeFailureMessage } from './failures.js'
+export {
+  classifyClientPolicy,
+  classifyGatewayFailure,
+  explainClientPolicyFailure,
+  explainCliClientPolicyFailure,
+  normalizeFailureMessage,
+} from './failures.js'
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'
 export { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 export { createPackyCodeRpc, normalizeHost } from './rpc.js'

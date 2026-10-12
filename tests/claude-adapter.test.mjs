@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CLI_BACKED_MODEL_IDS, createClaudeCliAdapter, renderDelegatedPrompt, TITLE_MODEL_ID } from '../src/claude-adapter.js'
+import {
+  buildDelegatedContent,
+  CLI_BACKED_MODEL_IDS,
+  CLI_IMAGE_LIMITS,
+  createClaudeCliAdapter,
+  delegationInstructions,
+  renderDelegatedPrompt,
+  TITLE_MODEL_ID,
+} from '../src/claude-adapter.js'
+
+/** The reasoning note every delegated turn opens with, before the CLI is up. */
+const LAUNCH = '▸ 启动 Claude Code CLI…\n'
+const LAUNCH_CHUNKS = [
+  { type: 'block-start', index: 0, blockType: 'reasoning' },
+  { type: 'reasoning-delta', index: 0, text: LAUNCH },
+]
 
 /** An inner adapter that records what it was asked for. */
 function innerAdapter({ model = { id: 'gpt-6.1-sol' } } = {}) {
@@ -72,10 +87,12 @@ test('a delegated turn streams the CLI text and finishes clean', async () => {
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
   }))
   assert.deepEqual(chunks, [
-    { type: 'block-start', index: 0, blockType: 'text' },
-    { type: 'text-delta', index: 0, text: 'Hel' },
-    { type: 'text-delta', index: 0, text: 'lo' },
-    { type: 'block-end', index: 0, block: { type: 'text', text: 'Hello' } },
+    ...LAUNCH_CHUNKS,
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: LAUNCH } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: 'Hel' },
+    { type: 'text-delta', index: 1, text: 'lo' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: 'Hello' } },
     { type: 'usage', usage: { inputTokens: 3, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0 } },
     { type: 'finish', reason: { kind: 'stop' } },
   ])
@@ -98,6 +115,7 @@ test('thinking and tool activity stream live as reasoning, the answer as text', 
   const chunks = await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))
   const ends = chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)
   assert.deepEqual(ends, [
+    { type: 'reasoning', text: LAUNCH },
     { type: 'reasoning', text: '先看仓库\n▸ Bash · git status\n  ✗ not a git repository\n' },
     { type: 'text', text: '第一段' },
     { type: 'text', text: '第二段' },
@@ -153,11 +171,12 @@ test('a delegated turn reports a CLI failure without blaming a key', async () =>
   }
   const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
   const chunks = await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))
-  assert.equal(chunks.length, 1)
-  assert.equal(chunks[0].type, 'finish')
-  assert.equal(chunks[0].reason.kind, 'error')
-  assert.equal(chunks[0].reason.failure.code, 'PI_AI_ERROR')
-  assert.match(chunks[0].reason.failure.message, /401 无效的令牌/u)
+  assert.deepEqual(chunks.slice(0, -1), [...LAUNCH_CHUNKS, { type: 'block-end', index: 0, block: { type: 'reasoning', text: LAUNCH } }])
+  const finish = chunks.at(-1)
+  assert.equal(finish.type, 'finish')
+  assert.equal(finish.reason.kind, 'error')
+  assert.equal(finish.reason.failure.code, 'PI_AI_ERROR')
+  assert.match(finish.reason.failure.message, /401 无效的令牌/u)
 })
 
 test('the request signal reaches the CLI so a cancelled turn kills it', async () => {
@@ -179,6 +198,8 @@ test('a session title runs on the small model, read-only, outside the workspace'
     messages: [{ role: 'user', content: [{ type: 'text', text: '登录页报错了' }] }],
   }))
   assert.equal(chunks.at(-1).reason.kind, 'stop')
+  // A title is read back as text: no progress notes in it.
+  assert.equal(chunks.some(chunk => chunk.type === 'reasoning-delta'), false)
   assert.equal(runner.calls.length, 1)
   const call = runner.calls[0]
   assert.equal(call.model, TITLE_MODEL_ID)
@@ -198,20 +219,30 @@ test('every CLI-backed model is routed to the CLI with its own id', async () => 
 })
 
 test('a delegated prompt drops the harness system prompt and marks what it cannot carry', () => {
-  const prompt = renderDelegatedPrompt({
+  const request = {
+    system: '补充：回答用中文',
     messages: [
       { role: 'system', content: [{ type: 'text', text: 'DSH 系统提示：你有 bash 工具……' }] },
       { role: 'user', content: [{ type: 'text', text: '看看这个文件' }, { type: 'image', source: {} }] },
       { role: 'assistant', content: [{ type: 'text', text: '好' }, { type: 'tool-call', name: 'read' }] },
+      { role: 'user', content: [{ type: 'tool-result', toolCallId: 't', content: [{ type: 'text', text: '文件内容 abc' }] }] },
     ],
-  }, '/work/repo')
+  }
+  const prompt = renderDelegatedPrompt(request)
   // The CLI has its own system prompt and its own tools.
   assert.equal(prompt.includes('DSH 系统提示'), false)
-  assert.match(prompt, /工作目录：\/work\/repo/u)
   assert.match(prompt, /用户：看看这个文件/u)
   assert.match(prompt, /\[图片\]/u)
   assert.match(prompt, /\[调用工具 read\]/u)
   assert.match(prompt, /助手：好/u)
+  // A structured tool result keeps its text.
+  assert.match(prompt, /\[工具结果\]\n文件内容 abc/u)
+  // The delegation itself travels as appended system instructions.
+  const instructions = delegationInstructions(request, '/work/repo')
+  assert.match(instructions, /委派给 Claude Code/u)
+  assert.match(instructions, /工作目录：\/work\/repo/u)
+  assert.match(instructions, /补充：回答用中文/u)
+  assert.equal(prompt.includes('工作目录'), false)
 })
 
 test('a long conversation is trimmed to its most recent turns', () => {
@@ -222,4 +253,142 @@ test('a long conversation is trimmed to its most recent turns', () => {
   assert.match(prompt, /较早对话已截断/u)
   assert.match(prompt, /第 199 轮/u)
   assert.equal(prompt.includes('第 0 轮'), false)
+})
+
+/** An attachment store with two images and one file, recording its reads. */
+function fakeAttachments({ failId } = {}) {
+  const reads = []
+  return {
+    reads,
+    imageHostPath: ref => `/home/u/.dsh/attachments/${ref.attachmentId.slice(7, 9)}/${ref.attachmentId.slice(7)}`,
+    fileHostPath: ref => `/home/u/.dsh/files/${ref.name}`,
+    async readImageRequest(ref, policy) {
+      reads.push({ id: ref.attachmentId, policy })
+      if (ref.attachmentId === failId) throw new Error('integrity check failed')
+      return { data: new Uint8Array(ref.bytes), mediaType: 'image/png', width: 64, height: 32, bytes: ref.bytes }
+    },
+  }
+}
+
+const imageRef = (hex, bytes = 30, name) => ({
+  attachmentId: `sha256:${hex.repeat(64 / hex.length)}`,
+  mediaType: 'image/jpeg',
+  bytes,
+  width: 640,
+  height: 320,
+  ...(name === undefined ? {} : { name }),
+})
+
+test('a delegated turn sends its images as image blocks, in place, with their read-only copies', async () => {
+  const attachments = fakeAttachments()
+  const first = imageRef('a1', 30, 'shot.png')
+  const second = imageRef('b2', 60)
+  const content = await buildDelegatedContent({
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: '看第一张' }, { type: 'image', attachment: first }] },
+      { role: 'assistant', content: [{ type: 'text', text: '红色方块' }] },
+      { role: 'user', content: [{ type: 'image', attachment: second }, { type: 'text', text: '和这张比呢' }, { type: 'file', attachment: { attachmentId: 'sha256:ff', name: 'notes.md', bytes: 5 } }] },
+    ],
+  }, { attachments })
+  assert.deepEqual(content.map(block => block.type), ['text', 'image', 'text', 'image', 'text'])
+  assert.match(content[0].text, /^用户：看第一张\n\[图片 shot\.png（64x32px）；只读副本：\/home\/u\/\.dsh\/attachments\/a1\/a1a1/u)
+  assert.deepEqual(content[1].source, { type: 'base64', media_type: 'image/png', data: Buffer.from(new Uint8Array(30)).toString('base64') })
+  assert.match(content[2].text, /助手：红色方块\n\n用户：\[图片 b2b2b2b2（64x32px）/u)
+  assert.match(content[4].text, /和这张比呢\n\[文件 notes\.md；只读副本：\/home\/u\/\.dsh\/files\/notes\.md\]/u)
+  // Each image is read as the same request version the HTTP route sends.
+  assert.deepEqual(attachments.reads[0].policy, { maxPixels: CLI_IMAGE_LIMITS.maxPixels, maxBytes: CLI_IMAGE_LIMITS.maxBytesPerImage })
+})
+
+test('the oldest images give way to the bounds, and an unreadable one is described instead', async () => {
+  const attachments = fakeAttachments({ failId: imageRef('c3').attachmentId })
+  const content = await buildDelegatedContent({
+    messages: [
+      { role: 'user', content: [{ type: 'image', attachment: imageRef('a1', 30) }, { type: 'text', text: '旧图' }] },
+      { role: 'user', content: [{ type: 'image', attachment: imageRef('b2', 30) }, { type: 'image', attachment: imageRef('c3', 30) }, { type: 'text', text: '新图' }] },
+    ],
+  }, { attachments, limits: { ...CLI_IMAGE_LIMITS, maxImages: 1 } })
+  const text = content.filter(block => block.type === 'text').map(block => block.text).join('')
+  assert.equal(content.filter(block => block.type === 'image').length, 1)
+  assert.match(text, /\[图片 a1a1a1a1：超出本回合的图片上限，未随消息附上，需要时请用 Read 工具读取；只读副本：/u)
+  assert.match(text, /\[图片 c3c3c3c3：读取失败，未随消息附上/u)
+  assert.match(text, /\[图片 b2b2b2b2（64x32px）/u)
+})
+
+test('without an attachment store the images are named, not dropped silently', async () => {
+  const content = await buildDelegatedContent({
+    messages: [{ role: 'user', content: [{ type: 'text', text: '看图' }, { type: 'image', attachment: imageRef('a1') }] }],
+  }, { attachments: undefined })
+  assert.deepEqual(content, [{ type: 'text', text: '用户：看图\n[图片 a1a1a1a1：当前运行环境无法读取附件]' }])
+})
+
+test('the adapter hands the CLI content blocks, the delegation instructions, and the store it was given', async () => {
+  const runner = stubRunner([{ type: 'result', result: { result: 'ok', inputTokens: 0, outputTokens: 0 } }])
+  const attachments = fakeAttachments()
+  const adapter = createClaudeCliAdapter({
+    inner: innerAdapter(),
+    runner,
+    resolveMode: () => 'edit',
+    resolveCwd: () => '/work',
+    resolveAttachments: () => attachments,
+  })
+  await consume(adapter.stream({
+    provider: 'packycode',
+    model: 'claude-sonnet-5-5',
+    messages: [{ role: 'user', content: [{ type: 'text', text: '这是什么' }, { type: 'image', attachment: imageRef('a1') }] }],
+  }))
+  const call = runner.calls[0]
+  assert.equal(call.prompt, undefined)
+  assert.deepEqual(call.content.map(block => block.type), ['text', 'image'])
+  assert.match(call.appendSystemPrompt, /委派给 Claude Code/u)
+  assert.match(call.appendSystemPrompt, /工作目录：\/work/u)
+})
+
+test('the CLI starting and its own retries show up live in the reasoning block', async () => {
+  const runner = stubRunner([
+    { type: 'started', version: '2.1.295', model: 'claude-sonnet-5-5' },
+    { type: 'retry', attempt: 1, maxRetries: 10, delayMs: 1240, status: 503, error: 'server_error' },
+    { type: 'retry', attempt: 2, maxRetries: 10, delayMs: 2500, status: 429, error: '' },
+    { type: 'text', text: '好了' },
+    { type: 'result', result: { result: '好了', inputTokens: 0, outputTokens: 1 } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const chunks = await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))
+  const reasoning = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'reasoning').block.text
+  assert.equal(reasoning, [
+    LAUNCH,
+    '▸ Claude Code CLI 已启动（2.1.295 · claude-sonnet-5-5）\n',
+    '  ↻ 网关返回 HTTP 503（server_error），CLI 自动重试 1/10，1.2 秒后\n',
+    '  ↻ 网关返回 HTTP 429，CLI 自动重试 2/10，2.5 秒后\n',
+  ].join(''))
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+})
+
+/** A runner that reports some retries and then fails with `message`. */
+function failingRunner(message, retries = 0) {
+  return {
+    async *stream() {
+      for (let attempt = 1; attempt <= retries; attempt += 1) yield { type: 'retry', attempt, maxRetries: 10, status: 503 }
+      throw new Error(message)
+    },
+  }
+}
+
+test('a busy gateway is named as such once the CLI has given up retrying', async () => {
+  const raw = 'Claude Code CLI failed: API Error: 503 {"error":{"type":"packy_concurrency_queue_full","message":"账号并发排队已满，请稍后重试。(Per-account wait queues are full. Please retry shortly.) (request id: 01M4QQ)"},"type":"packy_error"}'
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner: failingRunner(raw, 10) })
+  const finish = (await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))).at(-1)
+  assert.equal(finish.reason.failure.code, 'PI_AI_ERROR')
+  assert.match(finish.reason.failure.message, /Claude 上游暂时繁忙/u)
+  assert.match(finish.reason.failure.message, /已自动重试 10 次/u)
+  assert.match(finish.reason.failure.message, /packy_concurrency_queue_full/u)
+  assert.match(finish.reason.failure.message, /request id: 01M4QQ/u)
+})
+
+test('a client-policy refusal of the CLI keeps the gateway words but drops the auth status', async () => {
+  const raw = 'Claude Code CLI failed: Failed to authenticate. API Error: 403 {"error":{"type":"packy_<nil>","message":"Request blocked: this endpoint only accepts requests from the official Claude Code CLI. (request id: 01M4QNSF)"}}'
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner: failingRunner(raw) })
+  const message = (await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))).at(-1).reason.failure.message
+  assert.match(message, /不是 API Key 失效/u)
+  assert.match(message, /request id: 01M4QNSF/u)
+  assert.equal(/\b403\b/u.test(message), false)
 })

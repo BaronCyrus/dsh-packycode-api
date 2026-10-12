@@ -5,9 +5,11 @@ import test from 'node:test'
 
 import {
   CLAUDE_CLI_MODES,
+  DEFAULT_APPEND_SYSTEM_PROMPT,
   DEFAULT_CLAUDE_MODE,
   buildClaudeArgs,
   buildClaudeEnvironment,
+  buildClaudeInput,
   createClaudeRunner,
   findClaudeBinary,
   parseClaudeResult,
@@ -24,12 +26,20 @@ const PAYLOAD = {
   usage: { input_tokens: 2, output_tokens: 7 },
 }
 
-/** A spawn stand-in that records its call and replays a scripted child. */
+/** A spawn stand-in that records its call and stdin, and replays a scripted child. */
 function stubSpawn({ stdout = `${JSON.stringify(PAYLOAD)}\n`, stderr = '', code = 0, hang = false } = {}) {
   const calls = []
   const spawnImpl = (binary, args, options) => {
-    calls.push({ binary, args, options })
+    const call = { binary, args, options, stdin: '', stdinClosed: false }
+    calls.push(call)
     const child = new EventEmitter()
+    child.stdin = {
+      on: () => child.stdin,
+      end: input => {
+        call.stdin += input ?? ''
+        call.stdinClosed = true
+      },
+    }
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
     child.exitCode = null
@@ -52,23 +62,53 @@ function stubSpawn({ stdout = `${JSON.stringify(PAYLOAD)}\n`, stderr = '', code 
   return { spawnImpl, calls }
 }
 
-test('builds the argv the CLI documents', () => {
-  assert.deepEqual(buildClaudeArgs({ prompt: 'do it' }), ['-p', 'do it', '--output-format', 'json', '--allowedTools', ...CLAUDE_CLI_MODES[DEFAULT_CLAUDE_MODE].allowedTools])
-  const full = buildClaudeArgs({ prompt: 'do it', mode: 'full', model: 'claude-opus-5-5' })
-  assert.deepEqual(full, ['-p', 'do it', '--output-format', 'json', '--model', 'claude-opus-5-5', '--dangerously-skip-permissions'])
-  assert.deepEqual(buildClaudeArgs({ prompt: 'x', mode: 'read-only' }).slice(4), ['--allowedTools', 'Read', 'Grep', 'Glob'])
+test('builds the argv the CLI documents, with the prompt kept off it', () => {
+  assert.deepEqual(buildClaudeArgs({}), [
+    '-p', '--output-format', 'json',
+    '--append-system-prompt', DEFAULT_APPEND_SYSTEM_PROMPT,
+    '--allowedTools', ...CLAUDE_CLI_MODES[DEFAULT_CLAUDE_MODE].allowedTools,
+  ])
+  const full = buildClaudeArgs({ mode: 'full', model: 'claude-opus-5-5' })
+  assert.deepEqual(full, ['-p', '--output-format', 'json', '--model', 'claude-opus-5-5', '--append-system-prompt', DEFAULT_APPEND_SYSTEM_PROMPT, '--dangerously-skip-permissions'])
+  assert.deepEqual(buildClaudeArgs({ mode: 'read-only' }).slice(-4), ['--allowedTools', 'Read', 'Grep', 'Glob'])
+  // A streaming run reads its prompt as stream-json from stdin.
+  assert.deepEqual(buildClaudeArgs({ stream: true }).slice(0, 7), ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'])
   // Extra instructions are appended; the CLI's own system prompt and tools stay.
-  const titled = buildClaudeArgs({ prompt: 'x', mode: 'read-only', model: 'claude-haiku-5-5', appendSystemPrompt: '  Return only the title.  ' })
-  assert.deepEqual(titled.slice(4), ['--model', 'claude-haiku-5-5', '--append-system-prompt', 'Return only the title.', '--allowedTools', 'Read', 'Grep', 'Glob'])
+  const titled = buildClaudeArgs({ mode: 'read-only', model: 'claude-haiku-5-5', appendSystemPrompt: '  Return only the title.  ' })
+  assert.deepEqual(titled.slice(3), ['--model', 'claude-haiku-5-5', '--append-system-prompt', 'Return only the title.', '--allowedTools', 'Read', 'Grep', 'Glob'])
   assert.equal(titled.includes('--system-prompt'), false)
   assert.equal(titled.includes('--tools'), false)
-  assert.equal(buildClaudeArgs({ prompt: 'x', appendSystemPrompt: '   ' }).includes('--append-system-prompt'), false)
+  // Every run carries appended instructions: in print mode that is what makes
+  // the official CLI introduce itself to the model as Claude Code.
+  const blank = buildClaudeArgs({ appendSystemPrompt: '   ' })
+  assert.equal(blank[blank.indexOf('--append-system-prompt') + 1], DEFAULT_APPEND_SYSTEM_PROMPT)
 })
 
-test('refuses a missing prompt, an unknown mode, and an oversized prompt', () => {
-  assert.throws(() => buildClaudeArgs({ prompt: '   ' }), /non-empty prompt/u)
-  assert.throws(() => buildClaudeArgs({ prompt: 'x', mode: 'yolo' }), /mode must be one of/u)
-  assert.throws(() => buildClaudeArgs({ prompt: 'x'.repeat(100_001) }), /too long/u)
+test('builds the stdin payload: plain text, or one stream-json user message with images', () => {
+  assert.equal(buildClaudeInput({ prompt: '多行\n提示' }), '多行\n提示')
+  const line = buildClaudeInput({
+    stream: true,
+    content: [
+      { type: 'text', text: '看图' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+      { type: 'text', text: '' },
+    ],
+  })
+  assert.ok(line.endsWith('\n'))
+  assert.deepEqual(JSON.parse(line), {
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text: '看图' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }] },
+  })
+  assert.deepEqual(JSON.parse(buildClaudeInput({ stream: true, prompt: 'hi' })).message.content, [{ type: 'text', text: 'hi' }])
+})
+
+test('refuses a missing prompt, an unknown mode, an oversized prompt, and images without streaming', () => {
+  assert.throws(() => buildClaudeInput({ prompt: '   ' }), /non-empty prompt/u)
+  assert.throws(() => buildClaudeArgs({ mode: 'yolo' }), /mode must be one of/u)
+  assert.throws(() => buildClaudeInput({ prompt: 'x'.repeat(100_001) }), /too long/u)
+  const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+  assert.throws(() => buildClaudeInput({ content: [image] }), /streaming CLI input/u)
+  assert.throws(() => buildClaudeInput({ stream: true, content: Array.from({ length: 21 }, () => image) }), /at most 20 images/u)
 })
 
 test('the child environment carries this plugin endpoint and key, not the ambient ones', () => {
@@ -114,6 +154,11 @@ test('runs the binary with the resolved credential and returns its accounting', 
   assert.equal(calls[0].options.cwd, '/work')
   assert.equal(calls[0].options.env.ANTHROPIC_AUTH_TOKEN, 'sk-plugin-key')
   assert.equal(calls[0].options.env.CLAUDE_CONFIG_DIR, '/tmp/claude-home')
+  // The prompt arrives on stdin, which is then closed; argv never carries it.
+  assert.equal(calls[0].stdin, 'say ok')
+  assert.equal(calls[0].stdinClosed, true)
+  assert.equal(calls[0].args.includes('say ok'), false)
+  assert.deepEqual(calls[0].options.stdio, ['pipe', 'pipe', 'pipe'])
 })
 
 test("a failing CLI reports the reason it printed", async () => {
@@ -170,7 +215,9 @@ test('a timeout stops a hung CLI', async () => {
 })
 
 const STREAM_LINES = [
-  { type: 'system', subtype: 'init' },
+  { type: 'system', subtype: 'init', claude_code_version: '2.1.295', model: 'claude-opus-5-5' },
+  { type: 'system', subtype: 'status', status: 'requesting' },
+  { type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 1240, error_status: 503, error: 'server_error' },
   { type: 'stream_event', event: { type: 'message_start', message: { usage: { input_tokens: 2, cache_creation_input_tokens: 443, cache_read_input_tokens: 42_880, output_tokens: 1 } } } },
   { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
   { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '想一想' } } },
@@ -187,6 +234,8 @@ const STREAM_LINES = [
 test('reads live text, thinking, tool calls, tool failures, and request usage from stream-json', () => {
   const events = STREAM_LINES.flatMap(readClaudeStreamEvents)
   assert.deepEqual(events.slice(0, -1), [
+    { type: 'started', version: '2.1.295', model: 'claude-opus-5-5' },
+    { type: 'retry', attempt: 1, maxRetries: 10, delayMs: 1240, status: 503, error: 'server_error' },
     { type: 'request-usage', usage: { inputTokens: 2, cacheReadTokens: 42_880, cacheWriteTokens: 443 } },
     { type: 'block', kind: 'reasoning' },
     { type: 'reasoning', text: '想一想' },
@@ -215,6 +264,7 @@ test('the streaming runner yields events as they arrive and closes with the summ
   const events = []
   for await (const event of runner.stream({ prompt: 'x' })) events.push(event)
   assert.ok(calls[0].args.includes('--include-partial-messages'))
+  assert.deepEqual(JSON.parse(calls[0].stdin).message.content, [{ type: 'text', text: 'x' }])
   assert.equal(events.filter(event => event.type === 'result').length, 1)
   const { result } = events.at(-1)
   assert.equal(result.outputTokens, 300)
@@ -266,7 +316,7 @@ test('a consumer that stops reading early kills the streaming CLI', async () => 
     resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-k' }),
     spawnImpl: (...args) => {
       child = spawnImpl(...args)
-      queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(STREAM_LINES[3])}\n`))
+      queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(STREAM_LINES.find(line => line.event?.delta?.type === 'thinking_delta'))}\n`))
       return child
     },
   })
@@ -280,4 +330,40 @@ test('a consumer that stops reading early kills the streaming CLI', async () => 
 test('an explicit binary path wins and PATH is the fallback', () => {
   assert.equal(findClaudeBinary('/custom/claude'), '/custom/claude')
   assert.equal(typeof findClaudeBinary(''), 'string')
+})
+
+test('a streaming CLI that prints nothing after starting is stopped with its stderr', async () => {
+  const { spawnImpl } = stubSpawn({ hang: true })
+  let child
+  const runner = createClaudeRunner({
+    resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-k' }),
+    spawnImpl: (...args) => {
+      child = spawnImpl(...args)
+      queueMicrotask(() => child.stderr.emit('data', 'waiting for git-bash'))
+      return child
+    },
+    startupTimeoutMs: 20,
+  })
+  const pin = setInterval(() => {}, 1000)
+  try {
+    await assert.rejects(async () => {
+      for await (const _event of runner.stream({ prompt: 'x' })) {
+        // nothing arrives
+      }
+    }, /printed nothing within 0s of starting and was stopped: waiting for git-bash/u)
+  } finally {
+    clearInterval(pin)
+  }
+  assert.equal(child.signalCode, 'SIGTERM')
+})
+
+test('the startup watchdog leaves a JSON run alone: it prints only at the end', async () => {
+  const { spawnImpl } = stubSpawn()
+  const runner = createClaudeRunner({
+    resolveCredential: async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-k' }),
+    spawnImpl,
+    startupTimeoutMs: 1,
+  })
+  await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal((await runner.run({ prompt: 'x' })).result, 'cli-ok')
 })

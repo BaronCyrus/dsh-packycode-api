@@ -26,8 +26,17 @@ export const DEFAULT_API_HOST = 'https://cf.api.fan'
 /**
  * Host carrying `/api/usage/token/`. `cf.api.fan` answers 404 for the whole
  * `/api/*` family, so per-key quota is read from the PackyAPI host instead.
+ * PackyAPI now runs on `.ai` (its site and docs moved there); the `.com` name
+ * is DNS-poisoned on mainland networks, so a host whose fetch does not go
+ * through a proxy reads `fetch failed` from it.
  */
-export const DEFAULT_STATUS_HOST = 'https://www.packyapi.com'
+export const DEFAULT_STATUS_HOST = 'https://www.packyapi.ai'
+/**
+ * Earlier default status hosts. A profile that saved one keeps working, but
+ * the current default is tried before it, so an unreachable legacy name
+ * cannot hold a read up for its whole timeout first.
+ */
+export const LEGACY_STATUS_HOSTS = Object.freeze(['https://www.packyapi.com'])
 
 /** PackyAPI quotes balances in quota units of 1/500000 USD (new-api convention). */
 export const QUOTA_PER_USD = 500000
