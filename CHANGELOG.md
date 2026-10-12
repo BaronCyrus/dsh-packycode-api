@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.5
 
 - **Balance on mainland networks.** The default balance host is now `https://www.packyapi.ai` (PackyAPI's current site). `www.packyapi.com`, the default through 1.0.4, is DNS-poisoned on mainland networks: every public resolver checked (AliDNS, DNSPod, 1.1.1.1, 8.8.8.8, even AliDNS over HTTPS) returned an unrelated foreign IP, and a direct Node fetch failed with `ECONNREFUSED`. Without a proxy every key read `fetch failed` from it, which is what a Windows user saw. With a proxy it worked, so the failure came and went. A profile that saved the old host keeps it as a fallback, but `.ai` is tried first. Verified live without a proxy: `.ai` answers in about 1.3 s.
 - A failed balance read keeps each key's last good balance (and the last account figures), marked `stale` with the time of that read and this read's error. Settings shows a note, and the composer shows `≈US$…`. These values stay in the host process: a page refresh keeps them and a restart clears them. A transport failure now names its cause (`fetch failed (ENOTFOUND)`, `no answer within 20s`), and a 429 says the gateway is rate limiting. The composer says "余额读取失败" instead of "无可用 Key" when a usable key's read failed. The total limit shows `—` instead of "不限额度" when no key was read.
