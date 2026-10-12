@@ -71,6 +71,8 @@ test('the profile carries the retry policy that makes rotation reachable', () =>
   const { profile } = route()
   assert.equal(profile.reasoning, DEFAULT_REASONING_LEVEL)
   assert.equal(profile.retryPolicy.mode, 'normal')
+  // One route serves every model, so this budget applies to all of them.
+  assert.equal(profile.retryPolicy.maxRetries, 20)
   for (const code of ['QUOTA', 'AUTH', 'INVALID_REQUEST', 'SERVER', 'TRANSPORT']) {
     assert.ok(profile.retryPolicy.retryableCodes.includes(code), `${code} must be retryable`)
   }

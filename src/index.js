@@ -106,7 +106,13 @@ export function createPackyCodeProfile(provider) {
     cacheRetention: 'short',
     retryPolicy: resolveRetryPolicy({
       mode: 'normal',
-      maxRetries: 3,
+      // One route carries every model, so this count covers all of them. The
+      // gateway drops an upstream channel or key per request, and a retry is
+      // also the mechanism that reaches the next key — a long budget is what
+      // turns those blips into a slower answer instead of a failed turn.
+      // Worst case with the default backoff (0.5s doubling, capped at 10s) is
+      // roughly three minutes before the failure is surfaced.
+      maxRetries: 20,
       // A retry is the mechanism that reaches the next key, so the two
       // key-level codes belong here; INVALID_REQUEST is here because this
       // gateway reports a dead upstream channel as a misleading 400.
