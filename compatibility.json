@@ -1,0 +1,13 @@
+{
+  "latestTested": "0.1.5-rc.2",
+  "acceptedRuntimeRange": ">=0.1.5-rc.1 <0.3.0-0",
+  "supported": [
+    "0.1.5-rc.2",
+    "0.2.0-rc.2"
+  ],
+  "piAi": "0.85.1",
+  "validation": {
+    "0.1.5-rc.2": "36 offline tests against the published host packages: the key ring (add/select/disable/rotate/enable/remove and a hand-edited record), balance parsing and host fallback with a fake fetch, failure classification against the gateway's real Chinese wording (including that a raw 403 quota message must not read as auth), the catalog contract (protocol, base URL, and vendor effort levels per model), the stream guard (terminal events, pre-chunk throws, and that a mid-stream failure never blames a key), and the real PiAiAdapter resolving every advertised model and preparing its call without reading a credential or opening a stream. Live check against the gateway: balance read (account and per-key), one answer from each of the three models over its own protocol, a rotation rehearsal where an invalid key was disabled and the next attempt answered with the real key, and the host adapter classifying a rejected key as AUTH.",
+    "0.2.0-rc.2": "Declared in the accepted range; the plugin uses only APIs verified present on this line (llm.registerAdapter, llm.registerConfigurableProviders, settings.installSection, credential records, connection.rpc.handle, client slots). Not yet exercised by a live boot on this line."
+  }
+}
