@@ -42,7 +42,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.0.3`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.0.4`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -61,7 +61,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.0.3`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.0.4`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -117,7 +117,7 @@ dsh-packycode-api
 
 ## 更新与卸载
 
-**更新：** 在桌面应用的**插件**页重新安装 `dsh-packycode-api`（或 `dsh-packycode-api@版本`），然后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。
+**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装 `dsh-packycode-api`。
 
 **卸载：** 在**插件**页卸载本插件，然后重启桌面应用。卸载不会删除其它插件、整个 profile，也不会撤销 PackyCode 控制台里的令牌。
 
@@ -128,6 +128,8 @@ dsh-packycode-api
 **余额对不上账号账单？** 设置页合计的是这里列出的 Key，不含同账号下没添加到本插件的其它令牌。个别 Key 读失败时会单独注明，不会被算成 0。
 
 **限速之后 Key 被停用了？** 不该发生。429 不会切换 Key。额度用尽或 401 才会停用；充值后点「重新启用」。
+
+**插件页安装报 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`？** pnpm 默认拒绝发布不满 24 小时的包，并且会检查 profile 里的整个 lockfile。报错里点名的往往是另一个刚更新过的插件，不是本插件。等它发布满 24 小时再重试，或把报错里的 `包名@版本` 加到 profile 目录 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 下。已安装本插件后，设置页的「更新插件」不受这个限制。
 
 **装了 CLI 还是不能用 Claude？** 从 Finder 或开始菜单启动时，`PATH` 往往比终端短。插件会再查官方安装位置、常见包管理器目录和 `npm prefix -g`。仍找不到就在设置里填 `claudeCliPath`，或点「重新检测」。改的是 Host 或重新安装了插件时，要完全退出并重启桌面应用。
 

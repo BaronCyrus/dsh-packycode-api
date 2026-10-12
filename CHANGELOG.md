@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4
+
+- Settings can check for and install a newer npm release. **Update plugin** installs the exact published version into the owning profile with the host's bundled pnpm, then reads `package.json` back before reporting success. A `link:` checkout is left alone. The desktop app still needs a full restart afterwards.
+- The update runs with `minimumReleaseAge=0`, so neither a fresh release of this plugin nor a fresh release of a sibling plugin already in the profile lockfile blocks it. The README FAQ explains the `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` that a Plugins-page install can still hit.
+
 ## 1.0.3
 
 - The Claude CLI timeout test holds the event loop open. The runner unrefs its timer and the test stub is not a real process, so Node 22's test runner cancelled the still-pending test and stopped the publish workflow. Plugin behavior is unchanged. `1.0.2` was tagged but not published.
