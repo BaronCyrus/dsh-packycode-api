@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- The balance card no longer shows PackyCode's account-level billing line (`PackyCode 账号（含同账号其它用量）：剩余 … · 已用 … · 额度 …`). It counts every token on the account, including usage from keys not stored here, so it could read as a large negative remaining beside the per-key totals. The headline figures — the sum of the listed keys — are unchanged.
+- With no keys stored, the balance card showed the "no keys yet" note twice; it now shows it once.
+
 ## 1.0.0
 
 First release.
