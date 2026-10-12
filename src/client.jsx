@@ -25,7 +25,6 @@ const zh = {
   totalUsed: '合计已用',
   totalLimit: '合计额度',
   totalPartial: '有 {count} 个 Key 未读到余额，未计入合计。',
-  siteAccount: 'PackyCode 账号（含同账号其它用量）',
   accountLimit: '额度',
   refresh: '刷新',
   refreshing: '刷新中…',
@@ -94,7 +93,6 @@ const en = {
   totalUsed: 'Total used',
   totalLimit: 'Total limit',
   totalPartial: '{count} key(s) could not be read and are not counted here.',
-  siteAccount: 'PackyCode account (includes this account’s other usage)',
   accountLimit: 'Limit',
   refresh: 'Refresh',
   refreshing: 'Refreshing…',
@@ -407,12 +405,12 @@ function PackyCodeSection({ rpc, t }) {
     mutate('keys/add')({ key: draft.key, label: draft.label }).then(() => setDraft({ key: '', label: '' }))
   }
 
-  const account = balance?.account
   const rows = balance?.keys ?? []
   const usageOf = id => rows.find(row => row.id === id)
   const keys = status?.keys ?? []
-  // The headline figure is what these keys can spend together, not the
-  // account-level billing number PackyCode reports beside it.
+  // The headline figure is what these keys can spend together, not
+  // PackyCode's account-level billing number, which counts every token on the
+  // account and is not shown.
   const totals = sumBalances(rows)
 
   /** One account row: the PackyCode token name carries the match to a key. */
@@ -457,11 +455,9 @@ function PackyCodeSection({ rpc, t }) {
         </header>
         {rows.length === 0
           ? <span className="packyCodeNote">{t('empty')}</span>
-          : <div className="packyCodeRows">{rows.map(accountRow)}</div>}
-        {rows.length === 0
-          ? <span className="packyCodeNote">{t('empty')}</span>
           : (
             <>
+              <div className="packyCodeRows">{rows.map(accountRow)}</div>
               <div className="packyCodeFigures">
                 <span className="packyCodeFigure">
                   <span className="packyCodeFigureLabel">{t('totalRemaining')}</span>
@@ -483,13 +479,6 @@ function PackyCodeSection({ rpc, t }) {
               </div>
               {totals.unread > 0 && (
                 <span className="packyCodeNote">{t('totalPartial').replace('{count}', String(totals.unread))}</span>
-              )}
-              {account?.error === undefined && account !== undefined && (
-                <span className="packyCodeNote">
-                  {`${t('siteAccount')}：${t('keyRemaining')} ${formatUsd(account.remainingUsd) ?? '—'}`
-                    + ` · ${t('keyUsed')} ${formatUsd(account.totalUsageUsd) ?? '—'}`
-                    + ` · ${t('accountLimit')} ${formatUsd(account.hardLimitUsd) ?? '—'}`}
-                </span>
               )}
             </>
           )}

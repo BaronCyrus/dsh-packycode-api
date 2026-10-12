@@ -52,6 +52,17 @@ test('every channel call carries a payload object', () => {
   for (const [, params] of helpers) assert.match(params, /=\s*\{\}/u)
 })
 
+test('the balance card does not show the account-level billing line', () => {
+  // PackyCode's account billing counts every token on the account, including
+  // keys not stored here, so it reads as a wrong total beside the key sums.
+  const source = readFileSync(path.join(root, 'src', 'client.jsx'), 'utf8')
+  assert.doesNotMatch(source, /balance\?\.account\b/u)
+  assert.doesNotMatch(source, /siteAccount|含同账号/u)
+  // The balance card branches on an empty key list once, so its empty-state
+  // note renders once rather than twice.
+  assert.equal(source.match(/rows\.length === 0/gu)?.length, 1)
+})
+
 test('the package declares the client surface the loader requires', () => {
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.deepEqual(manifest.exports['./client'], './lib/client.js')
