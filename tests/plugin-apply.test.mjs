@@ -88,8 +88,10 @@ test('registers one route and one directory entry, and defers the browser surfac
     settingsPath: [],
   }])
 
-  // Both optional services are requested through ctx.inject, never injected.
-  assert.deepEqual(ctx.injected, [['settings'], ['connection']])
+  // Both optional surfaces are requested through ctx.inject, never injected.
+  // `webServer` rides with `connection`: channel registration writes through
+  // `owner.webServer`, so a scope holding only `connection` cannot register.
+  assert.deepEqual(ctx.injected, [['settings'], ['connection', 'webServer']])
   assert.equal(registered.rpc.length, 1)
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))

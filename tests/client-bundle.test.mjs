@@ -53,9 +53,13 @@ test('the package declares the client surface the loader requires', () => {
   }
 })
 
-test('the shipped patch registers exactly one row for this plugin', () => {
+test('the shipped patch registers this plugin and repairs the connection row', () => {
   const patch = readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8')
   const ids = [...patch.matchAll(/^\s*- id:\s*(\S+)\s*$/gmu)].map(match => match[1])
-  assert.deepEqual(ids, ['packycode-api'])
+  assert.deepEqual(ids, ['packycode-api', 'connection'])
   assert.match(patch, new RegExp(`name: '${manifest.name}'`, 'u'))
+  // The browser channel cannot register without this service on that fiber.
+  const connection = patch.slice(patch.indexOf('- id: connection'))
+  assert.match(connection, /name: '@deepseek-ai\/dsh-client-connection'/u)
+  assert.match(connection, /inject: \[credentials, webRuntime, webServer\]/u)
 })
