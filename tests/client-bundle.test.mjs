@@ -41,6 +41,17 @@ test('the client bundle carries the loader wrapper and exports apply/inject', { 
   assert.deepEqual([...exports.inject], ['slots', 'locale', 'connection', 'modelDirectories'])
 })
 
+test('every channel call carries a payload object', () => {
+  // The connection envelope requires `payload`; `JSON.stringify` drops an
+  // `undefined` field, so a call without one is refused as an invalid
+  // client-request message. Both callers must default it, because call sites
+  // legitimately write `call('status')`.
+  const source = readFileSync(path.join(root, 'src', 'client.jsx'), 'utf8')
+  const helpers = [...source.matchAll(/\(endpoint, payload([^)]*)\) => rpc\.call\(/gu)]
+  assert.equal(helpers.length, 2, 'the settings panel and the composer each own one caller')
+  for (const [, params] of helpers) assert.match(params, /=\s*\{\}/u)
+})
+
 test('the package declares the client surface the loader requires', () => {
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.deepEqual(manifest.exports['./client'], './lib/client.js')

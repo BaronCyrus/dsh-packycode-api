@@ -171,7 +171,9 @@ function clearMessage(error) {
 
 function PackyCodeSection({ rpc, t }) {
   const call = react.useMemo(
-    () => (endpoint, payload) => rpc.call(CHANNEL, endpoint, payload).then(unwrap),
+    // The transport drops an `undefined` payload, and the channel's envelope
+    // schema requires the field — so every call carries an object.
+    () => (endpoint, payload = {}) => rpc.call(CHANNEL, endpoint, payload).then(unwrap),
     [rpc],
   )
   const [status, setStatus] = react.useState()
@@ -394,7 +396,8 @@ function PackyCodeSection({ rpc, t }) {
 
 function PackyCodeComposerQuota({ rpc, t, directory }) {
   const call = react.useMemo(
-    () => (endpoint, payload) => rpc.call(CHANNEL, endpoint, payload).then(unwrap),
+    // Same envelope rule as the settings panel: the payload field is required.
+    () => (endpoint, payload = {}) => rpc.call(CHANNEL, endpoint, payload).then(unwrap),
     [rpc],
   )
   const snapshot = react.useSyncExternalStore(
