@@ -19,13 +19,13 @@ const zh = {
   nav: 'PackyCode',
   intro: '填入 PackyCode（PackyAPI）的 API Key 即可使用内置模型路由；多个 Key 按顺序使用，额度用尽或失效时自动切到下一个。',
   accountTitle: '账户余额',
-  accountRemaining: '剩余',
-  accountUsed: '已用',
+  accountSummary: '账号合计剩余',
+  accountUsed: '账号合计已用',
   accountLimit: '额度',
   refresh: '刷新',
   refreshing: '刷新中…',
   keysTitle: 'API Key',
-  keysHint: '按顺序使用：当前 Key 不可用时自动切到下一个可用 Key。',
+  keysHint: '按顺序使用：当前 Key 不可用时自动切到下一个可用 Key。上方的账户余额按 PackyCode 账户名逐条列出。',
   keyActive: '使用中',
   keyDisabled: '已停用',
   keyUse: '切到此 Key',
@@ -35,7 +35,8 @@ const zh = {
   keyNoBalance: '余额未知',
   keyRemaining: '剩余',
   keyUsed: '已用',
-  keyReset: '重置周期',
+  keyName: '账户名',
+  keyNameUnknown: '账户名待读取',
   resetMonthly: '每月',
   resetWeekly: '每周',
   resetDaily: '每日',
@@ -61,13 +62,13 @@ const en = {
   nav: 'PackyCode',
   intro: 'Paste a PackyCode (PackyAPI) API key to use the built-in model route. Multiple keys are used in order; an exhausted or rejected key hands over to the next one.',
   accountTitle: 'Account balance',
-  accountRemaining: 'Remaining',
-  accountUsed: 'Used',
+  accountSummary: 'Account total left',
+  accountUsed: 'Account total used',
   accountLimit: 'Limit',
   refresh: 'Refresh',
   refreshing: 'Refreshing…',
   keysTitle: 'API keys',
-  keysHint: 'Used in order: when the active key cannot serve a request, the next usable one takes over.',
+  keysHint: 'Used in order: when the active key cannot serve a request, the next usable one takes over. The balances above are listed per PackyCode account.',
   keyActive: 'Active',
   keyDisabled: 'Disabled',
   keyUse: 'Use this key',
@@ -77,7 +78,8 @@ const en = {
   keyNoBalance: 'Balance unknown',
   keyRemaining: 'Remaining',
   keyUsed: 'Used',
-  keyReset: 'Reset',
+  keyName: 'Account name',
+  keyNameUnknown: 'Account name not read yet',
   resetMonthly: 'monthly',
   resetWeekly: 'weekly',
   resetDaily: 'daily',
@@ -227,7 +229,33 @@ function PackyCodeSection({ rpc, t }) {
   const rows = balance?.keys ?? []
   const usageOf = id => rows.find(row => row.id === id)
   const keys = status?.keys ?? []
-  const reset = resetLabel(usageOf(status?.activeId)?.usage?.resetPeriod, t)
+
+  /** One account row: the PackyCode token name carries the match to a key. */
+  const accountRow = row => {
+    const usage = row.usage
+    const figures = [
+      usage?.unlimitedQuota === true
+        ? t('keyUnlimited')
+        : usage?.availableUsd === undefined ? undefined : `${t('keyRemaining')} ${formatUsd(usage.availableUsd)}`,
+      usage?.usedUsd === undefined ? undefined : `${t('keyUsed')} ${formatUsd(usage.usedUsd)}`,
+      usage?.limitUsd === undefined ? undefined : `${t('accountLimit')} ${formatUsd(usage.limitUsd)}`,
+      resetLabel(usage?.resetPeriod, t) === undefined ? undefined : resetLabel(usage.resetPeriod, t),
+    ].filter(Boolean)
+    return (
+      <div className="packyCodeRow" key={row.id}>
+        <span className="packyCodeRowMain">
+          <span className="packyCodeRowName">
+            {usage?.name ?? row.label}
+            {row.id === status?.activeId && <span className="packyCodeChip packyCodeChipActive">{t('keyActive')}</span>}
+            {row.disabled && <span className="packyCodeChip">{t('keyDisabled')}</span>}
+          </span>
+          <span className="packyCodeRowMeta">
+            {figures.length > 0 ? figures.join(' · ') : (row.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`)}
+          </span>
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div className="packyCodeSection">
@@ -240,11 +268,14 @@ function PackyCodeSection({ rpc, t }) {
             {busy ? t('refreshing') : t('refresh')}
           </button>
         </header>
+        {rows.length === 0
+          ? <span className="packyCodeNote">{t('empty')}</span>
+          : <div className="packyCodeRows">{rows.map(accountRow)}</div>}
         {account?.error === undefined
           ? (
             <div className="packyCodeFigures">
               <span className="packyCodeFigure">
-                <span className="packyCodeFigureLabel">{t('accountRemaining')}</span>
+                <span className="packyCodeFigureLabel">{t('accountSummary')}</span>
                 <span className="packyCodeFigureValue">{formatUsd(account?.remainingUsd) ?? '—'}</span>
               </span>
               <span className="packyCodeFigure">
@@ -276,15 +307,6 @@ function PackyCodeSection({ rpc, t }) {
             <div className="packyCodeRows">
               {keys.map(key => {
                 const row = usageOf(key.id)
-                const usage = row?.usage
-                const figures = [
-                  usage?.unlimitedQuota === true
-                    ? t('keyUnlimited')
-                    : usage?.availableUsd === undefined ? undefined : `${t('keyRemaining')} ${formatUsd(usage.availableUsd)}`,
-                  usage?.usedUsd === undefined ? undefined : `${t('keyUsed')} ${formatUsd(usage.usedUsd)}`,
-                  resetLabel(usage?.resetPeriod, t) === undefined ? undefined : `${t('keyReset')} ${resetLabel(usage.resetPeriod, t)}`,
-                  usage?.name,
-                ].filter(Boolean)
                 return (
                   <div className="packyCodeRow" key={key.id}>
                     <span className="packyCodeRowMain">
@@ -294,7 +316,7 @@ function PackyCodeSection({ rpc, t }) {
                         {key.disabled && <span className="packyCodeChip">{`${t('keyDisabled')}: ${key.disabledReason ?? ''}`.trim()}</span>}
                       </span>
                       <span className="packyCodeRowMeta">
-                        {figures.length > 0 ? figures.join(' · ') : (row?.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`)}
+                        {row?.usage?.name === undefined ? t('keyNameUnknown') : `${t('keyName')} ${row.usage.name}`}
                       </span>
                     </span>
                     <span className="packyCodeActions">

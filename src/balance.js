@@ -149,17 +149,35 @@ export function createBalanceReader({
     return usage
   }
 
-  const loadAccount = async (keys, hosts, signal) => {
-    const key = keys.find(entry => entry.disabled !== true) ?? keys[0]
-    if (key === undefined) throw new Error('add a PackyCode API key to read the account balance')
+  /**
+   * The account endpoints need one working key. Candidates are ordered by
+   * evidence: a key whose per-key read just succeeded, then the key that
+   * answered this read last time, then the rest — so an invalid key sitting
+   * first in the ring cannot blank the account total.
+   */
+  let accountKeyId
+  const loadAccount = async (keys, hosts, signal, usableIds = []) => {
+    const candidates = [...new Set([...usableIds, accountKeyId, ...keys.filter(entry => entry.disabled !== true).map(entry => entry.id)])]
+      .map(id => keys.find(entry => entry.id === id))
+      .filter(entry => entry !== undefined)
+    if (candidates.length === 0) throw new Error('add a PackyCode API key to read the account balance')
     const hostsToTry = [...new Set([hosts.apiHost, DEFAULT_API_HOST, hosts.statusHost, DEFAULT_STATUS_HOST])]
     const options = { fetchImpl, timeoutMs, signal }
-    const subscription = parseBillingSubscription((await withFallback(hostsToTry, '/v1/dashboard/billing/subscription', key.key, options)).payload)
-    const usage = parseBillingUsage((await withFallback(hostsToTry, '/v1/dashboard/billing/usage', key.key, options)).payload)
-    const remaining = subscription?.hardLimitUsd === undefined || usage?.totalUsageUsd === undefined
-      ? undefined
-      : Math.round((subscription.hardLimitUsd - usage.totalUsageUsd) * 1e6) / 1e6
-    return { ...subscription, ...usage, ...(remaining === undefined ? {} : { remainingUsd: remaining }) }
+    let lastError
+    for (const key of candidates) {
+      try {
+        const subscription = parseBillingSubscription((await withFallback(hostsToTry, '/v1/dashboard/billing/subscription', key.key, options)).payload)
+        const usage = parseBillingUsage((await withFallback(hostsToTry, '/v1/dashboard/billing/usage', key.key, options)).payload)
+        const remaining = subscription?.hardLimitUsd === undefined || usage?.totalUsageUsd === undefined
+          ? undefined
+          : Math.round((subscription.hardLimitUsd - usage.totalUsageUsd) * 1e6) / 1e6
+        accountKeyId = key.id
+        return { ...subscription, ...usage, ...(remaining === undefined ? {} : { remainingUsd: remaining }), keyId: key.id }
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   const load = async signal => {
@@ -167,17 +185,19 @@ export function createBalanceReader({
     const hosts = getHosts()
     const keys = await listKeys()
     const entries = []
+    const usableIds = []
     for (const entry of keys) {
       const base = { id: entry.id, label: entry.label, disabled: entry.disabled === true }
       try {
         entries.push({ ...base, usage: await loadKey(entry, hosts, signal) })
+        usableIds.push(entry.id)
       } catch (error) {
         entries.push({ ...base, error: error instanceof Error ? error.message : String(error) })
       }
     }
     let account
     try {
-      account = await loadAccount(keys, hosts, signal)
+      account = await loadAccount(keys, hosts, signal, usableIds)
     } catch (error) {
       account = { error: error instanceof Error ? error.message : String(error) }
     }

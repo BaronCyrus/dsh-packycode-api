@@ -130,3 +130,24 @@ test('secrets() is host-side material and marks disabled keys', async () => {
   assert.equal(secrets[0].key, KEY_A)
   assert.equal(secrets[0].disabled, true)
 })
+
+test('a default label never collides after a removal', async () => {
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  await ring.add(KEY_A)
+  await ring.add(KEY_B)
+  const [first] = (await ring.list()).keys
+  await ring.remove(first.id)
+  // The ring shrank to one key, but "Key 2" is taken: the next name must not repeat it.
+  await ring.add(KEY_C)
+  const labels = (await ring.list()).keys.map(candidate => candidate.label)
+  assert.deepEqual(labels, ['Key 2', 'Key 3'])
+  assert.equal(new Set(labels).size, labels.length)
+})
+
+test('an explicit label is kept verbatim and may repeat', async () => {
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  await ring.add(KEY_A, '战魂铭人-张洋凡')
+  await ring.add(KEY_B, '战魂铭人-张洋凡')
+  const labels = (await ring.list()).keys.map(candidate => candidate.label)
+  assert.deepEqual(labels, ['战魂铭人-张洋凡', '战魂铭人-张洋凡'])
+})

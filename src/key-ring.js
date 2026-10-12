@@ -66,6 +66,20 @@ function normalizeState(record) {
   }
 }
 
+/**
+ * The next free `Key N` name. The ring shrinks on removal, so numbering follows
+ * the highest name in use instead of the current key count — otherwise removing
+ * the first key and adding another produces a second "Key 2".
+ * @param keys - the stored keys.
+ * @returns an unused default label.
+ */
+function nextDefaultLabel(keys) {
+  const used = new Set(keys.map(candidate => candidate.label))
+  let index = keys.length + 1
+  while (used.has(`Key ${index}`)) index += 1
+  return `Key ${index}`
+}
+
 /** The public shape: what a browser or a log may see, never key material. */
 function projection(state) {
   return {
@@ -163,7 +177,10 @@ export class PackyCodeKeyRing {
       if (state.keys.some(candidate => candidate.key === value)) throw new Error('That PackyCode API key is already stored')
       const added = {
         id: randomUUID().slice(0, 8),
-        label: name === '' ? `Key ${state.keys.length + 1}` : name,
+        // A default name must not collide with one already in use: the ring
+        // shrinks when a key is removed, so the next number follows the
+        // highest in use rather than the current count.
+        label: name === '' ? nextDefaultLabel(state.keys) : name,
         key: value,
         addedAt: Date.now(),
       }

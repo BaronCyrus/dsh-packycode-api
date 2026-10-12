@@ -126,6 +126,35 @@ test('a read without keys still returns the account error instead of throwing', 
   assert.match(value.account.error, /add a PackyCode API key/u)
 })
 
+test('the account read falls back to a key the gateway accepts', async () => {
+  const keys = [
+    { id: 'bad', label: 'bad', key: 'sk-invalid-000000', disabled: false },
+    { id: 'good', label: 'good', key: 'sk-valid-000000', disabled: false },
+  ]
+  const isBad = options => String(options.headers.Authorization).includes('sk-invalid')
+  const { fetchImpl } = routedFetch([
+    {
+      prefix: 'https://www.packyapi.com/api/usage/token/',
+      reply: (_url, options) => (isBad(options) ? jsonResponse({ error: { message: '无效的令牌' } }, 401) : jsonResponse(TOKEN_USAGE)),
+    },
+    { prefix: 'https://cf.api.fan/api/usage/token/', reply: { error: 'not found' }, status: 404 },
+    {
+      prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription',
+      reply: (_url, options) => (isBad(options) ? jsonResponse({ error: 'unauthorized' }, 401) : jsonResponse({ hard_limit_usd: 500 })),
+    },
+    { prefix: 'https://www.packyapi.com/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
+    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 74.7116 } },
+    { prefix: 'https://www.packyapi.com/v1/dashboard/billing/usage', reply: { total_usage: 74.7116 } },
+  ])
+  const reader = createBalanceReader({ listKeys: async () => keys, getHosts: () => HOSTS, fetchImpl })
+  const value = await reader.read()
+  assert.match(value.keys[0].error, /rejected \(401\)/u)
+  assert.equal(value.keys[1].usage.availableUsd, 499.252884)
+  // The total must come from the key that answered, not from whichever is first.
+  assert.equal(value.account.hardLimitUsd, 500)
+  assert.equal(value.account.keyId, 'good')
+})
+
 test('caches a read, shares one in flight, and forgets on invalidate', async () => {
   let calls = 0
   const { fetchImpl } = routedFetch([
