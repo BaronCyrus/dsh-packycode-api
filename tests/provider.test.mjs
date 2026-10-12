@@ -92,3 +92,43 @@ test('an unrelated stream passes through untouched', () => {
   assert.equal(guardKeyRotation(null), null)
   assert.equal(guardKeyRotation('nope'), 'nope')
 })
+
+test('a client-policy refusal is explained without touching the key ring', async () => {
+  const failures = []
+  const policy = '403 {"error":{"type":"packy_api_error","message":"This API endpoint is only accessible via the official Claude CLI (request id: 01M4Q6FJ0)"}}'
+  const guarded = guardKeyRotation(fakeStream([{ type: 'error', error: { errorMessage: policy } }]), {
+    key: 'sk-eeeeeeeeeeeeeeeeeeee',
+    onKeyFailure: (...args) => failures.push(args),
+  })
+  const received = []
+  for await (const item of guarded) received.push(item)
+  assert.deepEqual(failures, [], 'no key may be disabled for a client-policy refusal')
+  assert.match(received[0].error.errorMessage, /这不是 API Key 失效/u)
+  assert.equal(isQuotaExceededError(received[0].error.errorMessage), false)
+})
+
+test('a thrown client-policy refusal is explained too', async () => {
+  const failures = []
+  const guarded = guardKeyRotation(fakeStream([], { throwAt: 0 }), {
+    key: 'sk-ffffffffffffffffffff',
+    onKeyFailure: (...args) => failures.push(args),
+  })
+  // Replace the transport failure with the policy error for this case.
+  const policyStream = {
+    async *[Symbol.asyncIterator]() {
+      throw new Error('403 {"error":{"message":"This API endpoint is only accessible via the official Claude CLI"}}')
+    },
+  }
+  const guardedPolicy = guardKeyRotation(policyStream, {
+    key: 'sk-ffffffffffffffffffff',
+    onKeyFailure: (...args) => failures.push(args),
+  })
+  await assert.rejects(async () => {
+    for await (const _item of guardedPolicy) void _item
+  }, /这不是 API Key 失效/u)
+  assert.deepEqual(failures, [])
+  // The original key-fault path is unchanged for a generic failure.
+  await assert.rejects(async () => {
+    for await (const _item of guarded) void _item
+  }, /boom/u)
+})

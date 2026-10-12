@@ -288,7 +288,7 @@ export {
   PROVIDER,
   SETTINGS_NAMESPACE,
 } from './constants.js'
-export { classifyGatewayFailure, normalizeFailureMessage } from './failures.js'
+export { classifyClientPolicy, classifyGatewayFailure, explainClientPolicyFailure, normalizeFailureMessage } from './failures.js'
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'
 export { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 export { createPackyCodeRpc, normalizeHost } from './rpc.js'

@@ -47,6 +47,12 @@ dsh plugin --profile <profile> add dsh-packycode-api
 - **Anthropic 的 base_url 不能带 `/v1`**（客户端自己拼 `/v1/messages`）—— `claude-opus-5-5` 用的是 `https://cf.api.fan`。
 - Codex 分组的 Responses 请求**必须带 `prompt_cache_key`**（否则 403 反代校验）。harness 会带上会话 id；插件在调用方没给 session id 时补一个兜底值。
 - 各模型的推理档位按厂商文档声明：`deepseek-flash` = `off/low/high/max`，`gpt-6.1-sol` 与 `claude-opus-5-5` = `low/medium/high/xhigh/max`（后两者无法关闭推理）。请求里声明了模型不支持的档位会被 harness 在发请求前拒绝，所以档位不要随手改。
+- **分组决定"能不能用 API 调用"**（PackyCode 控制台里给令牌选的分组）：
+  - `cc`（claude code 专用）**只接受官方 Claude CLI**，用 API 调 Claude 会 403 `This API endpoint is only accessible via the official Claude CLI`。要让本插件调 Claude，请选 `cc-sale` 或 `claude-officially`。
+  - `codex` / `codex-sale` 要求标准 Codex 客户端形态（插件已内置 `prompt_cache_key` 等必要条件），对应用 `gpt-6.1-sol`。
+  - `deepseek-officially` / `deepseek-sale` 对应用 `deepseek-flash`。
+  - 换分组时别把这三个分组一起去掉，否则对应模型会失效。
+- 插件识别这类"只允许官方客户端"的拒绝：**不重试、不切换也不停用 Key**，并直接给出中文说明（而不是让你看到"API Key 无效"）。
 
 ## 安全
 

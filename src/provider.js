@@ -15,7 +15,7 @@ import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.l
 
 import { PACKYCODE_MODELS } from './catalog.js'
 import { DEFAULT_API_HOST, DISPLAY_NAME, PROVIDER } from './constants.js'
-import { classifyGatewayFailure, normalizeFailureMessage } from './failures.js'
+import { classifyClientPolicy, classifyGatewayFailure, explainClientPolicyFailure, normalizeFailureMessage } from './failures.js'
 
 const TERMINAL_EVENTS = new Set(['error', 'done'])
 
@@ -75,6 +75,11 @@ export function guardKeyRotation(stream, { onKeyFailure, key } = {}) {
     for (const carrierKey of ['error', 'message']) {
       const carrier = value[carrierKey]
       if (carrier === null || typeof carrier !== 'object') continue
+      // A client-policy refusal is about this client, not this key: explain it
+      // and leave the ring alone.
+      if (classifyClientPolicy(carrier.errorMessage)) {
+        return { ...value, [carrierKey]: { ...carrier, errorMessage: explainClientPolicyFailure() } }
+      }
       const kind = classifyGatewayFailure(carrier.errorMessage)
       if (kind === undefined) continue
       report(kind, carrier.errorMessage)
@@ -98,6 +103,11 @@ export function guardKeyRotation(stream, { onKeyFailure, key } = {}) {
                 return value === item.value ? item : { ...item, value }
               } catch (error) {
                 const text = error instanceof Error ? error.message : String(error)
+                // The policy refusal is worth explaining even mid-stream; a
+                // key fault is only the key's when nothing was answered yet.
+                if (classifyClientPolicy(text)) {
+                  throw new Error(explainClientPolicyFailure(), { cause: error })
+                }
                 const kind = observed ? undefined : classifyGatewayFailure(text)
                 if (kind !== undefined) {
                   report(kind, text)

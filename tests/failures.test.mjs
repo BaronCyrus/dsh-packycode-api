@@ -4,13 +4,27 @@ import test from 'node:test'
 import { isQuotaExceededError } from '@deepseek-ai/dsh-llm'
 
 import {
+  CLIENT_POLICY_FAILURE,
   INVALID_KEY_FAILURE,
   QUOTA_FAILURE,
+  classifyClientPolicy,
   classifyGatewayFailure,
+  explainClientPolicyFailure,
   normalizeFailureMessage,
 } from '../src/failures.js'
 
 const AUTH_STATUS = /\b(?:401|403)\b/u
+/** Every wording the harness routes somewhere other than a plain failure. */
+const OTHER_CLASSES = [
+  /\b(?:401|403)\b/u,
+  /\b429\b|rate.?limit/iu,
+  /\b413\b|payload too large|request body too large/iu,
+  /\b400\b|invalid.?request/iu,
+  /\b5\d\d\b/u,
+  /\btime(?:d)?\s*out\b|timeout/iu,
+  /stream ended (?:before|without)\b/iu,
+  /\b(?:network|connection|socket|fetch)\b|\bECONN[A-Z]+\b|\bterminated\b|premature close/iu,
+]
 
 test('recognizes an exhausted key from the gateway wording', () => {
   assert.equal(classifyGatewayFailure('402 {"error":{"message":"当前令牌额度已用完"}}'), QUOTA_FAILURE)
@@ -53,4 +67,27 @@ test('a normalized key rejection lands in the harness auth category', () => {
   assert.equal(AUTH_STATUS.test(normalized), true)
   assert.equal(isQuotaExceededError(normalized), false)
   assert.match(normalized, /invalid_authentication/u)
+})
+
+test('a client-policy refusal is never blamed on the key', () => {
+  const claude = '403 {"error":{"type":"packy_api_error","message":"This API endpoint is only accessible via the official Claude CLI (request id: 01M4Q6FJ05BX8Z4SWZ01RXSNSS)"}}'
+  const codex = '403 {"error":{"message":"我们检测到您的客户端存在异常，请使用标准 Codex 客户端请求，请避免任何基于我方 API 二次分发的 API 转接接入。"}}'
+  for (const raw of [claude, codex]) {
+    assert.equal(classifyClientPolicy(raw), true)
+    // Not a key fault: nothing may disable or rotate a key for this.
+    assert.equal(classifyGatewayFailure(raw), undefined)
+  }
+})
+
+test('the policy explanation reaches the user instead of an API-key error', () => {
+  const raw = '403 {"error":{"message":"This API endpoint is only accessible via the official Claude CLI"}}'
+  const normalized = normalizeFailureMessage(raw, CLIENT_POLICY_FAILURE)
+  assert.equal(normalized, explainClientPolicyFailure())
+  assert.match(normalized, /这不是 API Key 失效/u)
+  assert.match(normalized, /cc-sale/u)
+  // It must not read as any category the retry policy re-runs.
+  assert.equal(isQuotaExceededError(normalized), false)
+  for (const pattern of OTHER_CLASSES) {
+    assert.equal(pattern.test(normalized), false, `${pattern} must not match the policy sentence`)
+  }
 })
