@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.2
 
 - The plugin card and both READMEs show the PackyCode mascot. The package declares a top-level `icon` and ships a 512×512 transparent lossless WebP, under DSH's 256 KiB icon limit. The original README PNG is unchanged.
 - Keys can be renamed from the settings panel (`keys/rename`, up to 60 characters, empty names refused). Before, a label was fixed at add time, so keys stored under a duplicate default name could only be fixed by removing and re-adding them.
