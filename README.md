@@ -30,6 +30,10 @@
 | **Claude 走本机 CLI** | `claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5` 由本机官方 Claude Code CLI 执行；设置页可以检测并一键安装 |
 | **凭据不离开本机** | Key 只存在 DSH 凭据文件里。浏览器只能看到备注、状态和余额，拿不到 Key |
 
+<img width="790" height="332" alt="截屏2026-10-13 10 08 27" src="https://github.com/user-attachments/assets/2faa7667-300c-4f12-bb94-aecc35c5cb7f" />
+<img width="272" height="425" alt="截屏2026-10-13 10 07 46" src="https://github.com/user-attachments/assets/040fc57a-2dd2-4195-9bbc-5fa3357d1eb1" />
+
+
 ## 安装
 
 先准备好 **DeepSeek Harness** 和 **PackyCode（PackyAPI）的 API Key**。尚未安装 DSH，可查看 [DSH 官方说明](https://github.com/deepseek-ai/deepseek-harness#run)。
