@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A `gpt-6-astra` session's title now runs on `gpt-6.1-sol`, in the same way a Claude session's title runs on `claude-haiku-5-5`. DSH sends each title request to the session's own model, so Astra was titling its own sessions. The reroute applies only to requests with `purpose: 'session-title'`, on both the prepared and direct dispatch paths, and both models need the same Codex group. Verified live through the real host adapter with the gateway request observed: the title request went to `gpt-6.1-sol` ("为 PackyCode 添加 GPT-6 Astra并发布"), and an ordinary turn stayed on `gpt-6-astra`.
 - `claude-haiku-5-5` now declares a 1,000,000-token context window and 128,000 output tokens (it declared 200,000 and 64,000), matching Anthropic's [Claude Haiku 5.5 overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview) and the other Claude 5.5 models. The protocol, base URL, and effort levels are unchanged. Haiku runs through the local Claude Code CLI, which manages its own context. These figures set what DSH shows and how it budgets the session, such as when it compacts.
 
 ## 1.0.6

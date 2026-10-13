@@ -114,6 +114,7 @@ dsh-packycode-api
 - 对话记录和图片通过 stdin 交给 CLI（`--input-format stream-json`），不走命令行参数：Windows 命令行长度有上限，而且命令行带不了图片。对话里的图片会以图片形式发给 Claude（与 HTTP 路由相同的压缩规格：每张不超过 2048×2048、约 1 MiB；一回合最多 20 张、合计 20 MiB，超出时先舍弃最早的）。没随消息发出的图片会写明本机只读副本的路径，CLI 需要时可以用 Read 读取。
 - 每次运行都带 `--append-system-prompt`（委派说明）。在 `-p` 模式下，官方 CLI 有追加说明时会以 "You are Claude Code, Anthropic's official CLI for Claude …" 自我介绍，没有时是 "You are a Claude agent, built on Anthropic's Claude Agent SDK."；后者曾被上游当成非官方 CLI 拒绝（403 `only accepts requests from the official Claude Code CLI`）。这是官方 CLI 自己的行为，插件没有改写它的系统提示词。
 - 会话跑在 Claude 模型上时，生成标题改用 `claude-haiku-5-5`，只读、临时目录，避免为起标题跑一整轮 Opus。
+- 会话跑在 `gpt-6-astra` 上时，标题改由 `gpt-6.1-sol` 生成（同一个 Codex 分组）；对话本身仍然用 Astra。其它模型的标题由会话模型自己生成。
 - 另有 `claude_code` 工具：当前模型是 `gpt-6.1-sol`、`gpt-6-astra` 或 `deepseek-flash` 时，可以把一个任务委派给本机 Claude Code。请求的 `mode` 不会超过会话权限允许的上限。
 - 声明了模型不支持的推理档位会被 harness 在发请求前拒绝，不要随手改档位映射。
 

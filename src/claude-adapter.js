@@ -35,6 +35,14 @@ export const CLI_BACKED_MODEL_IDS = Object.freeze(['claude-opus-5-5', 'claude-so
 /** The model a session title is generated with when the session runs on the CLI. */
 export const TITLE_MODEL_ID = 'claude-haiku-5-5'
 
+/**
+ * HTTP models whose session titles run on another model of the same route.
+ * A title is a few words, so the flagship `gpt-6-astra` hands it to
+ * `gpt-6.1-sol`, which the same Codex group serves; the session's own turns
+ * are untouched.
+ */
+export const TITLE_MODEL_ROUTES = Object.freeze({ 'gpt-6-astra': 'gpt-6.1-sol' })
+
 /** How much of the conversation a delegated prompt carries. */
 const MAX_PROMPT_CHARS = 48_000
 const MAX_BLOCK_CHARS = 8_000
@@ -466,8 +474,9 @@ async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imag
  * Wrap an adapter so the CLI-backed models run through the local CLI.
  *
  * @param options - the inner adapter, the CLI runner, the CLI-backed model ids,
- *   the model session titles run on, the mode and working directory each
- *   turn runs with, and the attachment store images are read from.
+ *   the model session titles run on, the HTTP models whose titles run on
+ *   another model, the mode and working directory each turn runs with, and the
+ *   attachment store images are read from.
  * @returns an adapter with the same provider surface.
  */
 export function createClaudeCliAdapter({
@@ -475,6 +484,7 @@ export function createClaudeCliAdapter({
   runner,
   modelIds = CLI_BACKED_MODEL_IDS,
   titleModel = TITLE_MODEL_ID,
+  titleRoutes = TITLE_MODEL_ROUTES,
   resolveMode,
   resolveCwd,
   resolveAttachments,
@@ -483,6 +493,15 @@ export function createClaudeCliAdapter({
   if (inner === undefined || inner === null) throw new Error('the CLI adapter needs an inner adapter')
   if (runner === undefined || runner === null) throw new Error('the CLI adapter needs a runner')
   const cliModels = new Set(modelIds)
+  /** The model a title request for `model` runs on, when it is rerouted. */
+  const titleRouteOf = options => (options?.purpose === 'session-title' && !cliModels.has(options.model)
+    ? (Object.hasOwn(titleRoutes, options.model) ? titleRoutes[options.model] : undefined)
+    : undefined)
+  /** Run a rerouted title on its own model, bound to that model's generation. */
+  async function* reroutedTitle(options, model) {
+    const prepared = await inner.prepareCall(options.provider, model, options.signal)
+    yield* prepared.stream({ ...options, model })
+  }
   /** The mode is read per turn so a settings change applies without a reload. */
   const modeOf = () => (typeof resolveMode === 'function' ? resolveMode() : undefined)
   const cwdOf = () => (typeof resolveCwd === 'function' ? resolveCwd() : undefined)
@@ -591,13 +610,26 @@ export function createClaudeCliAdapter({
     }
 
     async prepareCall(provider, model, signal) {
-      if (!cliModels.has(model)) return await inner.prepareCall(provider, model, signal)
+      if (!cliModels.has(model)) {
+        const prepared = await inner.prepareCall(provider, model, signal)
+        if (!Object.hasOwn(titleRoutes, model)) return prepared
+        // The purpose is only known at dispatch, so the reroute is decided there.
+        return {
+          ...prepared,
+          stream: options => {
+            const routed = titleRouteOf(options)
+            return routed === undefined ? prepared.stream(options) : reroutedTitle(options, routed)
+          },
+        }
+      }
       const resolved = await inner.resolveModel(provider, model, signal)
       return { model: resolved, stream: options => cliStream(options) }
     }
 
     stream(options) {
-      return cliModels.has(options.model) ? cliStream(options) : inner.stream(options)
+      if (cliModels.has(options.model)) return cliStream(options)
+      const routed = titleRouteOf(options)
+      return routed === undefined ? inner.stream(options) : reroutedTitle(options, routed)
     }
   })()
 }

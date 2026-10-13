@@ -459,6 +459,7 @@ export {
   renderAuxiliaryPrompt,
   renderDelegatedPrompt,
   TITLE_MODEL_ID,
+  TITLE_MODEL_ROUTES,
 } from './claude-adapter.js'
 export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession } from './permission.js'
 export { accountHostOrder, createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage, statusHostOrder } from './balance.js'

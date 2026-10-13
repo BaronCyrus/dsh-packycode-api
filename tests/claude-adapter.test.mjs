@@ -9,6 +9,7 @@ import {
   delegationInstructions,
   renderDelegatedPrompt,
   TITLE_MODEL_ID,
+  TITLE_MODEL_ROUTES,
 } from '../src/claude-adapter.js'
 
 /** The reasoning note every delegated turn opens with, before the CLI is up. */
@@ -391,4 +392,52 @@ test('a client-policy refusal of the CLI keeps the gateway words but drops the a
   assert.match(message, /不是 API Key 失效/u)
   assert.match(message, /request id: 01M4QNSF/u)
   assert.equal(/\b403\b/u.test(message), false)
+})
+
+/** An inner adapter that records which model each prepared call and dispatch used. */
+function routingInner() {
+  const seen = []
+  const streamFor = prepared => options => (async function* () {
+    seen.push({ prepared, dispatched: options.model, purpose: options.purpose })
+    yield { type: 'text-delta', index: 0, text: `from ${options.model}` }
+  })()
+  return {
+    seen,
+    providerInfo: provider => ({ id: provider }),
+    listModels: async () => [],
+    resolveModel: async (_provider, id) => ({ id }),
+    prepareCall: async (_provider, id) => ({ model: { id }, stream: streamFor(id) }),
+    stream: options => streamFor('unprepared')(options),
+  }
+}
+
+test('a gpt-6-astra session title runs on gpt-6.1-sol; its turns stay on Astra', async () => {
+  assert.deepEqual({ ...TITLE_MODEL_ROUTES }, { 'gpt-6-astra': 'gpt-6.1-sol' })
+  const inner = routingInner()
+  const adapter = createClaudeCliAdapter({ inner, runner: stubRunner([]) })
+
+  // The prepared path, which the LLM service uses: the model shown stays Astra.
+  const prepared = await adapter.prepareCall('packycode', 'gpt-6-astra')
+  assert.equal(prepared.model.id, 'gpt-6-astra')
+  const title = await consume(prepared.stream({ provider: 'packycode', model: 'gpt-6-astra', purpose: 'session-title', messages: [] }))
+  assert.deepEqual(title, [{ type: 'text-delta', index: 0, text: 'from gpt-6.1-sol' }])
+  assert.deepEqual(inner.seen.at(-1), { prepared: 'gpt-6.1-sol', dispatched: 'gpt-6.1-sol', purpose: 'session-title' })
+
+  const turn = await adapter.prepareCall('packycode', 'gpt-6-astra')
+  await consume(turn.stream({ provider: 'packycode', model: 'gpt-6-astra', messages: [] }))
+  assert.deepEqual(inner.seen.at(-1), { prepared: 'gpt-6-astra', dispatched: 'gpt-6-astra', purpose: undefined })
+
+  // The direct path reroutes the same way.
+  await consume(adapter.stream({ provider: 'packycode', model: 'gpt-6-astra', purpose: 'session-title', messages: [] }))
+  assert.deepEqual(inner.seen.at(-1), { prepared: 'gpt-6.1-sol', dispatched: 'gpt-6.1-sol', purpose: 'session-title' })
+})
+
+test('models without a title route keep titling themselves', async () => {
+  const inner = routingInner()
+  const adapter = createClaudeCliAdapter({ inner, runner: stubRunner([]) })
+  for (const model of ['gpt-6.1-sol', 'deepseek-flash']) {
+    const prepared = await adapter.prepareCall('packycode', model)
+    await consume(prepared.stream({ provider: 'packycode', model, purpose: 'session-title', messages: [] }))
+    assert.deepEqual(inner.seen.at(-1), { prepared: model, dispatched: model, purpose: 'session-title' })
+  }
 })
