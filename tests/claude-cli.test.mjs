@@ -252,6 +252,7 @@ test('a tool summary names the input a reader looks for', () => {
   assert.equal(summarizeToolUse('Read', { file_path: '/a/b.cs', limit: 20 }), 'Read · /a/b.cs')
   assert.equal(summarizeToolUse('Grep', { pattern: 'foo', path: '/x' }), 'Grep · foo')
   assert.equal(summarizeToolUse('TodoWrite', { todos: [] }), 'TodoWrite')
+  assert.equal(summarizeToolUse('mcp__packycode_search_ab1234__web_search', { query: 'latest release' }), 'PackyCode WebSearch · latest release')
   assert.equal(summarizeToolUse('Bash', { command: 'x'.repeat(400) }).length, 'Bash · '.length + 160)
 })
 
@@ -361,6 +362,183 @@ test('a consumer that stops reading early kills the streaming CLI', async () => 
     break
   }
   assert.equal(child.signalCode, 'SIGTERM')
+})
+
+function bridgeStub() {
+  let starts = 0
+  let closes = 0
+  const factory = async () => {
+    starts++
+    let closed = false
+    return {
+      configPath: '/private-run/mcp.json',
+      toolName: 'mcp__packycode_search_ab1234__web_search',
+      instructions: 'Use the MCP search tool; native WebSearch is disabled.',
+      backend: 'deepseek',
+      close: async () => { if (!closed) { closes++; closed = true } },
+    }
+  }
+  return { factory, get starts() { return starts }, get closes() { return closes } }
+}
+
+const credential = async () => ({ baseUrl: 'https://cf.api.fan', token: 'sk-plugin-secret', label: 'test' })
+
+test('MCP argv grants only the exact read-only search tool and disables native WebSearch in every mode', () => {
+  const bridge = { configPath: '/private-run/mcp.json', toolName: 'mcp__packycode_search_ab1234__web_search', instructions: 'Use MCP search.' }
+  for (const mode of ['read-only', 'edit', 'full']) {
+    const args = buildClaudeArgs({ mode, searchBridge: bridge })
+    assert.equal(args[args.indexOf('--disallowedTools') + 1], 'WebSearch')
+    assert.equal(args[args.indexOf('--mcp-config') + 1], bridge.configPath)
+    assert.equal(args.includes('--strict-mcp-config'), false)
+    assert.equal(args.includes('--system-prompt'), false)
+    assert.equal(args.some(arg => /mcp__.*\*/u.test(arg)), false)
+    if (mode !== 'full') {
+      const allowed = args.slice(args.indexOf('--allowedTools') + 1, args.indexOf('--disallowedTools'))
+      assert.deepEqual(allowed, [...CLAUDE_CLI_MODES[mode].allowedTools, bridge.toolName])
+      assert.equal(args.includes('--dangerously-skip-permissions'), false)
+    }
+  }
+  assert.throws(() => buildClaudeArgs({ searchBridge: { ...bridge, toolName: 'mcp__anything__*' } }), /configuration is invalid/u)
+})
+
+test('MCP bridge closes on successful/nonzero/invalid JSON exits and synchronous/asynchronous spawn failure', async () => {
+  for (const variant of ['success', 'nonzero', 'invalid', 'sync-spawn', 'async-spawn', 'stdin']) {
+    const bridge = bridgeStub()
+    const { spawnImpl } = stubSpawn({ code: variant === 'nonzero' ? 1 : 0, stdout: variant === 'invalid' ? 'not JSON' : `${JSON.stringify(PAYLOAD)}\n`, hang: ['async-spawn', 'stdin'].includes(variant) })
+    const runner = createClaudeRunner({
+      binary: '/mock/claude',
+      resolveCredential: credential,
+      createSearchBridge: bridge.factory,
+      spawnImpl: (...args) => {
+        if (variant === 'sync-spawn') throw new Error('spawn failed')
+        const child = spawnImpl(...args)
+        if (variant === 'async-spawn') queueMicrotask(() => child.emit('error', new Error('spawn failed')))
+        if (variant === 'stdin') child.stdin.end = () => { throw new Error('stdin failed') }
+        return child
+      },
+    })
+    if (variant === 'success') await runner.run({ prompt: 'x' })
+    else await assert.rejects(runner.run({ prompt: 'x' }))
+    assert.equal(bridge.starts, 1, variant)
+    assert.equal(bridge.closes, 1, variant)
+    await runner.close()
+  }
+})
+
+test('pre-aborted and cancelled setup never spawns; a late bridge factory is disposed', async () => {
+  for (const phase of ['pre', 'credential', 'binary', 'bridge']) {
+    const bridge = bridgeStub()
+    const controller = new AbortController()
+    const spawn = []
+    let entered
+    const ready = new Promise(resolve => { entered = resolve })
+    let resolveBlocked
+    const blocked = new Promise(resolve => { resolveBlocked = resolve })
+    const runner = createClaudeRunner({
+      binary: phase === 'binary' ? async () => { entered(); await blocked; return '/mock/claude' } : '/mock/claude',
+      resolveCredential: phase === 'credential' ? async () => { entered(); await blocked; return credential() } : credential,
+      createSearchBridge: phase === 'bridge' ? async () => { entered(); await blocked; return bridge.factory() } : bridge.factory,
+      spawnImpl: (...args) => { spawn.push(args); throw new Error('should not spawn') },
+    })
+    if (phase === 'pre') controller.abort()
+    const pending = runner.run({ prompt: 'x', signal: controller.signal })
+    if (phase !== 'pre') { await ready; controller.abort() }
+    await assert.rejects(pending, /aborted/u)
+    resolveBlocked()
+    await new Promise(resolve => setImmediate(resolve))
+    await runner.close()
+    assert.equal(spawn.length, 0, phase)
+    if (phase === 'bridge') assert.equal(bridge.closes, 1)
+    else assert.equal(bridge.starts, 0)
+  }
+})
+
+test('returning on the first key or MCP progress event terminates the CLI and closes its bridge', async () => {
+  for (const stopOn of ['key', 'search-bridge']) {
+    const bridge = bridgeStub()
+    let child
+    const { spawnImpl } = stubSpawn({ hang: true })
+    const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, createSearchBridge: bridge.factory, spawnImpl: (...args) => { child = spawnImpl(...args); return child } })
+    for await (const event of runner.stream({ prompt: 'x' })) {
+      if (event.type === stopOn) break
+    }
+    assert.equal(child.signalCode, 'SIGTERM')
+    assert.equal(bridge.closes, 1)
+    await runner.close()
+  }
+})
+
+test('abort, timeout, startup watchdog and plugin unload immediately revoke MCP access', async () => {
+  for (const variant of ['abort', 'timeout', 'watchdog', 'unload']) {
+    const bridge = bridgeStub()
+    const { spawnImpl } = stubSpawn({ hang: true })
+    const controller = new AbortController()
+    const runner = createClaudeRunner({
+      resolveCredential: credential, spawnImpl, createSearchBridge: bridge.factory,
+      timeoutMs: variant === 'timeout' ? 20 : 1000,
+      startupTimeoutMs: variant === 'watchdog' ? 20 : 1000,
+    })
+    const keepAlive = setInterval(() => {}, 1000)
+    try {
+      const pending = variant === 'watchdog' ? (async () => { for await (const _event of runner.stream({ prompt: 'x' })) { /* startup */ } })() : runner.run({ prompt: 'x', signal: controller.signal })
+      pending.catch(() => undefined)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      if (variant === 'abort') controller.abort()
+      if (variant === 'unload') await runner.close()
+      await assert.rejects(pending)
+      assert.equal(bridge.closes, 1, variant)
+      await runner.close()
+    } finally { clearInterval(keepAlive) }
+  }
+})
+
+test('titles opt out of MCP allocation but still deny native search, and emitted diagnostics redact API keys', async () => {
+  const bridge = bridgeStub()
+  const token = 'sk-secret-never-in-results'
+  const { spawnImpl, calls } = stubSpawn({ stdout: `${JSON.stringify({ ...PAYLOAD, result: `echoed ${token}` })}\n` })
+  const runner = createClaudeRunner({ resolveCredential: async () => ({ baseUrl: 'https://gw.example', token }), spawnImpl, createSearchBridge: bridge.factory })
+  const value = await runner.run({ prompt: 'title', enableSearch: false })
+  assert.equal(bridge.starts, 0)
+  assert.equal(calls[0].args.includes('--mcp-config'), false)
+  assert.equal(calls[0].args[calls[0].args.indexOf('--disallowedTools') + 1], 'WebSearch')
+  assert.doesNotMatch(value.result, /sk-secret/u)
+  assert.match(value.result, /\[redacted\]/u)
+  const events = []
+  for await (const event of runner.stream({ prompt: 'x' })) events.push(event)
+  assert.doesNotMatch(JSON.stringify(events), /sk-secret/u)
+  assert.equal(bridge.closes, 1)
+  await runner.close()
+})
+
+test('text/reasoning deltas split across events never reconstruct a relay key or MCP capability', async () => {
+  const token = 'sk-stream-only-dummy-key-0000'
+  const capability = 'mockcapabilityabcdef0123456789'
+  for (const kind of ['text', 'reasoning']) {
+    const text = kind === 'text' ? 'text' : 'thinking'
+    const delta = value => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: kind === 'text' ? 'text_delta' : 'thinking_delta', [text]: value } } })
+    const payload = [delta(`echo ${token.slice(0, 8)}`), delta(`${token.slice(8)} and ${capability.slice(0, 9)}`), delta(`${capability.slice(9)}.`), PAYLOAD]
+    const { spawnImpl } = stubSpawn({ stdout: `${payload.map(JSON.stringify).join('\n')}\n` })
+    const bridge = bridgeStub()
+    const runner = createClaudeRunner({ resolveCredential: async () => ({ baseUrl: 'https://gw.example', token }), spawnImpl, createSearchBridge: async () => ({ ...await bridge.factory(), redactionValues: () => [capability] }) })
+    const events = []
+    for await (const event of runner.stream({ prompt: 'x' })) events.push(event)
+    const displayed = events.filter(event => event.type === kind).map(event => event.text).join('')
+    assert.equal(displayed, 'echo [redacted] and [redacted].')
+    assert.equal(displayed.includes(token), false)
+    assert.equal(displayed.includes(capability), false)
+    await runner.close()
+  }
+})
+
+test('a successful-looking stream result followed by nonzero child exit is not success', async () => {
+  const { spawnImpl } = stubSpawn({ code: 2 })
+  const bridge = bridgeStub()
+  const runner = createClaudeRunner({ resolveCredential: credential, spawnImpl, createSearchBridge: bridge.factory })
+  const events = []
+  await assert.rejects(async () => { for await (const event of runner.stream({ prompt: 'x' })) events.push(event) }, /failed/u)
+  assert.equal(events.some(event => event.type === 'result'), false)
+  assert.equal(bridge.closes, 1)
+  await runner.close()
 })
 
 test('an explicit binary path wins and PATH is the fallback', () => {

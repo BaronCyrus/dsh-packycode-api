@@ -475,6 +475,7 @@ async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imag
       prompt: renderAuxiliaryPrompt(options),
       model: titleModel,
       mode: 'read-only',
+      enableSearch: false,
       appendSystemPrompt: typeof options.system === 'string' ? options.system : undefined,
       // Outside the workspace, so the CLI loads no project memory into a title.
       cwd: tmpdir(),
@@ -593,6 +594,9 @@ export function createClaudeCliAdapter({
           case 'key':
             runKey = event
             if (!quiet) yield* blocks.note(keyNote(event))
+            break
+          case 'search-bridge':
+            if (!quiet) yield* blocks.note(`▸ 网页搜索：PackyCode ${event.backend === 'gpt' ? 'GPT' : 'DeepSeek'}（MCP，原生 WebSearch 已禁用）\n`)
             break
           case 'started':
             if (!quiet) {

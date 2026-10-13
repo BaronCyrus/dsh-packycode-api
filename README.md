@@ -48,7 +48,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.0`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.1`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -67,7 +67,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.0`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.1`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -99,6 +99,18 @@ dsh-packycode-api
 | GPT | `gpt-6.1-sol`，`/v1/responses` + `web_search` | 结果通常更新、更准，每次约 2–3 万输入 token；需要网关把这个 Key 的 GPT 请求路由到它的分组 |
 
 PackyCode 没有专用搜索接口：一次搜索就是一次带服务端搜索工具的模型调用，用这里的 Key 计费，额度用尽或 Key 被拒绝时同样切到下一个 Key。
+
+**Claude CLI 的搜索。** Claude 模型和 `claude_code` 委派工具都通过临时 MCP 搜索工具使用上表选定的 DeepSeek/GPT 后端，原生 `WebSearch` 被禁用。原因是原生搜索会额外发一个 Claude 服务端搜索子请求，PackyCode 的 Claude 上游可能把它拒为「不是官方 CLI」，即使普通对话能正常工作。新的调用链是：
+
+```text
+Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT 后端
+```
+
+- **后端选择对 CLI 生效；路由选择只影响 DSH。** 即使选了「不接管」，CLI 搜索仍用这里选的后端，不转到 DSH 默认搜索。更改后端后下一次搜索即使用新选择。
+- Claude 普通对话仍需要 Claude 分组；搜索需要存入插件的 Key 覆盖 DeepSeek 或 GPT 分组，可以是另一个 Key。搜索错误会返回给 CLI，不伪造成功、不自动切另一个后端。
+- 只读、编辑模式单独自动允许这个只读 MCP 搜索工具，不增加 Shell 或文件写权限；用户/管理员的拒绝规则仍有效。CLI 的 `--allowedTools` 是自动批准列表，不是可用工具的排他列表，已有其他工具权限保持原样。
+- 每轮最多 8 次搜索，最多同时 2 次；查询不超过 2000 字符，每次最多 8 个来源，整体搜索预算 60 秒。标题生成不启动 MCP 或进行搜索。
+- 思考区会显示 `▸ 网页搜索：PackyCode DeepSeek（MCP，原生 WebSearch 已禁用）`（或 GPT）。临时服务只监听 `127.0.0.1`，配置中仅含本机一次性凭证，不含搜索 API Key；CLI 结束、取消、超时或插件卸载时关闭并清理，不修改用户现有 MCP 配置。
 
 <details>
 <summary>网页搜索是怎么接进 DSH 的</summary>
@@ -203,6 +215,8 @@ pnpm run check
 `pnpm run check` 会跑全部测试、重新构建，并在 `.artifacts/` 打出 tarball。`lib/` 是已提交的构建产物，改 `src/` 后用 `pnpm run build` 生成，不要手改。
 
 真机网关用 `node scripts/live-check.mjs` 验证：它通过插件注册的同一条路由，读余额和分组、让每个 HTTP 模型回答一次、演练 Key 轮换和失败分类，只打印 Key 的末 4 位。加 `--with-cli` 会用本机 Claude Code CLI 跑三个 Claude 模型，加 `--with-search` 会每个搜索后端各搜一次；默认运行只消耗少量额度。
+
+Claude CLI 的 MCP 接口验证用 `node scripts/cli-search-check.mjs`：运行真实 CLI，普通 Claude 响应和搜索数据默认由本地测试服务模拟，不消费额度；会检查三种权限模式、原生搜索禁用和临时资源清理。加 `--live --backend deepseek` 或 `--live --backend gpt` 会让只读模式的那一次搜索走真实后端（其它两种模式仍模拟）。这不等于验证了真实 Claude 上游对话或运行中的 DSH 集成。
 
 使用 Agent 修改或发布时，先读 [AGENTS.md](AGENTS.md)。发布由推送 `v*` 标签触发 [Publish workflow](.github/workflows/publish.yml)，不要在本机执行 `npm publish`。
 

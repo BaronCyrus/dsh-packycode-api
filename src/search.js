@@ -363,7 +363,9 @@ export function createPackyCodeSearchProvider({
       const request = buildSearchRequest(chosen, {
         apiHost: hosts().apiHost,
         query,
-        sessionId: resolveSessionId?.(),
+        // An MCP invocation supplies the originating session captured by
+        // the host; HTTP callbacks no longer have the agent's async context.
+        sessionId: searchRequest?.sessionId ?? resolveSessionId?.(),
       })
 
       const candidates = await orderedKeys(ring, request.model, covers)

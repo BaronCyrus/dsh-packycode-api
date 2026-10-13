@@ -108,7 +108,12 @@ test('the registered tool runs the CLI with the plugin endpoint, key, and sessio
   assert.equal(seen.argv.includes('summarize the repo'), false)
   assert.deepEqual(seen.argv.slice(0, 4), ['-p', '--output-format', 'json', '--append-system-prompt'])
   assert.match(seen.argv[4], /claude_code tool/u)
-  assert.deepEqual(seen.argv.slice(5), ['--allowedTools', 'Read', 'Grep', 'Glob'])
+  assert.deepEqual(seen.argv.slice(5, 9), ['--allowedTools', 'Read', 'Grep', 'Glob'])
+  assert.match(seen.argv[9], /^mcp__packycode_search_[a-f0-9]+__web_search$/u)
+  assert.deepEqual(seen.argv.slice(10, 13), ['--disallowedTools', 'WebSearch', '--mcp-config'])
+  assert.match(seen.argv[14] ?? seen.argv[13], /mcp\.json$/u)
+  assert.equal(seen.argv.includes('--strict-mcp-config'), false)
+  assert.equal(seen.argv.some(arg => arg.includes('sk-stub-tool-key-0001')), false)
 
   // A rendered result carries the answer plus the CLI's accounting.
   const [block] = tool.output.render({}, value)

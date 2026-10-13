@@ -497,6 +497,7 @@ function SearchCard({ call, t }) {
   return (
     <Card title={t('searchTitle')} aside={<span className="pkc-chip" data-tone="neutral">{t('searchScope')}</span>}>
       <p className="pkc-note">{t('searchIntro')}</p>
+      <p className="pkc-note">{t('searchCliHint')}</p>
       {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('searchChecking')}</p>}
       {state !== undefined && (
         <>

@@ -44,7 +44,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.0`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.1`.
 
 Then **manually restart the desktop application**. Refreshing the page does not reload the plugin inside the Host process.
 
@@ -63,7 +63,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, and 
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.0`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.1`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 A local checkout can be linked with `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`.
 
@@ -95,6 +95,18 @@ A profile without a browser can still use the model route. It just has no settin
 | GPT | `gpt-6.1-sol`, `/v1/responses` + `web_search` | Usually fresher and more precise, about 20–30K input tokens per search; needs the gateway to route this key's GPT requests to its group |
 
 PackyCode has no dedicated search endpoint: one search is one model call with a server-side search tool, billed to the keys stored here. An exhausted or rejected key rotates exactly as on the model route.
+
+**Claude CLI search.** Both CLI-backed Claude models and the `claude_code` delegation tool use a temporary MCP search tool calling the DeepSeek/GPT backend selected above. Native `WebSearch` is disabled: it sends an additional Claude server-tool subrequest that PackyCode's Claude upstream may reject as an unofficial client even when ordinary turns work.
+
+```text
+Claude Code CLI → temporary local MCP web_search → selected PackyCode DeepSeek/GPT backend
+```
+
+- **Backend selection applies to CLI; routing selection only applies to DSH.** Even with Off/Do not take over selected, CLI searches use the selected backend, not DSH's default. A backend change applies to the next search.
+- Ordinary Claude requests still need a Claude-group key. Search needs a plugin-stored key covering DeepSeek or GPT; it can be another key. Failures are returned to the CLI, with no invented success or automatic switch to another backend.
+- Read-only/edit modes auto-approve only this specific read-only MCP search tool, without adding shell or file-write privileges. User/managed denials still apply. CLI `--allowedTools` is an additive auto-approval list, not an exclusive tool whitelist; existing other permissions are preserved.
+- At most 8 searches per invocation, 2 concurrently, 2000 characters per query and 8 sources per result, with a 60-second end-to-end search deadline. Title generation allocates no MCP server or search grant.
+- Reasoning reports `▸ 网页搜索：PackyCode DeepSeek（MCP，原生 WebSearch 已禁用）` (or GPT). The temporary server binds only `127.0.0.1`; its private config contains an independent one-run capability, never a search API key. CLI completion/cancellation/timeout/plugin unload revokes it and removes the private config, leaving existing user MCP configurations untouched.
 
 <details>
 <summary>How web search is wired into DSH</summary>
@@ -199,6 +211,8 @@ pnpm run check
 `pnpm run check` runs every test, rebuilds, and writes a tarball under `.artifacts/`. `lib/` is a committed build; regenerate it with `pnpm run build` after editing `src/`, and do not hand-edit it.
 
 `node scripts/live-check.mjs` checks the live gateway through the same route the plugin registers: balance and groups, one answer per HTTP model, a rotation rehearsal, and the failure classification, printing only the key's last four characters. `--with-cli` also runs the three Claude models through the local Claude Code CLI, and `--with-search` runs one search per backend; the default run spends a small amount of quota.
+
+`node scripts/cli-search-check.mjs` runs the real CLI against a local test gateway and MCP bridge; Claude responses and search data are mocked by default, with no quota consumed. It checks all three permission modes, native-search exclusion and temporary-resource cleanup. `--live --backend deepseek` or `--live --backend gpt` sends the read-only mode's one search to the real backend (edit/full remain mocked). This does not verify actual Claude upstream turns or a running DSH integration.
 
 Read [AGENTS.md](AGENTS.md) before agent-assisted changes or a release. Publishing is the [Publish workflow](.github/workflows/publish.yml), triggered by pushing a `v*` tag. Do not run `npm publish` locally.
 

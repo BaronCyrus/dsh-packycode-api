@@ -296,6 +296,7 @@ test('a session title runs on the small model, read-only, outside the workspace'
   const call = runner.calls[0]
   assert.equal(call.model, TITLE_MODEL_ID)
   assert.equal(call.mode, 'read-only')
+  assert.equal(call.enableSearch, false, 'titles allocate no MCP server or search approval')
   assert.notEqual(call.cwd, '/work')
   assert.equal(call.appendSystemPrompt, 'Return only the title.')
   assert.equal(call.prompt, '登录页报错了')

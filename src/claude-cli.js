@@ -18,6 +18,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { nvmBinDirs, pathFor, searchPath, withProgramDirOnPath } from './locate.js'
+import { waitForSharedRequest } from './request.js'
+import { createDeltaRedactor, redactSecrets } from './secret-redactor.js'
 
 /**
  * What the delegated CLI may do on its own. The CLI runs its own tool loop;
@@ -181,7 +183,7 @@ export function resolveSpawnCommand(binary, { platform = process.platform, exist
  *   what the official client sends.
  * @returns argv after the binary name.
  */
-export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt } = {}) {
+export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt, searchBridge, disableNativeSearch = false } = {}) {
   const spec = CLAUDE_CLI_MODES[mode]
   if (spec === undefined) {
     throw new Error(`claude_code mode must be one of ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
@@ -192,9 +194,17 @@ export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = fa
   const named = typeof model === 'string' ? model.trim() : ''
   if (named !== '') args.push('--model', named)
   const appended = typeof appendSystemPrompt === 'string' ? appendSystemPrompt.trim() : ''
-  args.push('--append-system-prompt', appended === '' ? DEFAULT_APPEND_SYSTEM_PROMPT : appended)
+  const instructions = appended === '' ? DEFAULT_APPEND_SYSTEM_PROMPT : appended
+  if (searchBridge !== undefined && (!/^mcp__packycode_search_[a-f0-9]+__web_search$/u.test(searchBridge.toolName ?? '') || typeof searchBridge.configPath !== 'string')) {
+    throw new Error('PackyCode CLI search bridge configuration is invalid')
+  }
+  args.push('--append-system-prompt', searchBridge === undefined ? instructions : `${instructions}\n\n${searchBridge.instructions}`)
   if (spec.skipPermissions === true) args.push('--dangerously-skip-permissions')
-  else args.push('--allowedTools', ...spec.allowedTools)
+  else args.push('--allowedTools', ...spec.allowedTools, ...(searchBridge === undefined ? [] : [searchBridge.toolName]))
+  if (disableNativeSearch || searchBridge !== undefined) args.push('--disallowedTools', 'WebSearch')
+  // Add one private server for this run. Do not use --strict-mcp-config:
+  // unrelated existing project/user MCP configurations remain untouched.
+  if (searchBridge !== undefined) args.push('--mcp-config', searchBridge.configPath)
   return args
 }
 
@@ -302,7 +312,7 @@ function oneLine(text, limit = MAX_TOOL_SUMMARY_CHARS) {
  * @returns e.g. `Bash · git status`.
  */
 export function summarizeToolUse(name, input) {
-  const label = typeof name === 'string' && name !== '' ? name : 'tool'
+  const label = /^mcp__packycode_search_[a-f0-9]+__web_search$/u.test(name ?? '') ? 'PackyCode WebSearch' : typeof name === 'string' && name !== '' ? name : 'tool'
   if (input === null || typeof input !== 'object') return label
   for (const field of TOOL_SUMMARY_FIELDS) {
     const value = input[field]
@@ -446,117 +456,183 @@ export function createClaudeRunner({
   timeoutMs = DEFAULT_CLAUDE_TIMEOUT_MS,
   startupTimeoutMs = DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS,
   platform = process.platform,
+  createSearchBridge,
 } = {}) {
   if (typeof resolveCredential !== 'function') throw new Error('the Claude Code CLI runner needs resolveCredential')
 
+  const owners = new Set()
+  let disposed = false
+
   /**
-   * Spawn one CLI process and own its lifetime: capture both pipes, enforce the
-   * timeout, and kill the process — with a grace period — when the caller
-   * aborts. Both public entry points share it.
+   * Every invocation owns its child and optional MCP bridge from asynchronous
+   * setup onward. Cancelling setup never spawns a child; stopping a running
+   * invocation immediately revokes MCP access, then terminates the CLI.
    */
-  const start = async ({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout }) => {
-    const args = buildClaudeArgs({ mode, model, stream, appendSystemPrompt })
+  const start = async ({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout, enableSearch }) => {
+    // Validate caller input before resolving credentials or opening a server.
+    buildClaudeArgs({ mode, model, stream, appendSystemPrompt })
     const input = buildClaudeInput({ prompt, content, stream })
-    // Resolved per run, for this run's model: a key switch applies to the
-    // next run, and a key whose groups cannot reach the model is passed over.
-    const credential = await resolveCredential({ model })
-    const { baseUrl, token } = credential
-    const program = typeof binary === 'function' ? await binary() : binary
-    const command = resolveSpawnCommand(program, { platform })
-    const env = withProgramDirOnPath(buildClaudeEnvironment({ baseUrl, token, configDir }), program, platform)
-    const child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-    // The prompt goes over stdin, then stdin closes so the CLI knows the turn
-    // is complete. A CLI that exits before reading it must not take the host
-    // down with an unhandled EPIPE; its exit is reported through `close`.
-    child.stdin?.on?.('error', () => undefined)
-    child.stdin?.end?.(input)
+    if (disposed || signal?.aborted) throw new Error('claude_code was aborted')
+    const cancellation = new AbortController()
+    const runSignal = signal === undefined ? cancellation.signal : AbortSignal.any([signal, cancellation.signal])
     const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false }
-    const kill = () => {
-      if (child.exitCode !== null || child.signalCode !== null) return
-      child.kill('SIGTERM')
-      const timer = setTimeout(() => {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // Already gone.
-        }
-      }, KILL_GRACE_MS)
-      timer.unref?.()
+    let child
+    let bridge
+    let bridgeClosing
+    let pendingBridge
+    let timer
+    let startupTimer
+    let killTimer
+    let closed
+    let done
+    const finished = new Promise(resolve => { done = resolve })
+
+    const closeBridge = () => {
+      if (bridge === undefined) return Promise.resolve()
+      if (bridgeClosing === undefined) bridgeClosing = Promise.resolve().then(() => bridge.close())
+      return bridgeClosing
     }
-    const timer = timeoutMs > 0
-      ? setTimeout(() => {
-        state.timedOut = true
-        kill()
-      }, timeoutMs)
-      : undefined
-    timer?.unref?.()
-    // Only a streaming run prints as it goes; a JSON run prints once, at the end.
-    let startupTimer = stream && startupTimeoutMs > 0
-      ? setTimeout(() => {
-        if (state.sawOutput) return
-        state.silent = true
-        kill()
-      }, startupTimeoutMs)
-      : undefined
-    startupTimer?.unref?.()
     const clearStartup = () => {
       if (startupTimer !== undefined) clearTimeout(startupTimer)
       startupTimer = undefined
     }
+    const kill = () => {
+      cancellation.abort()
+      // Abort upstream searches and stop accepting paid work NOW, not when
+      // an unresponsive CLI eventually closes.
+      void closeBridge().catch(() => undefined)
+      if (child === undefined || state.settled || child.exitCode !== null || child.signalCode !== null) return
+      try { child.kill('SIGTERM') } catch { /* already gone */ }
+      if (killTimer !== undefined) return
+      killTimer = setTimeout(() => {
+        try { child.kill('SIGKILL') } catch { /* already gone */ }
+      }, KILL_GRACE_MS)
+      killTimer.unref?.()
+    }
     const onAbort = () => kill()
-    signal?.addEventListener('abort', onAbort, { once: true })
-    const release = () => {
-      if (state.settled) return
-      state.settled = true
+    const owner = { kill, finished }
+    owners.add(owner)
+    runSignal.addEventListener('abort', onAbort, { once: true })
+
+    const cleanup = async () => {
       if (timer !== undefined) clearTimeout(timer)
       clearStartup()
-      signal?.removeEventListener('abort', onAbort)
+      if (killTimer !== undefined) clearTimeout(killTimer)
+      runSignal.removeEventListener('abort', onAbort)
+      if (bridge === undefined && pendingBridge !== undefined) {
+        // The turn can report cancellation now, but plugin unload still owns
+        // and waits for a factory whose filesystem setup completes later.
+        void pendingBridge.then(value => value?.close(), () => undefined).catch(() => undefined).finally(() => {
+          owners.delete(owner)
+          done()
+        })
+        return
+      }
+      try {
+        await closeBridge()
+      } finally {
+        owners.delete(owner)
+        done()
+      }
     }
-    // Both pipes are owned here: a caller that awaits before attaching would
-    // otherwise miss the first chunks a fast CLI writes. Decoding on the stream
-    // keeps a multi-byte character split across two pipe reads intact.
-    child.stdout?.setEncoding?.('utf8')
-    child.stderr?.setEncoding?.('utf8')
-    child.stdout?.on('data', chunk => {
-      state.sawOutput = true
-      clearStartup()
-      const text = String(chunk)
-      state.stdout = (state.stdout + text).slice(-MAX_CAPTURE_BYTES)
-      onStdout?.(text)
-    })
-    child.stderr?.on('data', chunk => {
-      state.stderr = (state.stderr + String(chunk)).slice(-MAX_CAPTURE_BYTES)
-    })
-    const closed = new Promise((resolve, reject) => {
-      child.on('error', error => {
-        release()
-        // ENOENT also means a missing working directory; only blame the CLI
-        // when the program itself is not there.
-        const missing = error.code === 'ENOENT' && !(pathFor(platform).isAbsolute(program) && existsSync(program))
-        reject(missing
-          ? new Error(CLAUDE_MISSING_MESSAGE, { cause: error })
-          : new Error(`claude_code could not run ${program}: ${error.message}`, { cause: error }))
+    const checkAborted = () => {
+      if (disposed || runSignal.aborted) throw new Error('claude_code was aborted')
+    }
+    const setup = async pending => {
+      try {
+        const value = await waitForSharedRequest(Promise.resolve(pending), runSignal)
+        checkAborted()
+        return value
+      } catch (error) {
+        checkAborted()
+        throw error
+      }
+    }
+
+    try {
+      // Resolve per invocation, for its own model. The MCP capability below
+      // is unrelated to this API key; no key goes into its config or args.
+      const credential = await setup(resolveCredential({ model, signal: runSignal }))
+      const { baseUrl, token } = credential
+      const scrub = value => {
+        const text = redactSecrets(String(value), [token])
+        return typeof bridge?.scrub === 'function' ? bridge.scrub(text) : text
+      }
+      const program = await setup(typeof binary === 'function' ? binary() : binary)
+      const command = resolveSpawnCommand(program, { platform })
+      const env = withProgramDirOnPath(buildClaudeEnvironment({ baseUrl, token, configDir }), program, platform)
+      if (typeof createSearchBridge === 'function' && enableSearch !== false) {
+        pendingBridge = Promise.resolve().then(() => {
+          checkAborted()
+          return createSearchBridge({ model, signal: runSignal })
+        })
+        bridge = await setup(pendingBridge)
+        if (bridge === undefined || typeof bridge.close !== 'function') throw new Error('PackyCode CLI search bridge could not start')
+      }
+      checkAborted()
+      const args = buildClaudeArgs({ mode, model, stream, appendSystemPrompt, searchBridge: bridge, disableNativeSearch: typeof createSearchBridge === 'function' })
+      child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => { state.timedOut = true; kill() }, timeoutMs)
+        timer.unref?.()
+      }
+      if (stream && startupTimeoutMs > 0) {
+        startupTimer = setTimeout(() => {
+          if (state.sawOutput) return
+          state.silent = true
+          kill()
+        }, startupTimeoutMs)
+        startupTimer.unref?.()
+      }
+      child.stdout?.setEncoding?.('utf8')
+      child.stderr?.setEncoding?.('utf8')
+      child.stdout?.on('data', chunk => {
+        state.sawOutput = true
+        clearStartup()
+        const text = String(chunk)
+        state.stdout = scrub((state.stdout + text).slice(-MAX_CAPTURE_BYTES))
+        onStdout?.(text)
       })
-      child.on('close', (code, killSignal) => {
-        release()
-        if (state.timedOut) {
-          reject(new Error(`claude_code timed out after ${Math.round(timeoutMs / 1000)}s`))
-          return
-        }
-        if (state.silent) {
-          const detail = state.stderr.trim().split('\n').slice(-4).join(' ').slice(0, 400)
-          reject(new Error(`Claude Code CLI printed nothing within ${Math.round(startupTimeoutMs / 1000)}s of starting and was stopped${detail === '' ? '' : `: ${detail}`}`))
-          return
-        }
-        if (signal?.aborted === true) {
-          reject(new Error('claude_code was aborted'))
-          return
-        }
-        resolve({ code, killSignal })
+      child.stderr?.on('data', chunk => {
+        state.stderr = scrub((state.stderr + String(chunk)).slice(-MAX_CAPTURE_BYTES))
       })
-    })
-    closed.catch(() => undefined)
-    return { child, state, closed, kill, key: describeRunKey(credential) }
+      const exited = new Promise((resolve, reject) => {
+        child.on('error', error => {
+          if (state.settled) return
+          state.settled = true
+          // ENOENT also means a missing cwd; only blame the CLI when its
+          // binary itself is missing.
+          const missing = error.code === 'ENOENT' && !(pathFor(platform).isAbsolute(program) && existsSync(program))
+          reject(missing
+            ? new Error(CLAUDE_MISSING_MESSAGE, { cause: error })
+            : new Error(`claude_code could not run ${program}: ${error.message}`, { cause: error }))
+        })
+        child.on('close', (code, killSignal) => {
+          if (state.settled) return
+          state.settled = true
+          if (state.timedOut) return reject(new Error(`claude_code timed out after ${Math.round(timeoutMs / 1000)}s`))
+          if (state.silent) {
+            const detail = state.stderr.trim().split('\n').slice(-4).join(' ').slice(0, 400)
+            return reject(new Error(`Claude Code CLI printed nothing within ${Math.round(startupTimeoutMs / 1000)}s of starting and was stopped${detail === '' ? '' : `: ${detail}`}`))
+          }
+          if (runSignal.aborted) return reject(new Error('claude_code was aborted'))
+          resolve({ code, killSignal })
+        })
+      })
+      closed = exited.then(async value => { await cleanup(); return value }, async error => { await cleanup(); throw error })
+      closed.catch(() => undefined)
+      // Attach error listeners before feeding stdin: a quick EPIPE must not
+      // crash the host or miss child completion.
+      child.stdin?.on?.('error', () => undefined)
+      child.stdin?.end?.(input)
+      if (runSignal.aborted) kill()
+      return { child, state, closed, kill, closeBridge, scrub, deltaRedactor: createDeltaRedactor([token, ...(bridge?.redactionValues?.() ?? [])]), key: describeRunKey(credential), searchBackend: bridge?.backend }
+    } catch (error) {
+      kill()
+      if (closed !== undefined) await closed.catch(() => undefined)
+      else await cleanup()
+      throw error
+    }
   }
 
   return Object.freeze({
@@ -565,9 +641,9 @@ export function createClaudeRunner({
      * @param options - prompt, mode, model, working directory, and cancellation.
      * @returns the CLI's answer plus its own accounting.
      */
-    async run({ prompt, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal } = {}) {
+    async run({ prompt, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch } = {}) {
       const startedAt = Date.now()
-      const { state, closed } = await start({ prompt, mode, model, appendSystemPrompt, cwd, signal, stream: false })
+      const { state, closed } = await start({ prompt, mode, model, appendSystemPrompt, cwd, signal, enableSearch, stream: false })
       const { code, killSignal } = await closed
       const parsed = parseClaudeResult(state.stdout)
       if (parsed === undefined) throw new Error(failureMessage(undefined, code ?? killSignal, state.stderr))
@@ -593,12 +669,12 @@ export function createClaudeRunner({
      * @returns an async generator of {@link readClaudeStreamEvents} events and
      *   one closing `result` event.
      */
-    async *stream({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal } = {}) {
+    async *stream({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch } = {}) {
       const startedAt = Date.now()
       let buffer = ''
       let sawResult
       const lines = []
-      const { state, closed, kill, key } = await start({
+      const { state, closed, kill, closeBridge, scrub, deltaRedactor, key, searchBackend } = await start({
         prompt,
         content,
         mode,
@@ -606,6 +682,7 @@ export function createClaudeRunner({
         appendSystemPrompt,
         cwd,
         signal,
+        enableSearch,
         stream: true,
         onStdout: chunk => {
           buffer += chunk
@@ -617,36 +694,60 @@ export function createClaudeRunner({
           }
         },
       })
-      if (key !== undefined) yield { type: 'key', ...key }
+      let deltaKind
+      const redactedEvents = function* (event) {
+        // Accounting events do not change the displayed block. Keep a
+        // possible prefix pending across them rather than over-redacting
+        // ordinary words ending in the same first letter as a credential.
+        if (event.type === 'request-usage') { yield event; return }
+        const textual = event.type === 'text' || event.type === 'reasoning'
+        if (!textual || event.type !== deltaKind) {
+          const tail = deltaRedactor.flush({ boundary: event.type !== 'result' })
+          if (tail !== '' && deltaKind !== undefined) yield { type: deltaKind, text: tail }
+        }
+        if (textual) {
+          deltaKind = event.type
+          const safe = deltaRedactor.write(event.text)
+          if (safe !== '') yield { ...event, text: safe }
+        } else yield event
+      }
       const drain = function* () {
         while (lines.length > 0) {
           const line = lines.shift().trim()
           if (line === '' || !line.startsWith('{')) continue
           let parsed
           try {
-            parsed = JSON.parse(line)
+            parsed = JSON.parse(scrub(line))
           } catch {
             continue
           }
           for (const event of readClaudeStreamEvents(parsed)) {
-            if (event.type === 'result') sawResult = event.result
-            else yield event
+            for (const safe of redactedEvents(event)) {
+              if (safe.type === 'result') sawResult = safe.result
+              else yield safe
+            }
           }
         }
       }
       let finished = false
+      let exitStatus
       // A consumer that stops reading early must not leave the CLI running.
       const stopIfAbandoned = () => {
         if (!finished) kill()
       }
-      const completion = closed.then(() => {
+      const completion = closed.then(value => {
         finished = true
+        exitStatus = value
       }, error => {
         finished = true
         throw error
       })
       completion.catch(() => undefined)
       try {
+        // Even the first key/progress yield is owned: iterator.return() must
+        // revoke the bridge and terminate the CLI.
+        if (key !== undefined) yield { type: 'key', ...JSON.parse(scrub(JSON.stringify(key))) }
+        if (searchBackend !== undefined) yield { type: 'search-bridge', backend: searchBackend }
         while (!finished || lines.length > 0) {
           if (lines.length === 0) {
             if (finished) break
@@ -655,37 +756,45 @@ export function createClaudeRunner({
           }
           yield* drain()
         }
+        await completion
+        if (buffer.trim().startsWith('{')) {
+          try {
+            const event = readClaudeStreamEvents(JSON.parse(scrub(buffer.trim()))).find(item => item.type === 'result')
+            if (event !== undefined) sawResult = event.result
+          } catch {
+            // A truncated tail is not a result.
+          }
+        }
+        if (sawResult === undefined) {
+          throw new Error(failureMessage(undefined, undefined, state.stderr))
+        }
+        if (sawResult.is_error === true || exitStatus?.code !== 0) throw new Error(failureMessage(sawResult, exitStatus?.code ?? exitStatus?.killSignal, state.stderr))
+        const usage = sawResult.usage ?? {}
+        yield {
+          type: 'result',
+          result: {
+            result: typeof sawResult.result === 'string' ? sawResult.result : '',
+            model: typeof sawResult.model === 'string' ? sawResult.model : (model ?? ''),
+            mode,
+            costUsd: typeof sawResult.total_cost_usd === 'number' ? sawResult.total_cost_usd : 0,
+            durationMs: typeof sawResult.duration_ms === 'number' ? sawResult.duration_ms : Date.now() - startedAt,
+            inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
+            outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+            cacheReadTokens: typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0,
+            cacheWriteTokens: typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0,
+          },
+        }
       } finally {
         stopIfAbandoned()
+        await closeBridge()
       }
-      await completion
-      if (buffer.trim().startsWith('{')) {
-        try {
-          const event = readClaudeStreamEvents(JSON.parse(buffer.trim())).find(item => item.type === 'result')
-          if (event !== undefined) sawResult = event.result
-        } catch {
-          // A truncated tail is not a result.
-        }
-      }
-      if (sawResult === undefined) {
-        throw new Error(failureMessage(undefined, undefined, state.stderr))
-      }
-      if (sawResult.is_error === true) throw new Error(failureMessage(sawResult, 0, state.stderr))
-      const usage = sawResult.usage ?? {}
-      yield {
-        type: 'result',
-        result: {
-          result: typeof sawResult.result === 'string' ? sawResult.result : '',
-          model: typeof sawResult.model === 'string' ? sawResult.model : (model ?? ''),
-          mode,
-          costUsd: typeof sawResult.total_cost_usd === 'number' ? sawResult.total_cost_usd : 0,
-          durationMs: typeof sawResult.duration_ms === 'number' ? sawResult.duration_ms : Date.now() - startedAt,
-          inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
-          outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
-          cacheReadTokens: typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0,
-          cacheWriteTokens: typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0,
-        },
-      }
+    },
+    /** Revoke bridges and stop every invocation when the plugin unloads. */
+    async close() {
+      disposed = true
+      const active = [...owners]
+      for (const owner of active) owner.kill()
+      await Promise.all(active.map(owner => owner.finished))
     },
   })
 }

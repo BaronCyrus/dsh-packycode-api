@@ -23,6 +23,7 @@ import { PACKYCODE_MODEL_IDS } from './catalog.js'
 import { createClaudeCliAdapter } from './claude-adapter.js'
 import { DEFAULT_CLAUDE_MODE, createClaudeRunner } from './claude-cli.js'
 import { createClaudeCliManager } from './claude-install.js'
+import { createClaudeSearchBridge } from './claude-search-mcp.js'
 import { createClaudeCodeTool } from './claude-tool.js'
 import {
   CHANNEL,
@@ -45,6 +46,7 @@ import { createPackyCodeRpc } from './rpc.js'
 import { DEFAULT_SEARCH_BACKEND, SEARCH_BACKENDS, SEARCH_MODE_DEFAULT, SEARCH_MODES } from './search.js'
 import { createProfileSearchComposition } from './search-composition.js'
 import { createSearchController } from './search-controller.js'
+import { redactSecrets } from './secret-redactor.js'
 
 export const name = PLUGIN_ID
 /**
@@ -150,7 +152,30 @@ export function apply(ctx, config) {
       const { key, ...described } = choice
       return { ...described, baseUrl: hosts().apiHost, token: key }
     },
+    createSearchBridge: async ({ signal }) => {
+      // MCP HTTP callbacks do not inherit the originating agent's context.
+      // Capture the trusted session now, never from model-supplied arguments.
+      const sessionId = currentSession()?.id ?? fallbackSessionId
+      const secrets = new Set((await ring.secrets()).map(entry => entry.key))
+      const bridge = await createClaudeSearchBridge({
+        signal,
+        backend: () => search.status().searchBackend,
+        // Direct provider only: DSH routing/off does not change CLI searches
+        // or silently send them to another provider's credentials.
+        search: (request, searchSignal) => search.packycode.search({ ...request, sessionId }, searchSignal),
+        sanitize: async text => {
+          for (const entry of await ring.secrets()) secrets.add(entry.key)
+          return redactSecrets(text, [...secrets])
+        },
+      })
+      return {
+        ...bridge,
+        scrub: text => redactSecrets(bridge.scrub(text), [...secrets]),
+        redactionValues: () => [...bridge.redactionValues(), ...secrets],
+      }
+    },
   })
+  ctx.effect(() => () => claudeRunner.close(), 'packycode-api: CLI invocation lifetimes')
 
   /** The session's own workspace, so a CLI turn edits the project in view. */
   const resolveCliCwd = () => {
@@ -322,6 +347,7 @@ export {
   TITLE_MODEL_ROUTES,
 } from './claude-adapter.js'
 export { CLAUDE_TOOL_INSTRUCTIONS, createClaudeCodeTool } from './claude-tool.js'
+export { createClaudeSearchBridge, cliSearchInstructions } from './claude-search-mcp.js'
 export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession } from './permission.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { accountHostOrder, normalizeHost, statusHostOrder } from './hosts.js'
