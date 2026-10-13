@@ -2,31 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { PackyCodeKeyRing, assertApiKey } from '../src/key-ring.js'
+import { fakeCredentials } from './helpers.mjs'
 
 /** Minimal credential-record service: one in-memory record, serialized writes. */
-function fakeCredentials() {
-  let record
-  let chain = Promise.resolve()
-  return {
-    async readRecord() {
-      return record
-    },
-    modifyRecord(_key, mutate) {
-      const run = chain.then(async () => {
-        const next = await mutate(record)
-        if (next !== undefined) record = next
-        return record
-      })
-      chain = run.then(() => undefined, () => undefined)
-      return run
-    },
-    /** Test-only view of the stored payload. */
-    payload() {
-      return record?.payload
-    },
-  }
-}
-
 const KEY_A = 'sk-aaaaaaaaaaaaaaaaaaaa'
 const KEY_B = 'sk-bbbbbbbbbbbbbbbbbbbb'
 const KEY_C = 'sk-cccccccccccccccccccc'

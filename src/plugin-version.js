@@ -17,6 +17,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { createCachedRead } from './cached-read.js'
+import { ambientFetch, boundedFetch } from './request.js'
+
+export { ambientFetch, waitForSharedRequest } from './request.js'
+
 export const PACKAGE_NAME = 'dsh-packycode-api'
 export const NPM_REGISTRY_LATEST_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`
 export const DEFAULT_VERSION_TTL_MS = 5 * 60_000
@@ -25,39 +30,6 @@ export const DEFAULT_UPDATE_TIMEOUT_MS = 180_000
 export const DEFAULT_SETTLE_DELAY_MS = 250
 /** Zero minutes: install the exact requested version regardless of its age. */
 export const UPDATE_RELEASE_AGE_MINUTES = 0
-
-const clone = value => structuredClone(value)
-
-/**
- * Resolve fetch at call time. A sibling plugin may wrap `globalThis.fetch`
- * and later dismantle that wrapper; a binding captured during `apply()` would
- * keep the dead wrapper for the process lifetime.
- */
-export function ambientFetch(input, init) {
-  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
-  if (!headers.has('accept-encoding')) headers.set('accept-encoding', 'identity')
-  return globalThis.fetch(input, { ...init, headers })
-}
-
-/** One caller's cancellation must not abort the shared registry read. */
-export function waitForSharedRequest(promise, signal) {
-  if (signal === undefined) return promise
-  signal.throwIfAborted()
-  return new Promise((resolve, reject) => {
-    const onAbort = () => reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
-    void promise.then(
-      value => {
-        signal.removeEventListener('abort', onAbort)
-        resolve(value)
-      },
-      error => {
-        signal.removeEventListener('abort', onAbort)
-        reject(error)
-      },
-    )
-  })
-}
 
 /** Parse a strict `x.y.z[-pre][+build]` version; anything else is undefined. */
 export function parseSemver(value) {
@@ -256,23 +228,14 @@ export function createPackyCodePluginManager({
   if (typeof runCommand !== 'function') throw new Error('PackyCode plugin manager requires runCommand')
   const dshHome = typeof env.DSH_HOME === 'string' && env.DSH_HOME !== '' ? env.DSH_HOME : join(homedir(), '.dsh')
   const launcher = resolveLauncher({ argv, execPath })
-  let cached
-  let inFlight
-  let generation = 0
   let updating = false
 
   const fetchLatest = async signal => {
-    const timeoutSignal = AbortSignal.timeout(timeoutMs)
-    const requestSignal = signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal])
     let response
     try {
-      response = await fetchImpl(registryUrl, {
-        headers: { Accept: 'application/json' },
-        redirect: 'error',
-        signal: requestSignal,
-      })
+      response = await boundedFetch(registryUrl, { headers: { Accept: 'application/json' } }, { fetchImpl, timeoutMs, signal })
     } catch (error) {
-      if (signal?.aborted) throw error
+      if (error.aborted) throw error.cause
       throw new Error('PackyCode plugin version check failed')
     }
     if (!response.ok) throw new Error('PackyCode plugin version check failed')
@@ -308,28 +271,10 @@ export function createPackyCodePluginManager({
     }
   }
 
+  const cache = createCachedRead(load, { ttlMs, now })
+
   return Object.freeze({
-    async read({ force = false, signal } = {}) {
-      signal?.throwIfAborted()
-      if (!force && cached !== undefined && now() - cached.fetchedAt < ttlMs) return clone(cached)
-      const createPending = requestSignal => {
-        const observedGeneration = generation
-        return load(requestSignal).then(value => {
-          if (generation === observedGeneration) cached = value
-          return value
-        })
-      }
-      if (force) return clone(await createPending(signal))
-      const pending = inFlight ?? createPending()
-      if (inFlight === undefined) {
-        inFlight = pending
-        const clear = () => {
-          if (inFlight === pending) inFlight = undefined
-        }
-        void pending.then(clear, clear)
-      }
-      return clone(await waitForSharedRequest(pending, signal))
-    },
+    read: options => cache.read(options),
 
     async update({ signal } = {}) {
       signal?.throwIfAborted()
@@ -360,17 +305,13 @@ export function createPackyCodePluginManager({
         }
         if (result.code !== 0) throw new Error('PackyCode plugin update failed')
         await confirmInstalled({ profileDir, expected: latest, settleDelayMs })
-        generation += 1
-        cached = undefined
+        cache.invalidate()
         return { version: latest, profile: install.profile }
       } finally {
         updating = false
       }
     },
 
-    invalidate() {
-      generation += 1
-      cached = undefined
-    },
+    invalidate: () => cache.invalidate(),
   })
 }

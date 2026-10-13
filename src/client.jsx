@@ -10,247 +10,44 @@
 
 import * as react from 'react'
 
+import { en, zh } from './client-copy.js'
+import { STYLE } from './client-style.js'
 import { sumBalances } from './totals.js'
 
 const NS = 'settings.packyCodeApi'
 const PROVIDER = 'packycode'
 const CHANNEL = '/packycode-api'
 const REFRESH_MS = 60_000
+const INSTALL_POLL_MS = 2_000
+/** How long after a search change the panel re-reads what DSH applied (the patch hot-reloads). */
+const SEARCH_SETTLE_MS = 1_500
+const OWN_SEARCH_IDS = { auto: 'packycode-api-auto', packycode: 'packycode-api' }
+const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
+/** The catalog's models by family, for the "reaches" line under each key. */
+const MODEL_FAMILIES = [
+  ['DeepSeek', ['deepseek-flash']],
+  ['GPT', ['gpt-6.1-sol', 'gpt-6-astra']],
+  ['Claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
+]
 
-const zh = {
-  nav: 'PackyCode',
-  intro: '填入 PackyCode（PackyAPI）的 API Key 即可使用内置模型路由；多个 Key 按顺序使用，额度用尽或失效时自动切到下一个。',
-  accountTitle: '账户余额',
-  totalRemaining: '合计剩余',
-  totalUsed: '合计已用',
-  totalLimit: '合计额度',
-  totalPartial: '有 {count} 个 Key 未读到余额，未计入合计。',
-  totalStale: '其中 {count} 个 Key 本次读取失败，显示的是上次读到的余额。',
-  staleNote: '上次读取于 {time}，本次读取失败：{error}',
-  composerStale: '上次读取于 {time}，本次读取失败',
-  accountLimit: '额度',
-  refresh: '刷新',
-  refreshing: '刷新中…',
-  keysTitle: 'API Key',
-  keysHint: '按顺序使用：当前 Key 不可用时自动切到下一个可用 Key。上方的账户余额按备注名逐条列出，可用「重命名」修改备注。',
-  keyActive: '使用中',
-  keyDisabled: '已停用',
-  keyUse: '切到此 Key',
-  keyEnable: '重新启用',
-  keyRemove: '删除',
-  keyRename: '重命名',
-  keyRenameSave: '保存',
-  keyRenameCancel: '取消',
-  keyRenamePlaceholder: '新的备注名',
-  keyUnlimited: '不限额度',
-  keyNoBalance: '余额未知',
-  keyRemaining: '剩余',
-  keyUsed: '已用',
-  keyName: '账户名',
-  keyNameUnknown: '账户名待读取',
-  resetMonthly: '每月',
-  resetWeekly: '每周',
-  resetDaily: '每日',
-  addTitle: '添加 Key',
-  addKeyPlaceholder: '粘贴 API Key',
-  addLabelPlaceholder: '备注（可选）',
-  add: '添加',
-  removeAll: '清空全部',
-  empty: '还没有 Key。添加一个即可在模型选择器里看到 PackyCode 的模型。',
-  advanced: '高级：接口地址',
-  apiHost: '模型接口地址',
-  statusHost: '余额接口地址',
-  save: '保存',
-  saved: '已保存',
-  notWritable: '当前 profile 不允许写入设置，改动只在本次运行内生效。',
-  composerLabel: 'PackyCode 剩余额度',
-  composerNoKey: '无可用 Key',
-  composerUnread: '余额读取失败',
-  error: '读取 PackyCode 状态失败',
-  loadFailed: '读取失败',
-  cliTitle: 'Claude Code CLI',
-  cliChecking: '正在检测本机的 Claude Code CLI…',
-  cliInstalled: '已安装',
-  cliVersion: '版本',
-  cliPath: '位置',
-  cliRecheck: '重新检测',
-  cliMissing: '未检测到 Claude Code CLI',
-  cliMissingHint: '不安装将无法正常使用 Claude 模型（claude-opus-5-5、claude-sonnet-5-5、claude-haiku-5-5）：PackyCode 只把 Claude 模型提供给官方 Claude Code CLI，插件需要调用本机的 CLI 来运行它。其它模型不受影响。',
-  cliConfiguredMissing: '设置里指定的 CLI 路径不存在：{path}',
-  cliBroken: '找到了 CLI，但无法运行',
-  cliInstall: '安装 Claude Code CLI',
-  cliReinstall: '重新安装',
-  cliInstalling: '正在安装…（通常需要一两分钟，请勿关闭 DSH）',
-  cliInstallCommand: '将在本机执行：{command}（需要 Node.js 18 或更高版本）',
-  cliInstallSucceeded: '安装完成。',
-  cliInstallFailed: '安装失败',
-  cliNpmMissing: '没有找到 npm。请先从 https://nodejs.org 安装 Node.js（18 或更高版本），然后再点安装。',
-  cliPermission: 'npm 没有权限写入全局目录。请在终端执行 sudo {command}，或把 npm 的全局目录改到用户目录后重试。',
-  cliPermissionWindows: 'npm 没有权限写入全局目录。请以管理员身份打开终端执行 {command}，然后点「重新检测」。',
-  cliNetwork: '下载失败，请检查网络或 npm 镜像设置后重试。',
-  cliTimeout: '安装超时，请检查网络后重试。',
-  cliNotFoundAfterInstall: 'npm 显示安装完成，但仍找不到 claude 命令。请在终端执行 claude --version 确认，然后点「重新检测」。',
-  cliWindowsNote: 'Windows 上 Claude Code 还需要 Git for Windows（https://git-scm.com/downloads/win）。',
-  versionTitle: '插件版本',
-  versionCurrent: '当前版本',
-  versionLatest: '最新版本',
-  versionCheck: '检查更新',
-  versionChecking: '正在检查更新…',
-  versionFailed: '无法检查最新版本。',
-  versionUpToDate: '已是最新版本。',
-  versionAvailable: '发现新版本 v{version}。',
-  versionLinked: '当前是本地开发安装，请在插件仓库拉取代码并重新构建。',
-  versionManual: '无法在这里更新。请在桌面应用的插件页重新安装 dsh-packycode-api。',
-  versionUpdate: '更新插件',
-  versionUpdating: '正在更新…',
-  versionUpdateFailed: '更新失败，请重试，或在插件页重新安装。',
-  versionUpdated: '已更新到 v{version}。',
-  versionUpdatedHint: '新版本需要完全退出并重新打开桌面应用才会生效；只刷新页面不会重载 Host 里的插件。',
-  versionRestart: '如何重启',
-  versionRestartHint: '插件无法安全地重启桌面应用。请完全退出 DSH，再重新打开。',
-  versionRefresh: '刷新界面',
-  versionLater: '稍后',
+// ── helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * The one way this bundle talks to the host. The transport drops an
+ * `undefined` payload and the channel's envelope requires the field, so every
+ * call carries an object.
+ */
+function channelCaller(rpc) {
+  return (endpoint, payload = {}) => rpc.call(CHANNEL, endpoint, payload).then(response => {
+    if (!response?.ok) throw new Error(response?.error?.message ?? 'PackyCode RPC failed')
+    return response.value
+  })
 }
 
-const en = {
-  nav: 'PackyCode',
-  intro: 'Paste a PackyCode (PackyAPI) API key to use the built-in model route. Multiple keys are used in order; an exhausted or rejected key hands over to the next one.',
-  accountTitle: 'Account balance',
-  totalRemaining: 'Total remaining',
-  totalUsed: 'Total used',
-  totalLimit: 'Total limit',
-  totalPartial: '{count} key(s) could not be read and are not counted here.',
-  accountLimit: 'Limit',
-  refresh: 'Refresh',
-  refreshing: 'Refreshing…',
-  keysTitle: 'API keys',
-  keysHint: 'Used in order: when the active key cannot serve a request, the next usable one takes over. The balances above are listed by these names; use Rename to change one.',
-  keyActive: 'Active',
-  keyDisabled: 'Disabled',
-  keyUse: 'Use this key',
-  keyEnable: 'Re-enable',
-  keyRemove: 'Remove',
-  keyRename: 'Rename',
-  keyRenameSave: 'Save',
-  keyRenameCancel: 'Cancel',
-  keyRenamePlaceholder: 'New name',
-  keyUnlimited: 'No quota limit',
-  keyNoBalance: 'Balance unknown',
-  keyRemaining: 'Remaining',
-  keyUsed: 'Used',
-  keyName: 'Account name',
-  keyNameUnknown: 'Account name not read yet',
-  resetMonthly: 'monthly',
-  resetWeekly: 'weekly',
-  resetDaily: 'daily',
-  addTitle: 'Add a key',
-  addKeyPlaceholder: 'Paste API key',
-  addLabelPlaceholder: 'Label (optional)',
-  add: 'Add',
-  removeAll: 'Remove all',
-  empty: 'No keys yet. Add one and the PackyCode models appear in the model picker.',
-  advanced: 'Advanced: endpoints',
-  apiHost: 'Model endpoint',
-  statusHost: 'Balance endpoint',
-  save: 'Save',
-  saved: 'Saved',
-  notWritable: 'This profile does not allow settings writes; changes apply to this run only.',
-  composerLabel: 'PackyCode remaining balance',
-  composerNoKey: 'No usable key',
-  composerUnread: 'Balance unavailable',
-  totalStale: '{count} of these keys failed this read and show their last read balance.',
-  staleNote: 'Last read at {time}; this read failed: {error}',
-  composerStale: 'last read at {time}; this read failed',
-  error: 'Could not read PackyCode status',
-  loadFailed: 'Read failed',
-  cliTitle: 'Claude Code CLI',
-  cliChecking: 'Checking this device for the Claude Code CLI…',
-  cliInstalled: 'Installed',
-  cliVersion: 'Version',
-  cliPath: 'Location',
-  cliRecheck: 'Check again',
-  cliMissing: 'Claude Code CLI not found',
-  cliMissingHint: 'Without it the Claude models (claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5) cannot work: PackyCode serves Claude models only to the official Claude Code CLI, so the plugin runs the CLI on this device. Other models are unaffected.',
-  cliConfiguredMissing: 'The CLI path set in settings does not exist: {path}',
-  cliBroken: 'The CLI was found but could not run',
-  cliInstall: 'Install Claude Code CLI',
-  cliReinstall: 'Reinstall',
-  cliInstalling: 'Installing… (usually a minute or two; keep DSH open)',
-  cliInstallCommand: 'Runs on this device: {command} (requires Node.js 18 or later)',
-  cliInstallSucceeded: 'Installed.',
-  cliInstallFailed: 'Install failed',
-  cliNpmMissing: 'npm was not found. Install Node.js 18 or later from https://nodejs.org, then click Install again.',
-  cliPermission: 'npm cannot write its global directory. Run sudo {command} in a terminal, or point npm’s global prefix at a folder you own, then retry.',
-  cliPermissionWindows: 'npm cannot write its global directory. Open a terminal as administrator, run {command}, then click Check again.',
-  cliNetwork: 'The download failed. Check your network or npm registry settings and retry.',
-  cliTimeout: 'The install timed out. Check your network and retry.',
-  cliNotFoundAfterInstall: 'npm reported success, but the claude command still cannot be found. Run claude --version in a terminal, then click Check again.',
-  cliWindowsNote: 'On Windows, Claude Code also needs Git for Windows (https://git-scm.com/downloads/win).',
-  versionTitle: 'Plugin version',
-  versionCurrent: 'Current version',
-  versionLatest: 'Latest version',
-  versionCheck: 'Check for updates',
-  versionChecking: 'Checking for updates…',
-  versionFailed: 'Could not check the latest version.',
-  versionUpToDate: 'You are on the latest version.',
-  versionAvailable: 'A new version v{version} is available.',
-  versionLinked: 'Installed from a local checkout. Pull and rebuild the plugin repository instead.',
-  versionManual: 'This install cannot be updated here. Reinstall dsh-packycode-api from the desktop Plugins page.',
-  versionUpdate: 'Update plugin',
-  versionUpdating: 'Updating…',
-  versionUpdateFailed: 'The update failed. Try again, or reinstall from the Plugins page.',
-  versionUpdated: 'Updated to v{version}.',
-  versionUpdatedHint: 'Quit and reopen the desktop application. Refreshing the page does not reload the plugin inside the Host.',
-  versionRestart: 'How to restart',
-  versionRestartHint: 'The plugin cannot safely restart the desktop application. Quit DSH completely, then open it again.',
-  versionRefresh: 'Refresh page',
-  versionLater: 'Later',
-}
+const useCaller = rpc => react.useMemo(() => channelCaller(rpc), [rpc])
 
-const STYLE = `
-.packyCodeSection{display:flex;flex-direction:column;gap:16px;font-size:13px;line-height:20px}
-.packyCodeIntro{color:var(--dsw-alias-label-secondary)}
-.packyCodeCard{display:flex;flex-direction:column;gap:12px;padding:14px;border-radius:12px;background:var(--dsw-alias-bg-module-platform)}
-.packyCodeCardHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.packyCodeCardTitle{font-weight:600}
-.packyCodeFigures{display:flex;flex-wrap:wrap;gap:18px}
-.packyCodeFigure{display:flex;flex-direction:column;gap:2px}
-.packyCodeFigureLabel{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.packyCodeFigureValue{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
-.packyCodeRows{display:flex;flex-direction:column;gap:10px}
-.packyCodeRow{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;background:var(--dsw-alias-bg-module-platform)}
-.packyCodeRowMain{display:flex;flex-direction:column;gap:2px;min-width:180px}
-.packyCodeRowName{display:flex;align-items:center;gap:8px;font-weight:500}
-.packyCodeRowMeta{color:var(--dsw-alias-label-tertiary);font-size:12px;font-variant-numeric:tabular-nums}
-.packyCodeChip{padding:1px 8px;border-radius:999px;font-size:11px;line-height:18px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary)}
-.packyCodeChipActive{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary,inherit);border:1px solid var(--dsw-alias-brand-primary,currentColor)}
-.packyCodeActions{display:flex;flex-wrap:wrap;gap:8px}
-.packyCodeForm{display:flex;flex-wrap:wrap;gap:8px}
-.packyCodeInput{flex:1 1 220px;min-width:0;height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-default,rgba(127,127,127,.35));background:var(--dsw-alias-bg-module-platform);color:inherit;font:inherit}
-.packyCodeButton{height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-default,rgba(127,127,127,.35));background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary,inherit);font:inherit;cursor:pointer}
-.packyCodeButton:disabled{opacity:.55;cursor:default}
-/* Emphasis without a themed fill: the brand colour may be light in either
-   theme, and a filled button then hides its own label. */
-.packyCodeButtonPrimary{border-color:var(--dsw-alias-brand-primary,currentColor);font-weight:600}
-.packyCodeNote{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.packyCodeError{color:var(--dsw-alias-state-error-primary,#d9534f);font-size:12px}
-.packyCodeAdvanced summary{cursor:pointer;color:var(--dsw-alias-label-secondary)}
-.packyCodeAdvancedBody{display:flex;flex-direction:column;gap:10px;padding-top:10px}
-.packyCodeField{display:flex;flex-direction:column;gap:4px}
-.packyCodeWarning{color:var(--dsw-alias-state-warning-primary,#c27c0e);font-weight:500}
-.packyCodeDetail{margin:0;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow:auto}
-.packyCodeMono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
-.packyCodeVersionRows{display:flex;flex-direction:column;gap:6px}
-.packyCodeVersionRow{display:flex;justify-content:space-between;gap:12px}
-.packyCodeVersionValue{font-variant-numeric:tabular-nums;font-weight:600}
-.packyCodeComposer{display:inline-flex;align-items:center;flex:0 0 auto;height:28px;box-sizing:border-box;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;user-select:none}
-@media(max-width:640px){.packyCodeRow{align-items:flex-start;flex-direction:column}.packyCodeActions{width:100%}}
-`
-
-const unwrap = response => {
-  if (!response?.ok) throw new Error(response?.error?.message ?? 'PackyCode RPC failed')
-  return response.value
-}
+/** Substitute `{name}` placeholders in a copy string. */
+const fill = (text, values) => text.replace(/\{(\w+)\}/gu, (match, name) => (values[name] === undefined ? match : String(values[name])))
 
 function formatUsd(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
@@ -259,21 +56,6 @@ function formatUsd(value) {
   } catch {
     return `$${value.toFixed(2)}`
   }
-}
-
-function resetLabel(period, t) {
-  switch (period) {
-    case 'monthly': return t('resetMonthly')
-    case 'weekly': return t('resetWeekly')
-    case 'daily': return t('resetDaily')
-    default: return undefined
-  }
-}
-
-/** Active key's usage row, preferring the key the ring currently points at. */
-function activeUsage(balance) {
-  if (balance === undefined) return undefined
-  return balance.keys?.find(entry => entry.id === balance.activeId) ?? balance.keys?.[0]
 }
 
 /** The clock time of an epoch-millisecond reading, for a "last read at" note. */
@@ -291,19 +73,499 @@ function clearMessage(error) {
   return text.length > 200 ? text.slice(0, 200) : text
 }
 
-const INSTALL_POLL_MS = 2_000
+const RESET_KEYS = { monthly: 'resetMonthly', weekly: 'resetWeekly', daily: 'resetDaily' }
+const resetLabel = (period, t) => (RESET_KEYS[period] === undefined ? undefined : t(RESET_KEYS[period]))
+
+/** Active key's usage row, preferring the key the ring currently points at. */
+function activeUsage(balance) {
+  if (balance === undefined) return undefined
+  return balance.keys?.find(entry => entry.id === balance.activeId) ?? balance.keys?.[0]
+}
+
+/** How much of a key's limit is left, for its bar; undefined without a limit. */
+function remainingShare(usage) {
+  if (usage?.unlimitedQuota === true || typeof usage?.limitUsd !== 'number' || usage.limitUsd <= 0) return undefined
+  if (typeof usage.availableUsd !== 'number') return undefined
+  return Math.max(0, Math.min(1, usage.availableUsd / usage.limitUsd))
+}
+
+/** Which catalog families a key reaches, from its per-model coverage. */
+function reachOf(coverage) {
+  return MODEL_FAMILIES.flatMap(([name, models]) => {
+    const known = models.filter(id => typeof coverage?.[id] === 'boolean')
+    if (known.length === 0) return []
+    const reached = known.filter(id => coverage[id] === true)
+    const state = reached.length === 0 ? 'no' : reached.length === known.length ? 'ok' : 'partial'
+    return [{ name, state, reached, missing: known.filter(id => coverage[id] === false) }]
+  })
+}
+
+// ── primitives ──────────────────────────────────────────────────────────────
+
+function Card({ title, aside, children }) {
+  return (
+    <section className="pkc-card">
+      <header className="pkc-head">
+        <h3 className="pkc-title">{title}</h3>
+        {aside}
+      </header>
+      {children}
+    </section>
+  )
+}
+
+function Button({ variant, size, children, ...rest }) {
+  return <button type="button" className="pkc-btn" data-variant={variant} data-size={size} {...rest}>{children}</button>
+}
+
+function Segmented({ label, options, value, disabled, onChange }) {
+  return (
+    <div className="pkc-seg" role="radiogroup" aria-label={label}>
+      {options.map(option => (
+        <button
+          type="button"
+          role="radio"
+          key={option.value}
+          aria-checked={value === option.value}
+          disabled={disabled}
+          onClick={() => value !== option.value && onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── accounts and keys ───────────────────────────────────────────────────────
+
+/** A key's groups and what they reach. */
+function KeyGroups({ group, descriptions, loading, t }) {
+  if (group === undefined) {
+    return loading ? <span className="pkc-meta">{t('groupsChecking')}</span> : null
+  }
+  if (group.rejected === true) return <span className="pkc-error">{t('groupsRejected')}</span>
+  const reach = reachOf(group.coverage)
+  const names = Array.isArray(group.groups) ? group.groups : []
+  return (
+    <>
+      <div className="pkc-groups">
+        <span className="pkc-label">{t('groupsTitle')}</span>
+        {names.length === 0
+          ? <span className="pkc-meta">{group.error === undefined ? '—' : `${t('groupsUnknown')}: ${group.error}`}</span>
+          : names.map(name => <span className="pkc-tag" key={name} title={descriptions?.[name] ?? name}>{name}</span>)}
+      </div>
+      {reach.length > 0 && (
+        <div className="pkc-reach">
+          {reach.map(family => (
+            <span
+              key={family.name}
+              data-state={family.state}
+              title={[...family.reached.map(id => `✓ ${id}`), ...family.missing.map(id => `✗ ${id}`)].join('\n')}
+            >
+              {family.state === 'ok' ? '✓' : family.state === 'partial' ? '◐' : '✕'} {family.name}
+              {family.state === 'partial' && ` (${t('groupsPartial')})`}
+            </span>
+          ))}
+        </div>
+      )}
+      {group.stale !== undefined && <span className="pkc-meta">{t('groupsStale')}</span>}
+    </>
+  )
+}
+
+function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, renaming, onRename, onAction, t }) {
+  const usage = row?.usage
+  const share = remainingShare(usage)
+  const figures = [
+    usage?.unlimitedQuota === true
+      ? [t('keyRemaining'), t('keyUnlimited')]
+      : usage?.availableUsd === undefined ? undefined : [t('keyRemaining'), formatUsd(usage.availableUsd)],
+    usage?.usedUsd === undefined ? undefined : [t('keyUsed'), formatUsd(usage.usedUsd)],
+    usage?.limitUsd === undefined ? undefined : [t('accountLimit'), formatUsd(usage.limitUsd)],
+  ].filter(Boolean)
+  const meta = [
+    usage?.name === undefined ? t('keyNameUnknown') : `${t('keyName')} ${usage.name}`,
+    resetLabel(usage?.resetPeriod, t),
+  ].filter(Boolean).join(' · ')
+  const editing = renaming?.id === entry.id
+
+  return (
+    <div className="pkc-row">
+      <div className="pkc-row-top">
+        <span className="pkc-row-name">
+          {editing
+            ? (
+              <form className="pkc-form" onSubmit={event => { event.preventDefault(); onRename.submit() }}>
+                <input
+                  className="pkc-input"
+                  type="text"
+                  maxLength={60}
+                  autoFocus
+                  placeholder={t('keyRenamePlaceholder')}
+                  value={renaming.label}
+                  onChange={event => onRename.change(event.target.value)}
+                  onKeyDown={event => event.key === 'Escape' && onRename.cancel()}
+                />
+                <Button type="submit" variant="primary" disabled={busy || renaming.label.trim() === ''}>{t('keyRenameSave')}</Button>
+                <Button variant="ghost" onClick={onRename.cancel}>{t('keyRenameCancel')}</Button>
+              </form>
+            )
+            : <span className="pkc-name">{entry.label}</span>}
+          {entry.active && <span className="pkc-chip" data-tone="success">{t('keyActive')}</span>}
+          {entry.disabled && <span className="pkc-chip" data-tone="danger">{entry.disabledReason ? `${t('keyDisabled')} · ${entry.disabledReason}` : t('keyDisabled')}</span>}
+        </span>
+        {!editing && (
+          <span className="pkc-actions">
+            {!entry.active && !entry.disabled && <Button disabled={busy} onClick={() => onAction('keys/select', { id: entry.id })}>{t('keyUse')}</Button>}
+            {entry.disabled && <Button disabled={busy} onClick={() => onAction('keys/enable', { id: entry.id })}>{t('keyEnable')}</Button>}
+            <Button variant="ghost" disabled={busy} onClick={() => onRename.start(entry)}>{t('keyRename')}</Button>
+            <Button variant="danger" disabled={busy} onClick={() => onAction('keys/remove', { id: entry.id })}>{t('keyRemove')}</Button>
+          </span>
+        )}
+      </div>
+      <span className="pkc-meta">{meta}</span>
+      {figures.length > 0
+        ? (
+          <div className="pkc-figures">
+            {figures.map(([label, value]) => <span key={label}>{label}<b>{value}</b></span>)}
+          </div>
+        )
+        : <span className="pkc-meta">{row?.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`}</span>}
+      {share !== undefined && (
+        <div className="pkc-bar" data-level={share < 0.1 ? 'low' : share < 0.3 ? 'warn' : 'ok'} role="presentation">
+          <span style={{ width: `${Math.round(share * 100)}%` }} />
+        </div>
+      )}
+      {row?.stale !== undefined && (
+        <span className="pkc-warn">{fill(t('staleNote'), { time: readTime(row.stale.fetchedAt), error: row.stale.error ?? '' })}</span>
+      )}
+      <KeyGroups group={group} descriptions={descriptions} loading={groupsLoading} t={t} />
+    </div>
+  )
+}
+
+function AccountsCard({ call, t }) {
+  const [status, setStatus] = react.useState()
+  const [balance, setBalance] = react.useState()
+  const [groups, setGroups] = react.useState()
+  const [groupsLoading, setGroupsLoading] = react.useState(true)
+  const [busy, setBusy] = react.useState(false)
+  const [error, setError] = react.useState()
+  const [draft, setDraft] = react.useState({ key: '', label: '' })
+  const [renaming, setRenaming] = react.useState()
+  const generation = react.useRef(0)
+
+  const readGroups = react.useCallback((force = false) => {
+    setGroupsLoading(true)
+    return call('groups', { force })
+      .then(setGroups)
+      .catch(() => undefined)
+      .finally(() => setGroupsLoading(false))
+  }, [call])
+
+  const load = react.useCallback((force = false) => {
+    const current = ++generation.current
+    setBusy(true)
+    setError(undefined)
+    void readGroups(force)
+    return Promise.all([call('status'), call('balance', { force })])
+      .then(([nextStatus, nextBalance]) => {
+        if (generation.current !== current) return
+        setStatus(nextStatus)
+        setBalance(nextBalance)
+      })
+      .catch(failure => {
+        if (generation.current === current) setError(clearMessage(failure))
+      })
+      .finally(() => {
+        if (generation.current === current) setBusy(false)
+      })
+  }, [call, readGroups])
+
+  react.useEffect(() => {
+    load(false)
+    return () => {
+      generation.current += 1
+    }
+  }, [load])
+
+  const mutate = (endpoint, payload) => {
+    setBusy(true)
+    setError(undefined)
+    return call(endpoint, payload)
+      .then(nextStatus => {
+        setStatus(nextStatus)
+        void readGroups(false)
+        return call('balance', { force: true })
+      })
+      .then(setBalance)
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setBusy(false))
+  }
+
+  const addKey = event => {
+    event.preventDefault()
+    if (draft.key.trim() === '') return
+    mutate('keys/add', { key: draft.key, label: draft.label }).then(() => setDraft({ key: '', label: '' }))
+  }
+
+  const rename = {
+    start: entry => setRenaming({ id: entry.id, label: entry.label }),
+    change: label => setRenaming(current => ({ ...current, label })),
+    cancel: () => setRenaming(undefined),
+    submit: () => {
+      if (renaming === undefined || renaming.label.trim() === '') return
+      mutate('keys/rename', { id: renaming.id, label: renaming.label }).then(() => setRenaming(undefined))
+    },
+  }
+
+  const keys = status?.keys ?? []
+  const rows = balance?.keys ?? []
+  // The headline figures are what these keys can spend together, not
+  // PackyCode's account-level billing, which counts every token on the
+  // account and is not shown.
+  const totals = sumBalances(rows)
+  const staleCount = rows.filter(row => row.stale !== undefined).length
+
+  return (
+    <Card
+      title={t('accountsTitle')}
+      aside={(
+        <span className="pkc-actions">
+          <Button disabled={busy} onClick={() => load(true)}>{busy ? t('refreshing') : t('refresh')}</Button>
+          {keys.length > 0 && <Button variant="danger" disabled={busy} onClick={() => mutate('keys/remove-all', {})}>{t('removeAll')}</Button>}
+        </span>
+      )}
+    >
+      {keys.length === 0
+        ? <p className="pkc-note">{t('empty')}</p>
+        : (
+          <>
+            <div className="pkc-stats">
+              <div className="pkc-stat">
+                <span className="pkc-stat-label">{t('totalRemaining')}</span>
+                <span className="pkc-stat-value">
+                  {totals.counted === 0 ? '—' : formatUsd(totals.remainingUsd) ?? '—'}
+                  {totals.unlimited > 0 && ` + ${t('keyUnlimited')}`}
+                </span>
+              </div>
+              <div className="pkc-stat">
+                <span className="pkc-stat-label">{t('totalUsed')}</span>
+                <span className="pkc-stat-value">{totals.counted === 0 ? '—' : formatUsd(totals.usedUsd) ?? '—'}</span>
+              </div>
+              <div className="pkc-stat">
+                <span className="pkc-stat-label">{t('totalLimit')}</span>
+                <span className="pkc-stat-value">
+                  {totals.counted === 0 ? '—' : totals.unlimited > 0 ? t('keyUnlimited') : formatUsd(totals.limitUsd) ?? '—'}
+                </span>
+              </div>
+            </div>
+            {(totals.unread > 0 || staleCount > 0) && (
+              <p className="pkc-note">
+                {[
+                  totals.unread > 0 ? fill(t('totalPartial'), { count: totals.unread }) : undefined,
+                  staleCount > 0 ? fill(t('totalStale'), { count: staleCount }) : undefined,
+                ].filter(Boolean).join(' ')}
+              </p>
+            )}
+            <div className="pkc-list">
+              {keys.map(entry => (
+                <KeyRow
+                  key={entry.id}
+                  entry={entry}
+                  row={rows.find(row => row.id === entry.id)}
+                  group={groups?.keys?.find(group => group.id === entry.id)}
+                  descriptions={groups?.descriptions}
+                  groupsLoading={groupsLoading}
+                  busy={busy}
+                  renaming={renaming}
+                  onRename={rename}
+                  onAction={mutate}
+                  t={t}
+                />
+              ))}
+            </div>
+            <p className="pkc-note">{t('keysHint')}</p>
+          </>
+        )}
+      <form className="pkc-add" onSubmit={addKey}>
+        <span className="pkc-label">{t('addTitle')}</span>
+        <div className="pkc-form">
+          <input
+            className="pkc-input"
+            type="password"
+            autoComplete="off"
+            placeholder={t('addKeyPlaceholder')}
+            value={draft.key}
+            onChange={event => setDraft(current => ({ ...current, key: event.target.value }))}
+          />
+          <input
+            className="pkc-input"
+            type="text"
+            placeholder={t('addLabelPlaceholder')}
+            value={draft.label}
+            onChange={event => setDraft(current => ({ ...current, label: event.target.value }))}
+          />
+          <Button type="submit" variant="primary" size="md" disabled={busy || draft.key.trim() === ''}>{t('add')}</Button>
+        </div>
+      </form>
+      {status !== undefined && status.writable !== true && <p className="pkc-note">{t('notWritable')}</p>}
+      {error !== undefined && <p className="pkc-error" role="alert">{`${t('error')}: ${error}`}</p>}
+      <details className="pkc-advanced">
+        <summary>{t('advanced')}</summary>
+        <label className="pkc-field">
+          <span className="pkc-label">{t('apiHost')}</span>
+          <input
+            className="pkc-input"
+            type="text"
+            disabled={status?.writable !== true}
+            defaultValue={status?.hosts?.apiHost ?? ''}
+            onBlur={event => mutate('hosts/update', { apiHost: event.target.value, statusHost: status?.hosts?.statusHost })}
+          />
+        </label>
+        <label className="pkc-field">
+          <span className="pkc-label">{t('statusHost')}</span>
+          <input
+            className="pkc-input"
+            type="text"
+            disabled={status?.writable !== true}
+            defaultValue={status?.hosts?.statusHost ?? ''}
+            onBlur={event => mutate('hosts/update', { statusHost: event.target.value, apiHost: status?.hosts?.apiHost })}
+          />
+        </label>
+      </details>
+    </Card>
+  )
+}
+
+// ── web search ──────────────────────────────────────────────────────────────
+
+/** Web search routing and backend, written through the host. */
+function SearchCard({ call, t }) {
+  const [state, setState] = react.useState()
+  const [busy, setBusy] = react.useState(false)
+  const [error, setError] = react.useState()
+  const generation = react.useRef(0)
+
+  const read = react.useCallback(() => {
+    const current = ++generation.current
+    return call('search/status').then(value => {
+      if (generation.current === current) setState(value)
+    }).catch(failure => {
+      if (generation.current === current) setError(clearMessage(failure))
+    })
+  }, [call])
+
+  react.useEffect(() => {
+    read()
+    return () => {
+      generation.current += 1
+    }
+  }, [read])
+
+  const update = patch => {
+    if (busy || state?.writable !== true) return
+    setBusy(true)
+    setError(undefined)
+    call('search/update', patch)
+      .then(value => {
+        setState(value)
+        // The patch hot-applies after the write; read what DSH settled on.
+        window.setTimeout(() => {
+          read()
+        }, SEARCH_SETTLE_MS)
+      })
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setBusy(false))
+  }
+
+  const mode = state?.searchProvider
+  const backend = state?.searchBackend
+  const models = state?.models ?? {}
+  const base = state?.effective?.base
+  const runtime = state?.effective?.runtime
+  const foreign = Object.entries(state?.foreign ?? {}).filter(([, present]) => present).map(([name]) => FOREIGN_NAMES[name] ?? name)
+  const expected = OWN_SEARCH_IDS[mode]
+  const overridden = expected !== undefined && state?.applied?.state === 'applied' && base !== undefined && base !== expected
+  const disabled = busy || state?.writable !== true
+  const modeHint = { default: 'searchModeDefaultHint', auto: 'searchModeAutoHint', packycode: 'searchModePackycodeHint' }[mode]
+  const backendHint = backend === 'gpt'
+    ? fill(t('searchBackendGptHint'), { model: models.gpt ?? 'gpt-6.1-sol' })
+    : fill(t('searchBackendDeepseekHint'), { model: models.deepseek ?? 'deepseek-flash' })
+
+  return (
+    <Card title={t('searchTitle')} aside={<span className="pkc-chip" data-tone="neutral">{t('searchScope')}</span>}>
+      <p className="pkc-note">{t('searchIntro')}</p>
+      {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('searchChecking')}</p>}
+      {state !== undefined && (
+        <>
+          <div className="pkc-setting">
+            <span className="pkc-label">{t('searchModeTitle')}</span>
+            <div>
+              <Segmented
+                label={t('searchModeTitle')}
+                value={mode}
+                disabled={disabled}
+                onChange={value => update({ searchProvider: value })}
+                options={[
+                  { value: 'default', label: t('searchModeDefault') },
+                  { value: 'auto', label: t('searchModeAuto') },
+                  { value: 'packycode', label: t('searchModePackycode') },
+                ]}
+              />
+              {modeHint !== undefined && <p className="pkc-note">{t(modeHint)}</p>}
+            </div>
+          </div>
+          <div className="pkc-setting">
+            <span className="pkc-label">{t('searchBackendTitle')}</span>
+            <div>
+              <Segmented
+                label={t('searchBackendTitle')}
+                value={backend}
+                disabled={disabled}
+                onChange={value => update({ searchBackend: value })}
+                options={[
+                  { value: 'deepseek', label: t('searchBackendDeepseek') },
+                  { value: 'gpt', label: t('searchBackendGpt') },
+                ]}
+              />
+              <p className="pkc-note">{backendHint}</p>
+            </div>
+          </div>
+          {state.available === true && (base !== undefined || runtime !== undefined) && (
+            <div className="pkc-status">
+              <span className="pkc-dot" data-tone={overridden ? 'warn' : expected !== undefined && base === expected ? 'success' : undefined} />
+              <span className="pkc-meta">{fill(t('searchEffective'), { base: base ?? t('searchUnknown'), runtime: runtime ?? base ?? t('searchUnknown') })}</span>
+            </div>
+          )}
+          {overridden && <p className="pkc-warn">{fill(t('searchOverridden'), { base })}</p>}
+          {foreign.length > 0 && <p className="pkc-note">{fill(t('searchForeign'), { names: foreign.join(' / ') })}</p>}
+          {state.applied?.state === 'failed' && <p className="pkc-error" role="alert">{fill(t('searchApplyFailed'), { error: state.applied.error ?? '' })}</p>}
+          {state.available !== true && <p className="pkc-note">{t('searchUnavailable')}</p>}
+          {state.writable !== true && <p className="pkc-note">{t('searchNotWritable')}</p>}
+          <p className="pkc-note">{t('searchPatchNote')}</p>
+        </>
+      )}
+      {error !== undefined && <p className="pkc-error" role="alert">{`${t('searchLoadFailed')}: ${error}`}</p>}
+    </Card>
+  )
+}
+
+// ── Claude Code CLI ─────────────────────────────────────────────────────────
+
+const INSTALL_FAILURES = {
+  'npm-missing': () => 'cliNpmMissing',
+  permission: cli => (cli.platform === 'win32' ? 'cliPermissionWindows' : 'cliPermission'),
+  network: () => 'cliNetwork',
+  timeout: () => 'cliTimeout',
+  'not-found-after-install': () => 'cliNotFoundAfterInstall',
+}
 
 /** The sentence explaining a failed install, by the code the host classified. */
 function installFailure(cli, t) {
-  const command = cli.command ?? ''
-  switch (cli.install?.code) {
-    case 'npm-missing': return t('cliNpmMissing')
-    case 'permission': return t(cli.platform === 'win32' ? 'cliPermissionWindows' : 'cliPermission').replace('{command}', command)
-    case 'network': return t('cliNetwork')
-    case 'timeout': return t('cliTimeout')
-    case 'not-found-after-install': return t('cliNotFoundAfterInstall')
-    default: return undefined
-  }
+  const key = INSTALL_FAILURES[cli.install?.code]?.(cli)
+  return key === undefined ? undefined : fill(t(key), { command: cli.command ?? '' })
 }
 
 /**
@@ -350,69 +612,61 @@ function ClaudeCliCard({ call, t }) {
 
   const usable = cli?.installed === true && cli.version !== undefined
   const failed = cli?.install?.state === 'failed'
+  const failure = cli === undefined ? undefined : installFailure(cli, t)
   return (
-    <section className="packyCodeCard">
-      <header className="packyCodeCardHeader">
-        <span className="packyCodeCardTitle">{t('cliTitle')}</span>
-        <button type="button" className="packyCodeButton" disabled={checking || running} onClick={() => check(true)}>
-          {checking ? t('refreshing') : t('cliRecheck')}
-        </button>
-      </header>
-      {cli === undefined && error === undefined && <span className="packyCodeNote">{t('cliChecking')}</span>}
+    <Card
+      title={t('cliTitle')}
+      aside={<Button disabled={checking || running} onClick={() => check(true)}>{checking ? t('refreshing') : t('cliRecheck')}</Button>}
+    >
+      {cli === undefined && error === undefined && <p className="pkc-note">{t('cliChecking')}</p>}
       {usable && (
         <>
-          <div className="packyCodeFigures">
-            <span className="packyCodeFigure">
-              <span className="packyCodeFigureLabel">{t('cliInstalled')}</span>
-              <span className="packyCodeFigureValue">{`${t('cliVersion')} ${cli.version}`}</span>
-            </span>
+          <div className="pkc-status">
+            <span className="pkc-dot" data-tone="success" />
+            <span>{t('cliInstalled')}</span>
+            <b>{`${t('cliVersion')} ${cli.version}`}</b>
           </div>
-          <span className="packyCodeNote">
-            {`${t('cliPath')}：`}
-            <span className="packyCodeMono">{cli.path}</span>
-          </span>
-          {cli.install?.state === 'succeeded' && <span className="packyCodeNote">{t('cliInstallSucceeded')}</span>}
+          <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
+          {cli.install?.state === 'succeeded' && <p className="pkc-note">{t('cliInstallSucceeded')}</p>}
         </>
       )}
       {cli !== undefined && !usable && (
-        <>
-          <span className="packyCodeWarning">{cli.installed ? t('cliBroken') : t('cliMissing')}</span>
+        <div className="pkc-callout">
+          <div className="pkc-status">
+            <span className="pkc-dot" data-tone={cli.installed ? 'danger' : 'warn'} />
+            <b>{cli.installed ? t('cliBroken') : t('cliMissing')}</b>
+          </div>
           {cli.installed && (
             <>
-              <span className="packyCodeNote">
-                {`${t('cliPath')}：`}
-                <span className="packyCodeMono">{cli.path}</span>
-              </span>
-              {cli.error !== undefined && <pre className="packyCodeDetail">{cli.error}</pre>}
+              <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
+              {cli.error !== undefined && <pre className="pkc-detail">{cli.error}</pre>}
             </>
           )}
-          {cli.configuredPath !== undefined && (
-            <span className="packyCodeNote">{t('cliConfiguredMissing').replace('{path}', cli.configuredPath)}</span>
-          )}
-          <span className="packyCodeIntro">{t('cliMissingHint')}</span>
-          <div className="packyCodeActions">
-            <button type="button" className="packyCodeButton packyCodeButtonPrimary" disabled={running || checking} onClick={install}>
+          {cli.configuredPath !== undefined && <p className="pkc-note">{fill(t('cliConfiguredMissing'), { path: cli.configuredPath })}</p>}
+          <p className="pkc-note">{t('cliMissingHint')}</p>
+          <div className="pkc-split">
+            <Button variant="primary" size="md" disabled={running || checking} onClick={install}>
               {running ? t('cliInstalling') : cli.installed ? t('cliReinstall') : t('cliInstall')}
-            </button>
+            </Button>
           </div>
-          <span className="packyCodeNote">
-            {t('cliInstallCommand').replace('{command}', cli.command ?? '')}
+          <p className="pkc-note">
+            {fill(t('cliInstallCommand'), { command: cli.command ?? '' })}
             {cli.platform === 'win32' && ` ${t('cliWindowsNote')}`}
-          </span>
-        </>
+          </p>
+        </div>
       )}
       {failed && !usable && (
         <>
-          <span className="packyCodeError">
-            {installFailure(cli, t) === undefined ? t('cliInstallFailed') : `${t('cliInstallFailed')}：${installFailure(cli, t)}`}
-          </span>
-          {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="packyCodeDetail">{cli.install.detail}</pre>}
+          <p className="pkc-error">{failure === undefined ? t('cliInstallFailed') : `${t('cliInstallFailed')} · ${failure}`}</p>
+          {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="pkc-detail">{cli.install.detail}</pre>}
         </>
       )}
-      {error !== undefined && <span className="packyCodeError">{`${t('error')}: ${error}`}</span>}
-    </section>
+      {error !== undefined && <p className="pkc-error">{`${t('error')}: ${error}`}</p>}
+    </Card>
   )
 }
+
+// ── plugin version ──────────────────────────────────────────────────────────
 
 function VersionCard({ call, t }) {
   const [info, setInfo] = react.useState()
@@ -453,343 +707,65 @@ function VersionCard({ call, t }) {
 
   const installKind = info?.install?.kind
   const showStatus = info !== undefined && updated === undefined
+  const canUpdate = showStatus && info.updateAvailable && installKind === 'npm'
   return (
-    <section className="packyCodeCard">
-      <header className="packyCodeCardHeader">
-        <span className="packyCodeCardTitle">{t('versionTitle')}</span>
-        {updated === undefined && (
-          <button type="button" className="packyCodeButton" disabled={loading || updating} onClick={() => load(true)}>
-            {loading ? t('versionChecking') : t('versionCheck')}
-          </button>
-        )}
-      </header>
-      {loading && info === undefined && <span className="packyCodeNote" role="status">{t('versionChecking')}</span>}
-      {error && <span className="packyCodeError" role="alert">{t('versionFailed')}</span>}
-      {info !== undefined && (
-        <div className="packyCodeVersionRows">
-          <div className="packyCodeVersionRow"><span>{t('versionCurrent')}</span><span className="packyCodeVersionValue">v{info.current}</span></div>
-          <div className="packyCodeVersionRow"><span>{t('versionLatest')}</span><span className="packyCodeVersionValue">v{info.latest}</span></div>
-        </div>
-      )}
-      {showStatus && (
-        <span className="packyCodeNote" role="status">
-          {info.updateAvailable ? t('versionAvailable').replace('{version}', info.latest) : t('versionUpToDate')}
+    <Card
+      title={t('versionTitle')}
+      aside={updated === undefined && (
+        <span className="pkc-actions">
+          {canUpdate && <Button variant="primary" disabled={updating} onClick={update}>{updating ? t('versionUpdating') : t('versionUpdate')}</Button>}
+          <Button disabled={loading || updating} onClick={() => load(true)}>{loading ? t('versionChecking') : t('versionCheck')}</Button>
         </span>
       )}
-      {showStatus && info.updateAvailable && installKind === 'npm' && (
-        <div className="packyCodeActions">
-          <button type="button" className="packyCodeButton packyCodeButtonPrimary" disabled={updating} onClick={update}>
-            {updating ? t('versionUpdating') : t('versionUpdate')}
-          </button>
+    >
+      {loading && info === undefined && <p className="pkc-note" role="status">{t('versionChecking')}</p>}
+      {error && <p className="pkc-error" role="alert">{t('versionFailed')}</p>}
+      {showStatus && (
+        <div className="pkc-status" role="status">
+          <span className="pkc-dot" data-tone={info.updateAvailable ? 'warn' : 'success'} />
+          <b>{`v${info.current}`}</b>
+          <span className="pkc-meta">
+            {info.updateAvailable ? fill(t('versionAvailable'), { version: info.latest }) : t('versionUpToDate')}
+            {info.updateAvailable && ` · ${t('versionLatest')} v${info.latest}`}
+          </span>
         </div>
       )}
-      {showStatus && installKind === 'link' && <span className="packyCodeNote">{t('versionLinked')}</span>}
-      {showStatus && info.updateAvailable && installKind === 'unknown' && <span className="packyCodeNote">{t('versionManual')}</span>}
-      {updateFailed && <span className="packyCodeError" role="alert">{t('versionUpdateFailed')}</span>}
+      {showStatus && installKind === 'link' && <p className="pkc-note">{t('versionLinked')}</p>}
+      {showStatus && info.updateAvailable && installKind === 'unknown' && <p className="pkc-note">{t('versionManual')}</p>}
+      {updateFailed && <p className="pkc-error" role="alert">{t('versionUpdateFailed')}</p>}
       {updated !== undefined && (
-        <div role="status">
-          <span className="packyCodeNote">{t('versionUpdated').replace('{version}', updated.version)}</span>
-          <span className="packyCodeNote">{t('versionUpdatedHint')}</span>
-          {restartHint && <span className="packyCodeNote">{t('versionRestartHint')}</span>}
-          <div className="packyCodeActions">
-            <button type="button" className="packyCodeButton" onClick={() => setRestartHint(true)}>{t('versionRestart')}</button>
-            <button type="button" className="packyCodeButton packyCodeButtonPrimary" onClick={() => window.location.reload()}>{t('versionRefresh')}</button>
-            <button type="button" className="packyCodeButton" onClick={() => setUpdated(undefined)}>{t('versionLater')}</button>
+        <div className="pkc-callout" data-tone="info" role="status">
+          <b className="pkc-title">{fill(t('versionUpdated'), { version: updated.version })}</b>
+          <p className="pkc-note">{t('versionUpdatedHint')}</p>
+          {restartHint && <p className="pkc-note">{t('versionRestartHint')}</p>}
+          <div className="pkc-actions">
+            <Button variant="primary" onClick={() => window.location.reload()}>{t('versionRefresh')}</Button>
+            <Button onClick={() => setRestartHint(true)}>{t('versionRestart')}</Button>
+            <Button variant="ghost" onClick={() => setUpdated(undefined)}>{t('versionLater')}</Button>
           </div>
         </div>
       )}
-    </section>
+    </Card>
   )
 }
 
+// ── the page and the composer chip ──────────────────────────────────────────
+
 function PackyCodeSection({ rpc, t }) {
-  const call = react.useMemo(
-    // The transport drops an `undefined` payload, and the channel's envelope
-    // schema requires the field — so every call carries an object.
-    () => (endpoint, payload = {}) => rpc.call(CHANNEL, endpoint, payload).then(unwrap),
-    [rpc],
-  )
-  const [status, setStatus] = react.useState()
-  const [balance, setBalance] = react.useState()
-  const [busy, setBusy] = react.useState(false)
-  const [error, setError] = react.useState()
-  const [draft, setDraft] = react.useState({ key: '', label: '' })
-  const [renaming, setRenaming] = react.useState()
-  const generation = react.useRef(0)
-
-  const load = react.useCallback((force = false) => {
-    const current = ++generation.current
-    setBusy(true)
-    setError(undefined)
-    return Promise.all([call('status'), call('balance', { force })])
-      .then(([nextStatus, nextBalance]) => {
-        if (generation.current !== current) return
-        setStatus(nextStatus)
-        setBalance(nextBalance)
-      })
-      .catch(failure => {
-        if (generation.current === current) setError(clearMessage(failure))
-      })
-      .finally(() => {
-        if (generation.current === current) setBusy(false)
-      })
-  }, [call])
-
-  react.useEffect(() => {
-    load(false)
-    return () => {
-      generation.current += 1
-    }
-  }, [load])
-
-  const mutate = endpoint => payload => {
-    setBusy(true)
-    setError(undefined)
-    return call(endpoint, payload)
-      .then(nextStatus => {
-        setStatus(nextStatus)
-        return call('balance', { force: true })
-      })
-      .then(nextBalance => setBalance(nextBalance))
-      .catch(failure => setError(clearMessage(failure)))
-      .finally(() => setBusy(false))
-  }
-
-  const addKey = event => {
-    event.preventDefault()
-    if (draft.key.trim() === '') return
-    mutate('keys/add')({ key: draft.key, label: draft.label }).then(() => setDraft({ key: '', label: '' }))
-  }
-
-  const submitRename = event => {
-    event.preventDefault()
-    if (renaming === undefined || renaming.label.trim() === '') return
-    mutate('keys/rename')({ id: renaming.id, label: renaming.label }).then(() => setRenaming(undefined))
-  }
-
-  const rows = balance?.keys ?? []
-  const usageOf = id => rows.find(row => row.id === id)
-  const keys = status?.keys ?? []
-  // The headline figure is what these keys can spend together, not
-  // PackyCode's account-level billing number, which counts every token on the
-  // account and is not shown.
-  const totals = sumBalances(rows)
-
-  /** One account row: the PackyCode token name carries the match to a key. */
-  const accountRow = row => {
-    const usage = row.usage
-    const figures = [
-      usage?.unlimitedQuota === true
-        ? t('keyUnlimited')
-        : usage?.availableUsd === undefined ? undefined : `${t('keyRemaining')} ${formatUsd(usage.availableUsd)}`,
-      usage?.usedUsd === undefined ? undefined : `${t('keyUsed')} ${formatUsd(usage.usedUsd)}`,
-      usage?.limitUsd === undefined ? undefined : `${t('accountLimit')} ${formatUsd(usage.limitUsd)}`,
-      resetLabel(usage?.resetPeriod, t) === undefined ? undefined : resetLabel(usage.resetPeriod, t),
-    ].filter(Boolean)
-    const tokenName = usage?.name !== undefined && usage.name !== row.label ? `${t('keyName')} ${usage.name}` : undefined
-    return (
-      <div className="packyCodeRow" key={row.id}>
-        <span className="packyCodeRowMain">
-          <span className="packyCodeRowName">
-            {row.label}
-            {row.id === status?.activeId && <span className="packyCodeChip packyCodeChipActive">{t('keyActive')}</span>}
-            {row.disabled && <span className="packyCodeChip">{t('keyDisabled')}</span>}
-          </span>
-          <span className="packyCodeRowMeta">
-            {figures.length > 0 ? [tokenName, ...figures].filter(Boolean).join(' · ') : (row.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`)}
-          </span>
-          {row.stale !== undefined && (
-            <span className="packyCodeRowMeta">
-              {t('staleNote').replace('{time}', readTime(row.stale.fetchedAt)).replace('{error}', row.stale.error ?? '')}
-            </span>
-          )}
-        </span>
-      </div>
-    )
-  }
-
+  const call = useCaller(rpc)
   return (
-    <div className="packyCodeSection">
-      <p className="packyCodeIntro">{t('intro')}</p>
-
-      <VersionCard call={call} t={t} />
-
+    <div className="pkc">
+      <p className="pkc-intro">{t('intro')}</p>
+      <AccountsCard call={call} t={t} />
+      <SearchCard call={call} t={t} />
       <ClaudeCliCard call={call} t={t} />
-
-      <section className="packyCodeCard">
-        <header className="packyCodeCardHeader">
-          <span className="packyCodeCardTitle">{t('accountTitle')}</span>
-          <button type="button" className="packyCodeButton" disabled={busy} onClick={() => load(true)}>
-            {busy ? t('refreshing') : t('refresh')}
-          </button>
-        </header>
-        {rows.length === 0
-          ? <span className="packyCodeNote">{t('empty')}</span>
-          : (
-            <>
-              <div className="packyCodeRows">{rows.map(accountRow)}</div>
-              <div className="packyCodeFigures">
-                <span className="packyCodeFigure">
-                  <span className="packyCodeFigureLabel">{t('totalRemaining')}</span>
-                  <span className="packyCodeFigureValue">
-                    {totals.counted === 0 ? '—' : formatUsd(totals.remainingUsd) ?? '—'}
-                    {totals.unlimited > 0 && ` + ${t('keyUnlimited')}`}
-                  </span>
-                </span>
-                <span className="packyCodeFigure">
-                  <span className="packyCodeFigureLabel">{t('totalUsed')}</span>
-                  <span className="packyCodeFigureValue">{totals.counted === 0 ? '—' : formatUsd(totals.usedUsd) ?? '—'}</span>
-                </span>
-                <span className="packyCodeFigure">
-                  <span className="packyCodeFigureLabel">{t('totalLimit')}</span>
-                  <span className="packyCodeFigureValue">
-                    {totals.counted === 0 ? '—' : totals.unlimited > 0 ? t('keyUnlimited') : formatUsd(totals.limitUsd) ?? '—'}
-                  </span>
-                </span>
-              </div>
-              {totals.unread > 0 && (
-                <span className="packyCodeNote">{t('totalPartial').replace('{count}', String(totals.unread))}</span>
-              )}
-              {rows.some(row => row.stale !== undefined) && (
-                <span className="packyCodeNote">{t('totalStale').replace('{count}', String(rows.filter(row => row.stale !== undefined).length))}</span>
-              )}
-            </>
-          )}
-      </section>
-
-      <section className="packyCodeCard">
-        <header className="packyCodeCardHeader">
-          <span className="packyCodeCardTitle">{t('keysTitle')}</span>
-          {keys.length > 0 && (
-            <button type="button" className="packyCodeButton" disabled={busy} onClick={() => mutate('keys/remove-all')({})}>
-              {t('removeAll')}
-            </button>
-          )}
-        </header>
-        <span className="packyCodeNote">{t('keysHint')}</span>
-        {keys.length === 0
-          ? <span className="packyCodeNote">{t('empty')}</span>
-          : (
-            <div className="packyCodeRows">
-              {keys.map(key => {
-                const row = usageOf(key.id)
-                return (
-                  <div className="packyCodeRow" key={key.id}>
-                    <span className="packyCodeRowMain">
-                      <span className="packyCodeRowName">
-                        {renaming?.id === key.id
-                          ? (
-                            <form className="packyCodeForm" onSubmit={submitRename}>
-                              <input
-                                className="packyCodeInput"
-                                type="text"
-                                maxLength={60}
-                                autoFocus
-                                placeholder={t('keyRenamePlaceholder')}
-                                value={renaming.label}
-                                onChange={event => setRenaming({ id: key.id, label: event.target.value })}
-                                onKeyDown={event => event.key === 'Escape' && setRenaming(undefined)}
-                              />
-                              <button type="submit" className="packyCodeButton" disabled={busy || renaming.label.trim() === ''}>
-                                {t('keyRenameSave')}
-                              </button>
-                              <button type="button" className="packyCodeButton" onClick={() => setRenaming(undefined)}>
-                                {t('keyRenameCancel')}
-                              </button>
-                            </form>
-                          )
-                          : key.label}
-                        {key.active && <span className="packyCodeChip packyCodeChipActive">{t('keyActive')}</span>}
-                        {key.disabled && <span className="packyCodeChip">{`${t('keyDisabled')}: ${key.disabledReason ?? ''}`.trim()}</span>}
-                      </span>
-                      <span className="packyCodeRowMeta">
-                        {row?.usage?.name === undefined ? t('keyNameUnknown') : `${t('keyName')} ${row.usage.name}`}
-                      </span>
-                    </span>
-                    <span className="packyCodeActions">
-                      {!key.active && !key.disabled && (
-                        <button type="button" className="packyCodeButton" disabled={busy} onClick={() => mutate('keys/select')({ id: key.id })}>
-                          {t('keyUse')}
-                        </button>
-                      )}
-                      {key.disabled && (
-                        <button type="button" className="packyCodeButton" disabled={busy} onClick={() => mutate('keys/enable')({ id: key.id })}>
-                          {t('keyEnable')}
-                        </button>
-                      )}
-                      {renaming?.id !== key.id && (
-                        <button type="button" className="packyCodeButton" disabled={busy} onClick={() => setRenaming({ id: key.id, label: key.label })}>
-                          {t('keyRename')}
-                        </button>
-                      )}
-                      <button type="button" className="packyCodeButton" disabled={busy} onClick={() => mutate('keys/remove')({ id: key.id })}>
-                        {t('keyRemove')}
-                      </button>
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        <form className="packyCodeForm" onSubmit={addKey}>
-          <input
-            className="packyCodeInput"
-            type="password"
-            autoComplete="off"
-            placeholder={t('addKeyPlaceholder')}
-            value={draft.key}
-            onChange={event => setDraft(current => ({ ...current, key: event.target.value }))}
-          />
-          <input
-            className="packyCodeInput"
-            type="text"
-            placeholder={t('addLabelPlaceholder')}
-            value={draft.label}
-            onChange={event => setDraft(current => ({ ...current, label: event.target.value }))}
-          />
-          <button type="submit" className="packyCodeButton packyCodeButtonPrimary" disabled={busy || draft.key.trim() === ''}>
-            {t('add')}
-          </button>
-        </form>
-        {status?.writable !== true && <span className="packyCodeNote">{t('notWritable')}</span>}
-        {error !== undefined && <span className="packyCodeError">{`${t('error')}: ${error}`}</span>}
-      </section>
-
-      <details className="packyCodeAdvanced">
-        <summary>{t('advanced')}</summary>
-        <div className="packyCodeAdvancedBody">
-          <label className="packyCodeField">
-            <span className="packyCodeFigureLabel">{t('apiHost')}</span>
-            <input
-              className="packyCodeInput"
-              type="text"
-              disabled={status?.writable !== true}
-              defaultValue={status?.hosts?.apiHost ?? ''}
-              onBlur={event => mutate('hosts/update')({ apiHost: event.target.value, statusHost: status?.hosts?.statusHost })}
-            />
-          </label>
-          <label className="packyCodeField">
-            <span className="packyCodeFigureLabel">{t('statusHost')}</span>
-            <input
-              className="packyCodeInput"
-              type="text"
-              disabled={status?.writable !== true}
-              defaultValue={status?.hosts?.statusHost ?? ''}
-              onBlur={event => mutate('hosts/update')({ statusHost: event.target.value, apiHost: status?.hosts?.apiHost })}
-            />
-          </label>
-        </div>
-      </details>
+      <VersionCard call={call} t={t} />
     </div>
   )
 }
 
 function PackyCodeComposerQuota({ rpc, t, directory }) {
-  const call = react.useMemo(
-    // Same envelope rule as the settings panel: the payload field is required.
-    () => (endpoint, payload = {}) => rpc.call(CHANNEL, endpoint, payload).then(unwrap),
-    [rpc],
-  )
+  const call = useCaller(rpc)
   const snapshot = react.useSyncExternalStore(
     listener => directory.subscribe(listener),
     () => directory.getSnapshot(),
@@ -828,13 +804,12 @@ function PackyCodeComposerQuota({ rpc, t, directory }) {
     : formatUsd(usage?.availableUsd) ?? (row?.error === undefined ? t('composerNoKey') : t('composerUnread'))
   // A balance carried over from an earlier read is marked as approximate.
   const stale = row?.stale !== undefined && usage !== undefined
-  const shown = stale ? `≈${display}` : display
   const label = stale
-    ? `${t('composerLabel')}: ${display}（${t('composerStale').replace('{time}', readTime(row.stale.fetchedAt))}）`
+    ? `${t('composerLabel')}: ${display}（${fill(t('composerStale'), { time: readTime(row.stale.fetchedAt) })}）`
     : `${t('composerLabel')}: ${display}`
   return (
-    <span className="packyCodeComposer" role="status" aria-label={label} title={label}>
-      {shown}
+    <span className="pkc-composer" role="status" aria-label={label} title={label}>
+      {stale ? `≈${display}` : display}
     </span>
   )
 }

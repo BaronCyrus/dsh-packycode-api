@@ -2,26 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { apply, inject, name } from '../src/index.js'
-
-/** In-memory credential-record service for the ring. */
-function fakeCredentials() {
-  let record
-  let chain = Promise.resolve()
-  return {
-    async readRecord() {
-      return record
-    },
-    modifyRecord(_key, mutate) {
-      const run = chain.then(async () => {
-        const next = await mutate(record)
-        if (next !== undefined) record = next
-        return record
-      })
-      chain = run.then(() => undefined, () => undefined)
-      return run
-    },
-  }
-}
+import { fakeCredentials } from './helpers.mjs'
 
 /**
  * A context that records what the plugin registers. Every service this plugin
@@ -94,10 +75,11 @@ test('registers one route and one directory entry, and defers the browser surfac
     settingsPath: [],
   }])
 
-  // Both optional surfaces are requested through ctx.inject, never injected.
+  // Every optional surface is requested through ctx.inject, never injected.
   // `webServer` rides with `connection`: channel registration writes through
   // `owner.webServer`, so a scope holding only `connection` cannot register.
-  assert.deepEqual(ctx.injected, [['settings'], ['connection', 'webServer'], ['tools']])
+  // `web` carries the search providers; a profile without it still boots.
+  assert.deepEqual(ctx.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools']])
   assert.equal(registered.rpc.length, 1)
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))

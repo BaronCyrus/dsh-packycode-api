@@ -15,18 +15,19 @@
  * @module dsh-packycode-api/balance
  */
 
+import { createCachedRead } from './cached-read.js'
 import {
-  DEFAULT_API_HOST,
   DEFAULT_BALANCE_TTL_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
-  DEFAULT_STATUS_HOST,
-  LEGACY_STATUS_HOSTS,
   QUOTA_PER_USD,
   UNLIMITED_QUOTA_SENTINEL,
 } from './constants.js'
+import { accountHostOrder, statusHostOrder } from './hosts.js'
+import { ambientFetch, boundedFetch } from './request.js'
+
+export { accountHostOrder, statusHostOrder } from './hosts.js'
 
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
-const clone = value => structuredClone(value)
 
 function number(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -101,59 +102,16 @@ function statusMessage(status) {
   return `the gateway answered HTTP ${status}`
 }
 
-/**
- * Say why a request never got an answer. Node's fetch reports every transport
- * fault as a bare `fetch failed`; the cause carries the part a reader can act
- * on (a DNS failure, a refused or reset connection, a certificate problem).
- */
-function transportMessage(error, timeoutSignal, timeoutMs) {
-  if (timeoutSignal.aborted) return `no answer within ${Math.round(timeoutMs / 1000)}s`
-  const cause = error?.cause
-  const code = typeof cause?.code === 'string' ? cause.code : typeof error?.code === 'string' ? error.code : undefined
-  const message = error instanceof Error ? error.message : String(error)
-  return code === undefined ? message : `${message} (${code})`
-}
-
 async function getJson(url, key, { fetchImpl, timeoutMs, signal }) {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs)
-  const requestSignal = signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal])
   let response
   try {
-    response = await fetchImpl(url, {
-      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
-      redirect: 'error',
-      signal: requestSignal,
-    })
+    response = await boundedFetch(url, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }, { fetchImpl, timeoutMs, signal })
   } catch (error) {
-    if (signal?.aborted === true) throw error
-    throw new Error(transportMessage(error, timeoutSignal, timeoutMs), { cause: error })
+    if (error.aborted) throw error.cause
+    throw new Error(error.message, { cause: error })
   }
   if (!response.ok) throw new Error(statusMessage(response.status))
   return response.json()
-}
-
-/**
- * The status hosts one per-key read tries, in order: an explicit override,
- * the current default, the legacy defaults, then the model hosts.
- * @param hosts - the resolved host settings.
- * @returns unique origins.
- */
-export function statusHostOrder(hosts) {
-  const configured = hosts?.statusHost
-  const override = configured === undefined || LEGACY_STATUS_HOSTS.includes(configured) ? [] : [configured]
-  return [...new Set([...override, DEFAULT_STATUS_HOST, ...LEGACY_STATUS_HOSTS, hosts?.apiHost, DEFAULT_API_HOST]
-    .filter(host => typeof host === 'string' && host !== ''))]
-}
-
-/**
- * The hosts the account read tries: the model hosts first (they serve the
- * billing endpoints), then the status hosts.
- * @param hosts - the resolved host settings.
- * @returns unique origins.
- */
-export function accountHostOrder(hosts) {
-  return [...new Set([hosts?.apiHost, DEFAULT_API_HOST, ...statusHostOrder(hosts)]
-    .filter(host => typeof host === 'string' && host !== ''))]
 }
 
 async function withFallback(hosts, path, key, options) {
@@ -182,16 +140,13 @@ async function withFallback(hosts, path, key, options) {
 export function createBalanceReader({
   listKeys,
   getHosts,
-  fetchImpl = fetch,
+  fetchImpl = ambientFetch,
   now = Date.now,
   ttlMs = DEFAULT_BALANCE_TTL_MS,
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 } = {}) {
   if (typeof listKeys !== 'function') throw new Error('PackyCode balance reader requires listKeys')
   if (typeof getHosts !== 'function') throw new Error('PackyCode balance reader requires getHosts')
-  let cached
-  let inFlight
-  let generation = 0
   /** Last successful per-key usage, by key id, and the last account figures. */
   const lastGood = new Map()
   let lastAccount
@@ -274,31 +229,9 @@ export function createBalanceReader({
     return { keys: entries, account, hosts, fetchedAt: now() }
   }
 
+  const cache = createCachedRead(load, { ttlMs, now })
   return Object.freeze({
-    async read({ force = false, signal } = {}) {
-      signal?.throwIfAborted()
-      if (!force && cached !== undefined && now() - cached.fetchedAt < ttlMs) return clone(cached)
-      const createPending = requestSignal => {
-        const observedGeneration = generation
-        return load(requestSignal).then(value => {
-          if (generation === observedGeneration) cached = value
-          return value
-        })
-      }
-      if (force) return clone(await createPending(signal))
-      const pending = inFlight ?? createPending()
-      if (inFlight === undefined) {
-        inFlight = pending
-        const clear = () => {
-          if (inFlight === pending) inFlight = undefined
-        }
-        void pending.then(clear, clear)
-      }
-      return clone(await pending)
-    },
-    invalidate() {
-      generation += 1
-      cached = undefined
-    },
+    read: options => cache.read(options),
+    invalidate: () => cache.invalidate(),
   })
 }

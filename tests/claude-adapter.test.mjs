@@ -180,6 +180,97 @@ test('a delegated turn reports a CLI failure without blaming a key', async () =>
   assert.match(finish.reason.failure.message, /401 无效的令牌/u)
 })
 
+/** The reasoning text a turn's chunks carry. */
+const reasoningOf = chunks => chunks.filter(chunk => chunk.type === 'reasoning-delta').map(chunk => chunk.text).join('')
+
+test('every CLI turn names the key it used, and a key passed over for its groups is said so', async () => {
+  const plain = createClaudeCliAdapter({
+    inner: innerAdapter(),
+    runner: stubRunner([{ type: 'key', label: 'cc', model: 'claude-opus-5-5', groups: ['cc'] }, { type: 'result', result: { result: '', inputTokens: 0, outputTokens: 0 } }]),
+  })
+  assert.match(reasoningOf(await consume(plain.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))), /▸ 使用 Key「cc」（分组：cc）/u)
+
+  const switched = createClaudeCliAdapter({
+    inner: innerAdapter(),
+    runner: stubRunner([{ type: 'key', label: 'cc', switchedFrom: 'no-cc', model: 'claude-opus-5-5', groups: ['cc'] }, { type: 'result', result: { result: '', inputTokens: 0, outputTokens: 0 } }]),
+  })
+  assert.match(reasoningOf(await consume(switched.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))), /当前 Key「no-cc」的分组不能用 claude-opus-5-5，本轮改用 Key「cc」/u)
+
+  const uncovered = createClaudeCliAdapter({
+    inner: innerAdapter(),
+    runner: stubRunner([{ type: 'key', label: 'no-cc', uncovered: true, model: 'claude-opus-5-5', required: ['cc', 'cc-sale'] }, { type: 'result', result: { result: '', inputTokens: 0, outputTokens: 0 } }]),
+  })
+  assert.match(reasoningOf(await consume(uncovered.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))), /已存的 Key 都没有能用 claude-opus-5-5 的分组（需要 cc \/ cc-sale）/u)
+})
+
+test('an official-CLI refusal from a key without a Claude group blames the key, not the CLI', async () => {
+  const refusal = 'Claude Code CLI failed: Failed to authenticate. API Error: 403 {"error":{"type":"packy_<nil>","message":"Request blocked: this endpoint only accepts requests from the official Claude Code CLI. (request id: r1)"}}'
+  const runnerWith = key => ({
+    async *stream() {
+      yield { type: 'key', ...key }
+      throw new Error(refusal)
+    },
+  })
+  const failureOf = async key => {
+    const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner: runnerWith(key) })
+    return (await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))).at(-1).reason.failure.message
+  }
+  const byGroup = await failureOf({ label: 'no-cc', model: 'claude-opus-5-5', groups: ['codex', 'deepseek-officially'], required: ['cc', 'cc-sale'], covers: false })
+  assert.match(byGroup, /Key「no-cc」所在分组（codex、deepseek-officially）不包含能用 claude-opus-5-5 的分组（cc \/ cc-sale）/u)
+  assert.match(byGroup, /不需要更新 CLI/u)
+  assert.doesNotMatch(byGroup, /\b403\b/u)
+  assert.match(byGroup, /request id: r1/u)
+
+  // The other way PackyCode refuses such a key: a routing miss, not a client check.
+  const routingMiss = async () => {
+    const adapter = createClaudeCliAdapter({
+      inner: innerAdapter(),
+      runner: {
+        async *stream() {
+          yield { type: 'key', label: 'no-cc', model: 'claude-opus-5-5', groups: ['codex'], required: ['cc'], covers: false }
+          throw new Error('Claude Code CLI failed: API Error: 400 当前令牌未覆盖供应商 "Anthropic"（模型=claude-opus-5-5，已选分组=[codex]） (request id: r2)')
+        },
+      },
+    })
+    return (await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))).at(-1).reason.failure.message
+  }
+  const miss = await routingMiss()
+  assert.match(miss, /Key「no-cc」所在分组（codex）不包含能用 claude-opus-5-5 的分组（cc）/u)
+  assert.doesNotMatch(miss, /\b400\b/u)
+
+  // A run that started before its key's groups were known: the 400 names them.
+  const unknownAdapter = createClaudeCliAdapter({
+    inner: innerAdapter(),
+    runner: {
+      async *stream() {
+        yield { type: 'key', id: 'k1', label: 'fresh', model: 'claude-opus-5-5' }
+        throw new Error('Claude Code CLI failed: API Error: 400 当前令牌未覆盖供应商 "Anthropic"（模型=claude-opus-5-5，已选分组=[codex kimi-sale]）')
+      },
+    },
+  })
+  const fromText = (await consume(unknownAdapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))).at(-1).reason.failure.message
+  assert.match(fromText, /Key「fresh」所在分组（codex、kimi-sale）不包含能用 claude-opus-5-5 的分组/u)
+
+  // The 403 wording names no groups: a fresh reading decides.
+  const asked = []
+  const refreshed = createClaudeCliAdapter({
+    inner: innerAdapter(),
+    runner: runnerWith({ id: 'k1', label: 'fresh', model: 'claude-opus-5-5' }),
+    explainKey: async key => {
+      asked.push(key.id)
+      return { ...key, groups: ['codex'], required: ['cc'], covers: false }
+    },
+  })
+  const byReading = (await consume(refreshed.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))).at(-1).reason.failure.message
+  assert.deepEqual(asked, ['k1'])
+  assert.match(byReading, /Key「fresh」所在分组（codex）不包含能用 claude-opus-5-5 的分组（cc）/u)
+
+  // A key whose groups do cover Claude: the CLI explanation stands, naming the key.
+  const byClient = await failureOf({ label: 'cc', model: 'claude-opus-5-5', groups: ['cc'], covers: true })
+  assert.match(byClient, /认为它不是官方 Claude Code CLI 发出的/u)
+  assert.match(byClient, /本轮使用 Key「cc」，分组：cc/u)
+})
+
 test('the request signal reaches the CLI so a cancelled turn kills it', async () => {
   const runner = stubRunner([{ type: 'result', result: { result: 'x', inputTokens: 0, outputTokens: 0 } }])
   const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })

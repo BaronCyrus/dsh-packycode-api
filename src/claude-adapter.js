@@ -27,7 +27,8 @@ import { tmpdir } from 'node:os'
 
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 
-import { classifyCapacity, classifyClientPolicy, explainCliCapacityFailure, explainCliClientPolicyFailure } from './failures.js'
+import { classifyCapacity, classifyClientPolicy, classifyCoverage, explainCliCapacityFailure, explainCliClientPolicyFailure, explainCliGroupFailure } from './failures.js'
+import { parseSelectedGroups } from './groups.js'
 
 /** Models this route serves through the CLI rather than an HTTP API. */
 export const CLI_BACKED_MODEL_IDS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
@@ -432,6 +433,26 @@ function turnUsage(lastRequest, finished) {
   }
 }
 
+/**
+ * One line naming the key a CLI run uses — by its label only — so a key
+ * switch is visible on the very next turn, and a key passed over for its
+ * groups is never a silent change.
+ * @param key - the runner's `key` event.
+ * @returns the reasoning note, newline-terminated.
+ */
+export function keyNote(key) {
+  const model = typeof key.model === 'string' && key.model !== '' ? key.model : 'Claude'
+  const groups = Array.isArray(key.groups) && key.groups.length > 0 ? `（分组：${key.groups.join('、')}）` : ''
+  if (key.switchedFrom !== undefined) {
+    return `▸ 当前 Key「${key.switchedFrom}」的分组不能用 ${model}，本轮改用 Key「${key.label}」${groups}\n`
+  }
+  if (key.uncovered === true) {
+    const required = Array.isArray(key.required) && key.required.length > 0 ? `（需要 ${key.required.join(' / ')}）` : ''
+    return `▸ 使用 Key「${key.label}」${groups}——注意：已存的 Key 都没有能用 ${model} 的分组${required}\n`
+  }
+  return `▸ 使用 Key「${key.label}」${groups}\n`
+}
+
 /** One line describing a retry the CLI is making on its own. */
 function retryNote(event) {
   const status = event.status === undefined ? '出错' : `HTTP ${event.status}`
@@ -475,8 +496,9 @@ async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imag
  *
  * @param options - the inner adapter, the CLI runner, the CLI-backed model ids,
  *   the model session titles run on, the HTTP models whose titles run on
- *   another model, the mode and working directory each turn runs with, and the
- *   attachment store images are read from.
+ *   another model, the mode and working directory each turn runs with, the
+ *   attachment store images are read from, and an optional refresh of a run's
+ *   key description (its groups) for explaining a refusal.
  * @returns an adapter with the same provider surface.
  */
 export function createClaudeCliAdapter({
@@ -489,6 +511,7 @@ export function createClaudeCliAdapter({
   resolveCwd,
   resolveAttachments,
   imageLimits = CLI_IMAGE_LIMITS,
+  explainKey,
 }) {
   if (inner === undefined || inner === null) throw new Error('the CLI adapter needs an inner adapter')
   if (runner === undefined || runner === null) throw new Error('the CLI adapter needs a runner')
@@ -511,6 +534,30 @@ export function createClaudeCliAdapter({
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * Say why a CLI run failed. The request came from the official CLI, so a
+   * client-policy refusal gets its own explanation rather than the HTTP
+   * route's advice. PackyCode refuses a key without a Claude group either as
+   * a routing miss (400 未覆盖供应商, which names the key's groups) or with the
+   * official-CLI wording (403); either way the key is the cause, not the CLI.
+   * When the run started before the key's groups were known, a fresh reading
+   * is consulted first. A busy gateway is named as such after the CLI's own
+   * retries ran out.
+   */
+  async function explainFailure(raw, runKey, { model, retries }) {
+    const policy = classifyClientPolicy(raw)
+    const coverage = classifyCoverage(raw)
+    if (!policy && !coverage) return classifyCapacity(raw) ? explainCliCapacityFailure(raw, retries) : raw
+    let key = runKey === undefined ? undefined : { model, ...runKey }
+    if (key !== undefined && key.covers !== true && typeof explainKey === 'function') {
+      key = await explainKey(key).catch(() => key) ?? key
+    }
+    if (coverage) return explainCliGroupFailure({ model, ...key, groups: parseSelectedGroups(raw) ?? key?.groups }, raw)
+    if (key?.covers === false) return explainCliGroupFailure(key, raw)
+    const used = key === undefined ? '' : `（本轮使用 Key「${key.label}」${Array.isArray(key.groups) ? `，分组：${key.groups.join('、')}` : ''}）`
+    return `${explainCliClientPolicyFailure(raw)}${used}`
   }
 
   async function* cliStream(options) {
@@ -536,11 +583,17 @@ export function createClaudeCliAdapter({
       return true
     }
     let retries = 0
+    /** The key this run uses, as the runner described it (never the token). */
+    let runKey
     try {
       let finished
       let lastRequest
       for await (const event of runner.stream({ ...call, signal: options.signal })) {
         switch (event.type) {
+          case 'key':
+            runKey = event
+            if (!quiet) yield* blocks.note(keyNote(event))
+            break
           case 'started':
             if (!quiet) {
               const detail = [event.version, event.model].filter(part => typeof part === 'string' && part !== '').join(' · ')
@@ -581,13 +634,7 @@ export function createClaudeCliAdapter({
       yield { type: 'finish', reason: { kind: 'stop' } }
     } catch (error) {
       yield* blocks.close()
-      const raw = String(error?.message ?? error)
-      // The request came from the official CLI, so a client-policy refusal
-      // gets its own explanation rather than the HTTP route's advice, and a
-      // busy gateway is named as such after the CLI's own retries ran out.
-      const message = classifyClientPolicy(raw)
-        ? explainCliClientPolicyFailure(raw)
-        : classifyCapacity(raw) ? explainCliCapacityFailure(raw, retries) : raw
+      const message = await explainFailure(String(error?.message ?? error), runKey, { model: options.model, retries })
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'PI_AI_ERROR', message } } }
     }
   }

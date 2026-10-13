@@ -2,26 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { apply } from '../src/index.js'
-
-/** In-memory credential-record service for the key ring. */
-function fakeCredentials() {
-  let record
-  let chain = Promise.resolve()
-  return {
-    async readRecord() {
-      return record
-    },
-    modifyRecord(_key, mutate) {
-      const run = chain.then(async () => {
-        const next = await mutate(record)
-        if (next !== undefined) record = next
-        return record
-      })
-      chain = run.then(() => undefined, () => undefined)
-      return run
-    },
-  }
-}
+import { fakeCredentials } from './helpers.mjs'
 
 /**
  * A context whose settings and connection services behave like the real ones
@@ -138,6 +119,6 @@ test('a profile without a settings provider still serves its route', () => {
   apply(ctx)
   assert.equal(seen.installed, undefined)
   assert.equal(seen.adapters.length, 1)
-  assert.deepEqual(seen.injected, [['settings'], ['connection', 'webServer'], ['tools']])
+  assert.deepEqual(seen.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools']])
   assert.equal(seen.channel, '/packycode-api')
 })

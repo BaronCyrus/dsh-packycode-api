@@ -2,13 +2,17 @@
  * The loopback RPC surface behind the settings panel and the composer chip.
  *
  * Every reply carries only what this plugin owns: key labels and state, the
- * balance projection the host built, host overrides, and whether this device
- * has the Claude Code CLI. Key material never crosses this boundary.
+ * balance and group projections the host built, host overrides, whether this
+ * device has the Claude Code CLI, the plugin version, and the web search
+ * preference. Key material never crosses this boundary.
  *
  * @module dsh-packycode-api/rpc
  */
 
 import { DEFAULT_API_HOST, DEFAULT_STATUS_HOST } from './constants.js'
+import { normalizeHost } from './hosts.js'
+
+export { normalizeHost } from './hosts.js'
 
 const ok = value => ({ ok: true, value })
 const failed = message => ({ ok: false, error: { message } })
@@ -16,35 +20,24 @@ const failed = message => ({ ok: false, error: { message } })
 /** Only sentences this plugin authored may reach the browser. */
 const SAFE_MESSAGE = /^(?:PackyCode|That |Unknown |PackyCode's |add |the )[\s\S]{0,180}$/u
 
-/** Accept an absolute http(s) origin and drop a trailing slash. */
-export function normalizeHost(value, fallback) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  if (text === '') return fallback
-  let url
-  try {
-    url = new URL(text)
-  } catch {
-    return fallback
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return fallback
-  return `${url.origin}${url.pathname.replace(/\/+$/u, '')}`
-}
+const keyId = payload => String(payload?.id ?? '')
 
 /**
  * Build the RPC handler.
- * @param options - the key ring, balance reader, host preference, and the
- *   Claude Code CLI manager (optional: without it the CLI endpoints refuse).
+ * @param options - the key ring, the balance and group readers, the host
+ *   preference, and the optional Claude Code CLI manager, plugin manager, and
+ *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli, pluginManager }) {
-  const requireCli = () => {
-    if (claudeCli === undefined) throw new Error('PackyCode Claude Code CLI support is unavailable in this runtime')
-    return claudeCli
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search }) {
+  const need = (service, message) => {
+    if (service === undefined) throw new Error(message)
+    return service
   }
-  const requireManager = () => {
-    if (pluginManager === undefined) throw new Error('PackyCode plugin version is unavailable')
-    return pluginManager
-  }
+  const cli = () => need(claudeCli, 'PackyCode Claude Code CLI support is unavailable in this runtime')
+  const manager = () => need(pluginManager, 'PackyCode plugin version is unavailable')
+  const webSearch = () => need(search, 'PackyCode web search is unavailable in this runtime')
+  const groupReader = () => need(groups, 'PackyCode key groups are unavailable in this runtime')
 
   const status = async () => ({
     ...(await ring.list()),
@@ -53,70 +46,64 @@ export function createPackyCodeRpc({ ring, balance, hosts, preference, claudeCli
     defaults: { apiHost: DEFAULT_API_HOST, statusHost: DEFAULT_STATUS_HOST },
   })
 
+  /**
+   * Key mutations, each answered with the new status. Every one drops the
+   * cached balance; one that changes which keys exist also drops the groups.
+   */
+  const keyMutations = {
+    'keys/add': { run: payload => ring.add(payload?.key, payload?.label), changesKeys: true },
+    'keys/rename': { run: payload => ring.rename(keyId(payload), payload?.label) },
+    'keys/remove': { run: payload => ring.remove(keyId(payload)), changesKeys: true },
+    'keys/remove-all': { run: () => ring.removeAll(), changesKeys: true },
+    'keys/select': { run: payload => ring.select(keyId(payload)) },
+    'keys/enable': { run: payload => ring.enable(keyId(payload)) },
+  }
+
+  const endpoints = {
+    status: () => status(),
+    balance: async payload => {
+      const [value, state] = await Promise.all([balance.read({ force: payload?.force === true }), ring.list()])
+      return { ...value, activeId: state.activeId }
+    },
+    groups: payload => groupReader().read({ force: payload?.force === true }),
+    'hosts/update': async payload => {
+      if (preference.writable !== true) throw new Error('PackyCode host overrides are not writable in this profile')
+      await preference.set({
+        apiHost: normalizeHost(payload?.apiHost, hosts().apiHost),
+        statusHost: normalizeHost(payload?.statusHost, hosts().statusHost),
+      })
+      balance.invalidate()
+      groups?.invalidate()
+      return status()
+    },
+    'claude-cli/status': payload => cli().status({ force: payload?.force === true }),
+    // Starts the install and answers at once; the panel polls the status
+    // instead of holding one request open for minutes.
+    'claude-cli/install': () => {
+      cli().install()
+      return cli().status()
+    },
+    'plugin/version': (payload, signal) => manager().read({ force: payload?.force === true, signal }),
+    'plugin/update': (_payload, signal) => manager().update({ signal }),
+    'search/status': () => webSearch().status(),
+    'search/update': payload => webSearch().update({
+      searchProvider: payload?.searchProvider,
+      searchBackend: payload?.searchBackend,
+    }),
+  }
+
   return async (endpoint, payload, signal) => {
     try {
-      switch (endpoint) {
-        case 'status':
-          return ok(await status())
-        case 'keys/add': {
-          await ring.add(payload?.key, payload?.label)
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'keys/rename': {
-          await ring.rename(String(payload?.id ?? ''), payload?.label)
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'keys/remove': {
-          await ring.remove(String(payload?.id ?? ''))
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'keys/remove-all': {
-          await ring.removeAll()
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'keys/select': {
-          await ring.select(String(payload?.id ?? ''))
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'keys/enable': {
-          await ring.enable(String(payload?.id ?? ''))
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'balance': {
-          const [value, state] = await Promise.all([balance.read({ force: payload?.force === true }), ring.list()])
-          return ok({ ...value, activeId: state.activeId })
-        }
-        case 'hosts/update': {
-          if (preference.writable !== true) throw new Error('PackyCode host overrides are not writable in this profile')
-          await preference.set({
-            apiHost: normalizeHost(payload?.apiHost, hosts().apiHost),
-            statusHost: normalizeHost(payload?.statusHost, hosts().statusHost),
-          })
-          balance.invalidate()
-          return ok(await status())
-        }
-        case 'claude-cli/status':
-          return ok(await requireCli().status({ force: payload?.force === true }))
-        case 'claude-cli/install': {
-          // Starts the install and answers at once; the panel polls the status
-          // instead of holding one request open for minutes.
-          const cli = requireCli()
-          cli.install()
-          return ok(await cli.status())
-        }
-        case 'plugin/version':
-          return ok(await requireManager().read({ force: payload?.force === true, signal }))
-        case 'plugin/update':
-          return ok(await requireManager().update({ signal }))
-        default:
-          return failed('Unknown PackyCode endpoint')
+      const mutation = Object.hasOwn(keyMutations, endpoint) ? keyMutations[endpoint] : undefined
+      if (mutation !== undefined) {
+        await mutation.run(payload)
+        balance.invalidate()
+        if (mutation.changesKeys) groups?.invalidate()
+        return ok(await status())
       }
+      const handle = Object.hasOwn(endpoints, endpoint) ? endpoints[endpoint] : undefined
+      if (handle === undefined) return failed('Unknown PackyCode endpoint')
+      return ok(await handle(payload, signal))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return failed(SAFE_MESSAGE.test(message) ? message : 'PackyCode request failed')

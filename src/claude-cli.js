@@ -403,6 +403,33 @@ export function readClaudeStreamEvents(event) {
   return []
 }
 
+const nameList = value => (Array.isArray(value) ? value.filter(item => typeof item === 'string' && item !== '').slice(0, 32) : undefined)
+
+/**
+ * What a run may say about the key it used: its ring id and label, why it was
+ * chosen, and the groups involved. Never the token.
+ * @param credential - what `resolveCredential` answered.
+ * @returns the description, or undefined when the credential carries no label.
+ */
+export function describeRunKey(credential) {
+  if (credential === null || typeof credential !== 'object') return undefined
+  const label = typeof credential.label === 'string' && credential.label !== '' ? credential.label.slice(0, 60) : undefined
+  if (label === undefined) return undefined
+  const groups = nameList(credential.groups)
+  const required = nameList(credential.required)
+  const from = typeof credential.switchedFrom?.label === 'string' && credential.switchedFrom.label !== '' ? credential.switchedFrom.label.slice(0, 60) : undefined
+  return {
+    ...(typeof credential.id === 'string' && credential.id !== '' ? { id: credential.id } : {}),
+    label,
+    ...(typeof credential.model === 'string' && credential.model !== '' ? { model: credential.model } : {}),
+    ...(groups === undefined ? {} : { groups }),
+    ...(required === undefined ? {} : { required }),
+    ...(typeof credential.covers === 'boolean' ? { covers: credential.covers } : {}),
+    ...(from === undefined ? {} : { switchedFrom: from }),
+    ...(credential.uncovered === true ? { uncovered: true } : {}),
+  }
+}
+
 /**
  * A Claude Code CLI runner.
  * @param options - binary (a path, or a function resolving one per run so a
@@ -430,7 +457,10 @@ export function createClaudeRunner({
   const start = async ({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout }) => {
     const args = buildClaudeArgs({ mode, model, stream, appendSystemPrompt })
     const input = buildClaudeInput({ prompt, content, stream })
-    const { baseUrl, token } = await resolveCredential()
+    // Resolved per run, for this run's model: a key switch applies to the
+    // next run, and a key whose groups cannot reach the model is passed over.
+    const credential = await resolveCredential({ model })
+    const { baseUrl, token } = credential
     const program = typeof binary === 'function' ? await binary() : binary
     const command = resolveSpawnCommand(program, { platform })
     const env = withProgramDirOnPath(buildClaudeEnvironment({ baseUrl, token, configDir }), program, platform)
@@ -526,7 +556,7 @@ export function createClaudeRunner({
       })
     })
     closed.catch(() => undefined)
-    return { child, state, closed, kill }
+    return { child, state, closed, kill, key: describeRunKey(credential) }
   }
 
   return Object.freeze({
@@ -568,7 +598,7 @@ export function createClaudeRunner({
       let buffer = ''
       let sawResult
       const lines = []
-      const { state, closed, kill } = await start({
+      const { state, closed, kill, key } = await start({
         prompt,
         content,
         mode,
@@ -587,6 +617,7 @@ export function createClaudeRunner({
           }
         },
       })
+      if (key !== undefined) yield { type: 'key', ...key }
       const drain = function* () {
         while (lines.length > 0) {
           const line = lines.shift().trim()

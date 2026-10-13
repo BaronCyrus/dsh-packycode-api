@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { apply } from '../src/index.js'
+import { fakeCredentials, singleKeyRecord } from './helpers.mjs'
 
 /**
  * A stand-in for the `claude` binary: it records the argv and the environment
@@ -39,28 +40,6 @@ process.stdin.on('end', () => {
 `)
   chmodSync(script, 0o755)
   return { script, record }
-}
-
-function fakeCredentials(seedKey) {
-  let record = seedKey === undefined ? undefined : {
-    kind: 'grant',
-    payload: { version: 1, activeId: 'k1', keys: [{ id: 'k1', label: 'stub', key: seedKey, addedAt: 1 }] },
-  }
-  let chain = Promise.resolve()
-  return {
-    async readRecord() {
-      return record
-    },
-    modifyRecord(_key, mutate) {
-      const run = chain.then(async () => {
-        const next = await mutate(record)
-        if (next !== undefined) record = next
-        return record
-      })
-      chain = run.then(() => undefined, () => undefined)
-      return run
-    },
-  }
 }
 
 function contextWithTools(credentials, dir) {
@@ -101,7 +80,7 @@ test('the registered tool runs the CLI with the plugin endpoint, key, and sessio
   const { script, record } = writeStubCli(dir)
   const workspace = join(dir, 'workspace')
   mkdirSync(workspace, { recursive: true })
-  const { ctx, registered } = contextWithTools(fakeCredentials('sk-stub-tool-key-0001'), dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord('sk-stub-tool-key-0001') }), dir)
   apply(ctx, { claudeCliPath: script, apiHost: 'https://cf.example', statusHost: 'https://status.example' })
 
   assert.equal(registered.tools.length, 1)
@@ -141,7 +120,7 @@ test('the registered tool runs the CLI with the plugin endpoint, key, and sessio
 test('a call without a usable key fails before spawning anything', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
   const { script } = writeStubCli(dir)
-  const { ctx, registered } = contextWithTools(fakeCredentials(undefined), dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord(undefined) }), dir)
   apply(ctx, { claudeCliPath: script })
   await assert.rejects(
     () => registered.tools[0].execute({ prompt: 'x' }, { agent: { session: { header: { cwd: dir } } } }),
@@ -154,7 +133,7 @@ test('an explicit cwd resolves against the session workspace', async () => {
   const { script, record } = writeStubCli(dir)
   const workspace = join(dir, 'workspace')
   mkdirSync(join(workspace, 'sub'), { recursive: true })
-  const { ctx, registered } = contextWithTools(fakeCredentials('sk-stub-tool-key-0002'), dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord('sk-stub-tool-key-0002') }), dir)
   apply(ctx, { claudeCliPath: script })
   await registered.tools[0].execute(
     { prompt: 'work there', mode: 'full', cwd: 'sub' },
@@ -176,7 +155,7 @@ function permissionServices(sandbox, approval) {
 test('without any plugin setting the CLI follows the session permission preset', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
   const { script, record } = writeStubCli(dir)
-  const { ctx, registered } = contextWithTools(fakeCredentials('sk-stub-tool-key-0003'), dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord('sk-stub-tool-key-0003') }), dir)
   ctx.get = permissionServices('danger-full-access', 'never')
   apply(ctx, { claudeCliPath: script })
   const exec = { agent: { session: { header: { cwd: dir } } } }
@@ -193,7 +172,7 @@ test('without any plugin setting the CLI follows the session permission preset',
 test('an explicit plugin mode still wins over the session preset', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
   const { script } = writeStubCli(dir)
-  const { ctx, registered } = contextWithTools(fakeCredentials('sk-stub-tool-key-0004'), dir)
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord('sk-stub-tool-key-0004') }), dir)
   ctx.get = permissionServices('danger-full-access', 'never')
   apply(ctx, { claudeCliPath: script, claudeCliMode: 'read-only' })
   const value = await registered.tools[0].execute({ prompt: 'x' }, { agent: { session: { header: { cwd: dir } } } })

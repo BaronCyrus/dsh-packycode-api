@@ -26,8 +26,10 @@
 | --- | --- |
 | **自带模型路由** | 安装后模型选择器出现 `PackyCode` 分组，不需要配置 provider，也不用改 `cordis.patch.yml` |
 | **多 Key 按顺序使用** | 额度用尽或 Key 被拒绝时自动切到下一个可用 Key；失败的那一步由重试接手 |
-| **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度和重置周期，并给出这些 Key 的合计；输入框右侧显示当前 Key 的剩余额度 |
+| **按分组选 Key** | 每个 Key 后面列出它所在的 PackyCode 分组和能用的模型；当前 Key 的分组用不了所选模型（例如没有 cc 分组却选了 Claude）时，这一轮自动改用分组合适的 Key |
+| **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条，并给出这些 Key 的合计；输入框右侧显示当前 Key 的剩余额度 |
 | **Claude 走本机 CLI** | `claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5` 由本机官方 Claude Code CLI 执行；设置页可以检测并一键安装 |
+| **网页搜索可走 PackyCode** | 可选：DSH 的 `web_search` 改用 PackyCode 搜索，后端在 DeepSeek 与 GPT 之间切换；可只对 PackyCode 模型生效 |
 | **凭据不离开本机** | Key 只存在 DSH 凭据文件里。浏览器只能看到备注、状态和余额，拿不到 Key |
 
 <img width="790" height="332" alt="截屏2026-10-13 10 08 27" src="https://github.com/user-attachments/assets/2faa7667-300c-4f12-bb94-aecc35c5cb7f" />
@@ -46,7 +48,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.0.7`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.0`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -65,7 +67,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.0.7`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.0`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -75,16 +77,47 @@ dsh-packycode-api
 
 ## 日常使用
 
-**换 Key。** Key 按添加顺序使用。点「切到此 Key」可以指定当前 Key；「重命名」改备注（最多 60 字，不能为空）；充值或更换后点「重新启用」。
+**换 Key。** Key 按添加顺序使用。点「切到此 Key」指定优先使用的 Key，下一轮就生效；「重命名」改备注（最多 60 字，不能为空）；充值或更换后点「重新启用」。
 
-**看余额。** 设置页的合计是**已列出的这些 Key** 的剩余、已用与额度，不是 PackyCode 账号下全部令牌的账单。读失败的 Key 不计入合计，并会注明个数；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
+**看分组。** 「账户与 Key」里每个 Key 下面列出它所在的 PackyCode 分组（鼠标悬停可看分组说明），以及能用哪些模型：✓ 可用、◐ 部分可用、✕ 不可用。分组由网关自己报出（对一个不存在的模型 id 的拒绝里会写明「已选分组」，不产生费用），再对照 PackyCode 公开的模型分组表。Claude 需要 `cc` / `cc-sale` / `cc-expensive` / `claude-officially` 之一（`claude-haiku-5-5` 只在 `cc` 和 `claude-officially`）；GPT 需要 `codex` / `codex-sale`；DeepSeek 需要 `deepseek-officially` / `deepseek-sale`。
 
-**用 Claude。** 设置页顶部的「Claude Code CLI」卡片会检测本机 CLI。没装时点「安装 Claude Code CLI」，本机执行 `npm install -g @anthropic-ai/claude-code`（需要 Node.js 18+）。装好后不用重启 DSH。Windows 上另外需要 [Git for Windows](https://git-scm.com/downloads/win)。
+**看余额。** 「账户与 Key」顶部的合计是**已列出的这些 Key** 的剩余、已用与额度，不是 PackyCode 账号下全部令牌的账单。读失败的 Key 不计入合计，并会注明个数；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
+
+**用 Claude。** 设置页的「Claude Code CLI」卡片会检测本机 CLI。每一轮 Claude 对话的思考区都会写明这一轮用的是哪个 Key（只显示备注名）。没装时点「安装 Claude Code CLI」，本机执行 `npm install -g @anthropic-ai/claude-code`（需要 Node.js 18+）。装好后不用重启 DSH。Windows 上另外需要 [Git for Windows](https://git-scm.com/downloads/win)。
+
+**网页搜索。** DSH 的 `web_search` 默认调用 DeepSeek 官方接口（用 `DEEPSEEK_API_KEY` 计费）。在 **设置 → PackyCode → 网页搜索** 里可以改走 PackyCode：
+
+| 搜索路由 | 效果 |
+| --- | --- |
+| 不接管（默认） | 不改 DSH 的搜索设置 |
+| 自动（按模型路由） | PackyCode 模型用 PackyCode 搜索，其他模型照旧 |
+| 始终使用 PackyCode 搜索 | 原本走 DSH 默认搜索的请求都改走 PackyCode |
+
+| 搜索后端 | 模型与协议 | 说明 |
+| --- | --- | --- |
+| DeepSeek（默认） | `deepseek-flash`，`/v1/messages` + `web_search_20250305` | 每次约几千 token；需要 DeepSeek 分组 |
+| GPT | `gpt-6.1-sol`，`/v1/responses` + `web_search` | 结果通常更新、更准，每次约 2–3 万输入 token；需要网关把这个 Key 的 GPT 请求路由到它的分组 |
+
+PackyCode 没有专用搜索接口：一次搜索就是一次带服务端搜索工具的模型调用，用这里的 Key 计费，额度用尽或 Key 被拒绝时同样切到下一个 Key。
+
+<details>
+<summary>网页搜索是怎么接进 DSH 的</summary>
+
+- 插件向 DSH 的 `web` 服务注册两个搜索后端：`packycode-api`（始终走 PackyCode）和 `packycode-api-auto`（按发起会话的模型路由）。只注册不会改变任何行为。
+- 选「自动」或「始终」时，插件在当前 profile 的 `cordis.patch.yml` 末尾写入一段带 `# >>> dsh-packycode-api: web search provider` 标记的 `- id: web` 配置，把 web 行的基础 `searchProvider` 指向上面的后端；DSH 会热加载这个文件，不用重启。切回「不接管」会删掉这段，其它内容原样保留。
+- 不直接改 web 运行时的搜索槽位：Codex、Kimi 等订阅插件每次 web 重启都会重写那个槽位，两边都写会互相触发重启。它们对自己不负责的模型会回退到 web 行的基础配置，所以写基础配置能和它们共存：Codex 模型仍走 Codex 搜索，其余请求才轮到这里的选择。
+- 这段配置用注释记下写入前的基础搜索（`# fallback: …`）。「自动」模式下非 PackyCode 模型的请求交给它；如果它又把请求转回本插件，就直接交给 DSH 内置的 `deepseek-official`，不会循环。
+- 结果只取结构化数据：DeepSeek 用 `web_search_tool_result` 块，GPT 用 `url_citation` 标注和 `web_search_call` 记录；模型写的摘要作为 `content` 一并返回。
+- 当前 Key 的分组覆盖不到所选后端的模型（网关报 `当前令牌未覆盖供应商`）时，会试下一个 Key，不停用 Key；都不行就提示切换后端。
+- 设置页会显示当前生效的基础搜索和运行时搜索。如果另一个插件的补丁排在后面并覆盖了基础搜索，这里会提示。
+
+</details>
 
 <details>
 <summary>什么时候会自动切换 Key</summary>
 
 - **会切换并停用当前 Key：** 额度用尽（网关报额度、余额、insufficient quota 之类），或 Key 被拒绝（HTTP 401 / `无效的令牌`）。失败的那一步由 harness 重试，从而用上新 Key。
+- **按分组改用，不停用：** 分组读数显示当前 Key 用不了这一轮的模型、而另一个 Key 能用时，这一轮直接用那个 Key（Claude 轮次会在思考区写明「当前 Key「A」的分组不能用 …，本轮改用 Key「B」」）。「使用中」的 Key 不变，其它模型照常用它。只在有证据时才改用：分组还没读到的 Key 照旧使用。
 - **不会切换：** 限速（429）；网关把上游渠道故障误报成 400（`当前令牌未覆盖供应商 …`）；以及「只允许官方客户端」的 403。后一种会直接说明原因，而不是显示成 API Key 无效。
 - 全部 Key 都停用时，请求失败并说明没有可用 Key，不会回退到别的凭据。
 
@@ -128,11 +161,13 @@ dsh-packycode-api
 
 **更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装 `dsh-packycode-api`。
 
-**卸载：** 在**插件**页卸载本插件，然后重启桌面应用。卸载不会删除其它插件、整个 profile，也不会撤销 PackyCode 控制台里的令牌。
+**卸载：** 用过 PackyCode 网页搜索的话，先在 **设置 → PackyCode → 网页搜索** 切回「不接管」，再到**插件**页卸载本插件，然后重启桌面应用。否则 `cordis.patch.yml` 里会留下指向已卸载后端的 web 配置，`web_search` 会报 `configured web provider "packycode-api-auto" is not registered`；这时手动删掉带 `dsh-packycode-api: web search provider` 标记的那一段即可。卸载不会删除其它插件、整个 profile，也不会撤销 PackyCode 控制台里的令牌。
 
 ## 常见问题
 
-**某个模型不可用，但 Key 是有效的？** 先看令牌分组是否覆盖这个模型。`cc` 分组不会把 Claude 交给普通 API 客户端；本插件的 Claude 模型要靠本机 CLI。分组拒绝不会停用 Key，也不会切到下一个 Key。
+**某个模型不可用，但 Key 是有效的？** 看「账户与 Key」里这个 Key 的分组和 ✓ / ✕：分组不覆盖这个模型时，换一个分组合适的 Key，或在 PackyCode 控制台给 Key 加上对应分组。存了分组合适的 Key 时，插件会自动用它跑这个模型。分组拒绝不会停用 Key。
+
+**Claude 报「PackyCode 的上游拒绝了这次 Claude Code CLI 请求」或「只接受官方 Claude Code CLI」？** 最常见的原因是这一轮用的 Key 没有 Claude 分组：PackyCode 对这种 Key 也会回这句话（或 400 `当前令牌未覆盖供应商`）。现在报错会直接写明「本轮使用的 Key「…」所在分组（…）不包含能用 claude-… 的分组」，并说明不需要更新 CLI。只有 Key 确实有 Claude 分组时仍被拒，才需要按报错里的提示检查 CLI 版本或联系 PackyCode。
 
 **余额对不上账号账单？** 设置页合计的是这里列出的 Key，不含同账号下没添加到本插件的其它令牌。个别 Key 读失败时会单独注明，不会被算成 0。
 
@@ -143,6 +178,8 @@ dsh-packycode-api
 **限速之后 Key 被停用了？** 不该发生。429 不会切换 Key。额度用尽或 401 才会停用；充值后点「重新启用」。
 
 **插件页安装报 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`？** pnpm 默认拒绝发布不满 24 小时的包，并且会检查 profile 里的整个 lockfile。报错里点名的往往是另一个刚更新过的插件，不是本插件。等它发布满 24 小时再重试，或把报错里的 `包名@版本` 加到 profile 目录 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 下。已安装本插件后，设置页的「更新插件」不受这个限制。
+
+**网页搜索报「no stored API key's group covers …」？** 所选搜索后端的模型不在你的令牌分组里（或网关暂时把它路由到了别的供应商）。在 **设置 → PackyCode → 网页搜索** 换一个后端，或添加分组覆盖它的 Key。
 
 **装了 CLI 还是不能用 Claude？** 从 Finder 或开始菜单启动时，`PATH` 往往比终端短。插件会再查官方安装位置、常见包管理器目录和 `npm prefix -g`。仍找不到就在设置里填 `claudeCliPath`，或点「重新检测」。改的是 Host 或重新安装了插件时，要完全退出并重启桌面应用。
 
@@ -165,7 +202,7 @@ pnpm run check
 
 `pnpm run check` 会跑全部测试、重新构建，并在 `.artifacts/` 打出 tarball。`lib/` 是已提交的构建产物，改 `src/` 后用 `pnpm run build` 生成，不要手改。
 
-真机网关用 `node scripts/live-check.mjs` 验证。它会读本机已保存的 Key，并消耗少量额度。
+真机网关用 `node scripts/live-check.mjs` 验证：它通过插件注册的同一条路由，读余额和分组、让每个 HTTP 模型回答一次、演练 Key 轮换和失败分类，只打印 Key 的末 4 位。加 `--with-cli` 会用本机 Claude Code CLI 跑三个 Claude 模型，加 `--with-search` 会每个搜索后端各搜一次；默认运行只消耗少量额度。
 
 使用 Agent 修改或发布时，先读 [AGENTS.md](AGENTS.md)。发布由推送 `v*` 标签触发 [Publish workflow](.github/workflows/publish.yml)，不要在本机执行 `npm publish`。
 

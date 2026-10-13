@@ -273,6 +273,42 @@ test('the streaming runner yields events as they arrive and closes with the summ
   assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: '完成' }])
 })
 
+test('each run resolves its key for its own model and names that key, never the token', async () => {
+  const { spawnImpl, calls } = stubSpawn({ stdout: `${STREAM_LINES.map(line => JSON.stringify(line)).join('\n')}\n` })
+  const asked = []
+  let label = 'no-cc'
+  const runner = createClaudeRunner({
+    resolveCredential: async ({ model }) => {
+      asked.push(model)
+      return {
+        baseUrl: 'https://cf.api.fan',
+        token: label === 'no-cc' ? 'sk-without-claude-AAAA' : 'sk-with-claude-BBBB',
+        label,
+        model,
+        groups: label === 'no-cc' ? ['codex'] : ['cc'],
+        required: ['cc', 'cc-sale'],
+        covers: label !== 'no-cc',
+      }
+    },
+    spawnImpl,
+  })
+  const run = async () => {
+    const events = []
+    for await (const event of runner.stream({ prompt: 'x', model: 'claude-opus-5-5' })) events.push(event)
+    return events
+  }
+  const first = await run()
+  label = 'cc'
+  const second = await run()
+  // Resolved per run: the second run sees the switch.
+  assert.deepEqual(asked, ['claude-opus-5-5', 'claude-opus-5-5'])
+  assert.equal(calls[0].options.env.ANTHROPIC_AUTH_TOKEN, 'sk-without-claude-AAAA')
+  assert.equal(calls[1].options.env.ANTHROPIC_AUTH_TOKEN, 'sk-with-claude-BBBB')
+  assert.deepEqual(first[0], { type: 'key', label: 'no-cc', model: 'claude-opus-5-5', groups: ['codex'], required: ['cc', 'cc-sale'], covers: false })
+  assert.equal(second[0].label, 'cc')
+  assert.doesNotMatch(JSON.stringify([...first, ...second]), /sk-with|sk-without/u)
+})
+
 /** A spawn stand-in whose stdout is a real byte stream fed the given buffers. */
 function byteStreamSpawn(buffers) {
   const spawnImpl = () => {

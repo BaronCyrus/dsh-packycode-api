@@ -26,8 +26,10 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | --- | --- |
 | **Built-in model route** | Adds a `PackyCode` group to the model picker. No provider configuration and no `cordis.patch.yml` edits |
 | **Keys used in order** | An exhausted or rejected key is disabled and the next usable key takes over; the failed step is retried on that key |
-| **Visible balance** | Settings lists each key's remaining, used, limit, and reset period, plus a total of those keys. The composer shows the active key's remaining balance |
+| **Keys chosen by group** | Each key lists its PackyCode groups and the models they reach; when the active key's groups cannot reach the selected model (no `cc` group for Claude, say), that turn runs on a stored key whose groups can |
+| **Visible balance** | Settings lists each key's remaining, used, limit, reset period, and a usage bar, plus a total of those keys. The composer shows the active key's remaining balance |
 | **Claude through the local CLI** | `claude-opus-5-5`, `claude-sonnet-5-5`, and `claude-haiku-5-5` run the official Claude Code CLI on this device. Settings can detect it and install it |
+| **Web search through PackyCode** | Optional: DSH's `web_search` searches through PackyCode, with a DeepSeek or GPT backend, for every request or for PackyCode models only |
 | **Credentials stay on the machine** | Keys live in the DSH credential file. The browser receives labels, state, and balances only |
 
 ## Install
@@ -42,7 +44,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.0.7`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.0`.
 
 Then **manually restart the desktop application**. Refreshing the page does not reload the plugin inside the Host process.
 
@@ -61,7 +63,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, and 
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.0.7`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.0`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 A local checkout can be linked with `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`.
 
@@ -71,16 +73,47 @@ A profile without a browser can still use the model route. It just has no settin
 
 ## Daily use
 
-**Switch keys.** Keys are used in the order they were added. **Use this key** selects one; **Rename** changes its label (at most 60 characters, empty names are refused); **Re-enable** puts a disabled key back after a top-up or replacement.
+**Switch keys.** Keys are used in the order they were added. **Use this key** picks the preferred key, effective from the next turn; **Rename** changes its label (at most 60 characters, empty names are refused); **Re-enable** puts a disabled key back after a top-up or replacement.
 
-**Read the balance.** The settings total is the remaining, used, and limit of **the keys listed here**, not the bill for every token on the PackyCode account. A key that could not be read is left out of the total and counted in a note; a key whose read failed this time but succeeded before keeps showing its last balance with the time it was read (the composer shows it as `≈US$…`) until DSH restarts. The composer shows the active key's remaining balance only while a PackyCode model is selected. **Refresh** bypasses the roughly 60-second cache. The default model host is `https://cf.api.fan` and the balance host is `https://www.packyapi.ai`; both can be changed under **Advanced: endpoints**. The old default, `https://www.packyapi.com`, is DNS-poisoned on mainland networks and answers `fetch failed` without a proxy; even when settings still name it, `.ai` is tried first.
+**See groups.** Under **Accounts and keys**, each key lists its PackyCode groups (hover for the group's description) and which models they reach: ✓ yes, ◐ partly, ✕ no. The groups come from the gateway itself (its refusal of a model id it cannot route names the token's groups; nothing is billed), matched against PackyCode's public model-group table. Claude needs one of `cc` / `cc-sale` / `cc-expensive` / `claude-officially` (`claude-haiku-5-5` only `cc` and `claude-officially`); GPT needs `codex` / `codex-sale`; DeepSeek needs `deepseek-officially` / `deepseek-sale`.
 
-**Use Claude.** The **Claude Code CLI** card at the top of Settings checks this device. If the CLI is missing, **Install Claude Code CLI** runs `npm install -g @anthropic-ai/claude-code` (Node.js 18+). No DSH restart is required after that install. Windows also needs [Git for Windows](https://git-scm.com/downloads/win).
+**Read the balance.** The total at the top of **Accounts and keys** is the remaining, used, and limit of **the keys listed here**, not the bill for every token on the PackyCode account. A key that could not be read is left out of the total and counted in a note; a key whose read failed this time but succeeded before keeps showing its last balance with the time it was read (the composer shows it as `≈US$…`) until DSH restarts. The composer shows the active key's remaining balance only while a PackyCode model is selected. **Refresh** bypasses the roughly 60-second cache. The default model host is `https://cf.api.fan` and the balance host is `https://www.packyapi.ai`; both can be changed under **Advanced: endpoints**. The old default, `https://www.packyapi.com`, is DNS-poisoned on mainland networks and answers `fetch failed` without a proxy; even when settings still name it, `.ai` is tried first.
+
+**Use Claude.** The **Claude Code CLI** card in Settings checks this device. Every Claude turn's reasoning block names the key it ran with (by label only). If the CLI is missing, **Install Claude Code CLI** runs `npm install -g @anthropic-ai/claude-code` (Node.js 18+). No DSH restart is required after that install. Windows also needs [Git for Windows](https://git-scm.com/downloads/win).
+
+**Web search.** DSH's `web_search` calls DeepSeek's official API by default (billed to `DEEPSEEK_API_KEY`). **Settings → PackyCode → Web search** can route it through PackyCode instead:
+
+| Routing | Effect |
+| --- | --- |
+| Do not take over (default) | DSH's search settings stay as they are |
+| Auto (route by model) | PackyCode models search through PackyCode; other models keep their search |
+| Always use PackyCode search | Every request DSH's default search would have served goes through PackyCode |
+
+| Backend | Model and protocol | Notes |
+| --- | --- | --- |
+| DeepSeek (default) | `deepseek-flash`, `/v1/messages` + `web_search_20250305` | A few thousand tokens per search; needs a DeepSeek group |
+| GPT | `gpt-6.1-sol`, `/v1/responses` + `web_search` | Usually fresher and more precise, about 20–30K input tokens per search; needs the gateway to route this key's GPT requests to its group |
+
+PackyCode has no dedicated search endpoint: one search is one model call with a server-side search tool, billed to the keys stored here. An exhausted or rejected key rotates exactly as on the model route.
+
+<details>
+<summary>How web search is wired into DSH</summary>
+
+- The plugin registers two search providers with DSH's `web` service: `packycode-api` (always PackyCode) and `packycode-api-auto` (routes by the initiating session's model). Registering them changes nothing by itself.
+- Auto and Always append one `- id: web` entry, marked `# >>> dsh-packycode-api: web search provider`, to the end of the profile's `cordis.patch.yml`. It points the web row's base `searchProvider` at one of those providers; DSH hot-applies the file, no restart needed. Switching back to the default removes the entry and leaves everything else as it was.
+- The plugin does not write the web runtime's search slot. Subscription plugins such as Codex and Kimi rewrite that slot whenever the web row restarts, so two writers would restart each other forever. They fall back to the web row's base config for models they do not own, so writing the base coexists with them: Codex models keep Codex search and only the remaining requests reach the choice made here.
+- The entry records the base search it replaced as a comment (`# fallback: …`). In Auto, requests from non-PackyCode models go there; if that provider hands a request back to this plugin, it goes straight to DSH's built-in `deepseek-official` instead of looping.
+- Results come from structured data only: DeepSeek's `web_search_tool_result` blocks, GPT's `url_citation` annotations and `web_search_call` records. The model's summary is returned as `content`.
+- When a key's group does not cover the backend's model (the gateway says `当前令牌未覆盖供应商`), the search tries the next key without disabling this one, and finally suggests switching backends.
+- Settings shows the base and runtime search provider in effect, and warns when another plugin's later patch overrides the base.
+
+</details>
 
 <details>
 <summary>When a key is rotated</summary>
 
 - **Rotates and disables the current key:** the gateway reports exhausted quota, or it rejects the key (HTTP 401 / invalid token). The harness retries the failed step, which is what actually sends it on the next key.
+- **Passes over a key by its groups, without disabling it:** when the group reading shows the active key cannot reach this turn's model and another stored key can, the turn runs on that key (a Claude turn says so in its reasoning: “当前 Key「A」的分组不能用 …，本轮改用 Key「B」”). The active key stays active for every other model. Only evidence counts: a key whose groups are not read yet is used as before.
 - **Does not rotate:** rate limits (429); a 400 that this gateway uses for a dead upstream channel; and a 403 that means the group accepts only the vendor's official client. That last case is explained directly instead of being shown as an invalid API key.
 - When every stored key is disabled, the request fails and says so. There is no fallback credential.
 
@@ -124,11 +157,15 @@ A model in the list does not mean the current token group allows it. When changi
 
 **Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling `dsh-packycode-api` from the **Plugins** page does the same job.
 
-**Uninstall:** remove this plugin on the **Plugins** page, then restart the desktop application. Uninstalling does not remove other plugins, the profile, or the token in the PackyCode console.
+**Uninstall:** if you used PackyCode web search, first switch **Settings → PackyCode → Web search** back to the default. Then remove this plugin on the **Plugins** page and restart the desktop application. Otherwise `cordis.patch.yml` keeps a web entry naming a provider that no longer exists, and `web_search` fails with `configured web provider "packycode-api-auto" is not registered`; delete the block marked `dsh-packycode-api: web search provider` by hand to recover. Uninstalling does not remove other plugins, the profile, or the token in the PackyCode console.
 
 ## FAQ
 
-**One model fails, but the key is valid?** Check whether the token group covers that model. The `cc` group does not serve Claude to a normal API client; this plugin's Claude models need the local CLI. A group refusal does not disable the key or rotate to the next one.
+**Web search says "no stored API key's group covers …"?** The search backend's model is not in your token groups (or the gateway currently routes it to another supplier). Pick the other backend under **Settings → PackyCode → Web search**, or add a key whose group covers it.
+
+**One model fails, but the key is valid?** Look at that key's groups and ✓ / ✕ under **Accounts and keys**. When its groups do not cover the model, use a key whose groups do, or add the group to the key in the PackyCode console. With such a key stored, the plugin runs that model on it automatically. A group refusal never disables a key.
+
+**Claude says the gateway refused the request as not coming from the official Claude Code CLI?** The usual cause is that the turn's key has no Claude group: PackyCode answers such a key with that same wording (or a 400 `当前令牌未覆盖供应商`). The error now says so directly — the key, its groups, and the groups the model needs — and that the CLI does not need updating. Only a key that does have a Claude group and is still refused points at the CLI.
 
 **The balance does not match the account bill?** Settings totals only the keys stored here, not other tokens on the same PackyCode account. A key that failed to read is noted separately and is not treated as zero.
 
@@ -161,7 +198,7 @@ pnpm run check
 
 `pnpm run check` runs every test, rebuilds, and writes a tarball under `.artifacts/`. `lib/` is a committed build; regenerate it with `pnpm run build` after editing `src/`, and do not hand-edit it.
 
-`node scripts/live-check.mjs` checks the live gateway. It reads a key already stored on this machine and spends a small amount of quota.
+`node scripts/live-check.mjs` checks the live gateway through the same route the plugin registers: balance and groups, one answer per HTTP model, a rotation rehearsal, and the failure classification, printing only the key's last four characters. `--with-cli` also runs the three Claude models through the local Claude Code CLI, and `--with-search` runs one search per backend; the default run spends a small amount of quota.
 
 Read [AGENTS.md](AGENTS.md) before agent-assisted changes or a release. Publishing is the [Publish workflow](.github/workflows/publish.yml), triggered by pushing a `v*` tag. Do not run `npm publish` locally.
 

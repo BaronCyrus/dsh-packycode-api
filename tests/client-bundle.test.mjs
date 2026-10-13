@@ -47,11 +47,13 @@ test('every channel call carries a payload object', () => {
   // client-request message. Both callers must default it, because call sites
   // legitimately write `call('status')`.
   const source = readFileSync(path.join(root, 'src', 'client.jsx'), 'utf8')
+  const copy = readFileSync(path.join(root, 'src', 'client-copy.js'), 'utf8')
   const helpers = [...source.matchAll(/\(endpoint, payload([^)]*)\) => rpc\.call\(/gu)]
-  assert.equal(helpers.length, 2, 'the settings panel and the composer each own one caller')
+  assert.equal(helpers.length, 1, 'one caller serves the settings panel and the composer')
+  assert.match(helpers[0][1], /=\s*\{\}/u)
+  assert.equal(source.match(/rpc\.call\(/gu)?.length, 1, 'nothing reaches the channel around the caller')
   assert.match(source, /plugin\/update/u)
-  assert.match(source, /更新插件/u)
-  for (const [, params] of helpers) assert.match(params, /=\s*\{\}/u)
+  assert.match(copy, /更新插件/u)
 })
 
 test('the balance card does not show the account-level billing line', () => {
@@ -60,9 +62,21 @@ test('the balance card does not show the account-level billing line', () => {
   const source = readFileSync(path.join(root, 'src', 'client.jsx'), 'utf8')
   assert.doesNotMatch(source, /balance\?\.account\b/u)
   assert.doesNotMatch(source, /siteAccount|含同账号/u)
-  // The balance card branches on an empty key list once, so its empty-state
-  // note renders once rather than twice.
-  assert.equal(source.match(/rows\.length === 0/gu)?.length, 1)
+  // One card lists the keys and their balances, so its empty-state note
+  // renders once rather than once per list.
+  assert.equal(source.match(/t\('empty'\)/gu)?.length, 1)
+})
+
+test('the panel styles itself only with host design tokens that exist', () => {
+  const style = readFileSync(path.join(root, 'src', 'client-style.js'), 'utf8')
+  // Tokens the host never defined left controls unstyled before.
+  assert.doesNotMatch(style, /--dsw-alias-border-default|--dsw-alias-state-warning-primary/u)
+  assert.match(style, /--dsw-alias-settings-card-fill/u)
+})
+
+test('both languages carry the same copy keys', async () => {
+  const { zh, en } = await import('../src/client-copy.js')
+  assert.deepEqual(Object.keys(en).sort(), Object.keys(zh).sort())
 })
 
 test('the package declares the client surface the loader requires', () => {

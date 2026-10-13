@@ -26,6 +26,22 @@ const INVALID_KEY_STATUS = /\b401\b/
  */
 const CLIENT_POLICY_WORDING = /only accessible via the official|only accepts requests from the official|official\s+claude(?:\s+code)?\s+cli|官方\s*claude(?:\s*code)?\s*cli|请使用标准\s*codex\s*客户端|客户端存在异常|二次分发|API\s*转接/iu
 
+/**
+ * The gateway's answer when a key's groups do not include the model's
+ * supplier: `model_not_found` / 当前令牌未覆盖供应商. The key is fine for other
+ * models, so it is never moved aside for this.
+ */
+const COVERAGE_WORDING = /model_not_found|未覆盖供应商|无可用渠道|no available channel/iu
+
+/**
+ * Whether the gateway refused the model for this key's groups.
+ * @param message - the failure text.
+ * @returns true for a group-coverage refusal.
+ */
+export function classifyCoverage(message) {
+  return COVERAGE_WORDING.test(typeof message === 'string' ? message : '')
+}
+
 /** The key's quota is exhausted; move to the next key. */
 export const QUOTA_FAILURE = 'quota'
 /** The gateway rejected the key itself; move to the next key. */
@@ -142,6 +158,33 @@ export function explainCliClientPolicyFailure(message) {
     + '这不是 API Key 失效。请先把插件和 Claude Code CLI 都更新到最新版本再试；'
     + '仍然失败时，请把下面的原始错误（含 request id）发给 PackyCode 客服，确认所用分组是否支持 Claude Code 的 -p（非交互）模式。'
     + ` / The gateway refused this Claude Code CLI request as not coming from the official CLI; the API key is fine. Gateway said: ${detail}`
+}
+
+/**
+ * Explain a CLI refusal that came from the key, not the CLI: the key's groups
+ * cannot reach the requested model. PackyCode answers such a Claude request
+ * with the same "only the official Claude Code CLI" wording a real client
+ * fault gets, so without the key's groups it read as a CLI problem and sent
+ * the user to update the CLI.
+ * @param key - the run's key: label, groups, the model, and the groups that
+ *   can serve it, as the group reader last saw them.
+ * @param message - the CLI failure text.
+ * @returns the replacement sentence, with the gateway's own words kept.
+ */
+export function explainCliGroupFailure(key, message) {
+  // No retry can change a key's groups: keep every status token out of the
+  // sentence so the harness does not read it as a retryable failure.
+  const detail = (typeof message === 'string' ? message : '')
+    .replace(/^Claude Code CLI failed:\s*/u, '')
+    .replace(/\b(?:400|401|403)\b/gu, 'HTTP')
+    .slice(0, 400)
+  const groups = Array.isArray(key?.groups) && key.groups.length > 0 ? key.groups.join('、') : '未读到'
+  const required = Array.isArray(key?.required) && key.required.length > 0 ? key.required.join(' / ') : 'cc / cc-sale / cc-expensive / claude-officially'
+  const model = typeof key?.model === 'string' && key.model !== '' ? key.model : 'Claude'
+  return `PackyCode 拒绝了这次 ${model} 请求：本轮使用的 Key「${key?.label ?? '?'}」所在分组（${groups}）不包含能用 ${model} 的分组（${required}）。`
+    + '这不是 Claude Code CLI 的问题，不需要更新 CLI。'
+    + '请在 设置 → PackyCode 添加分组包含上述分组的 Key（每个 Key 后面会列出它的分组），插件会自动用它跑 Claude；或在 PackyCode 控制台给这个 Key 加上对应分组。'
+    + ` / The key "${key?.label ?? '?'}" is in no group that serves ${model} (needs one of: ${required}); the CLI is fine. Gateway said: ${detail}`
 }
 
 /**
