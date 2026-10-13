@@ -24,6 +24,11 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
   assert.equal(byId('gpt-6-astra').baseUrl, `${DEFAULT_API_HOST}/v1`)
   assert.deepEqual([...byId('gpt-6-astra').input], ['text', 'image'])
   assert.equal(byId('gpt-6-astra').contextWindow, 1_050_000)
+  // platform.claude.com: every Claude 5.5 model, Haiku included, has a 1M context and 128K output.
+  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+    assert.equal(byId(id).contextWindow, 1_000_000, id)
+    assert.equal(byId(id).maxTokens, 128_000, id)
+  }
   assert.equal(byId('gpt-6-astra').maxTokens, 128_000)
   // Anthropic traffic carries no /v1: the Anthropic client appends /v1/messages.
   for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {

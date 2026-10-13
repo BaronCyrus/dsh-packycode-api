@@ -144,6 +144,8 @@ export const PACKYCODE_MODELS = Object.freeze([
     }),
   }),
   Object.freeze({
+    // platform.claude.com/docs/en/models/haiku-5-5/overview: 1M context,
+    // 128K max output — the same as Opus and Sonnet 5.5.
     id: 'claude-haiku-5-5',
     name: 'Claude Haiku 5.5',
     api: 'anthropic-messages',
@@ -152,8 +154,8 @@ export const PACKYCODE_MODELS = Object.freeze([
     reasoning: true,
     input: Object.freeze(['text', 'image']),
     cost: NO_COST,
-    contextWindow: 200_000,
-    maxTokens: 64_000,
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
     thinkingLevelMap: ALWAYS_THINKING_LEVELS,
     compat: Object.freeze({
       forceAdaptiveThinking: true,
