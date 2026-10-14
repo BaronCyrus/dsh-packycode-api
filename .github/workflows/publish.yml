@@ -64,6 +64,9 @@ jobs:
         run: |
           pnpm run build
           git diff --exit-code -- lib
+      - name: Package the verified release artifact
+        if: github.event_name != 'workflow_dispatch'
+        run: pnpm pack --pack-destination .artifacts
       - name: Show the OIDC identity npm will match
         if: github.event_name == 'workflow_dispatch'
         run: |
@@ -87,9 +90,14 @@ jobs:
             method: 'POST',
             headers: { Authorization: `Bearer ${body.value}` },
           })
-          const text = await exchange.text()
+          // Never print the exchange body: truncation can cut off a token's
+          // closing quote before a redaction regex sees it.
+          await exchange.arrayBuffer()
           console.log(`exchange_status=${exchange.status}`)
-          console.log(text.slice(0, 500).replace(/"token"\s*:\s*"[^"]+"/g, '"token":"[redacted]"'))
+          if (!exchange.ok) {
+            console.error('npm rejected the trusted publisher; verify repository, workflow filename and environment before tagging')
+            process.exit(1)
+          }
           }
           main()
           EOF
@@ -103,4 +111,10 @@ jobs:
           # Do not set NODE_AUTH_TOKEN at all, even to an empty string.
           # npm treats a present token variable as token auth and skips OIDC.
           unset NODE_AUTH_TOKEN
-          npm publish
+          version="$(node -p "require('./package.json').version")"
+          artifact=".artifacts/dsh-packycode-api-${version:?}.tgz"
+          if [ ! -f "$artifact" ]; then
+            echo "The verified release artifact is missing"
+            exit 1
+          fi
+          npm publish "${artifact:?}" --access public

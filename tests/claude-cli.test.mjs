@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 
@@ -40,6 +40,7 @@ function stubSpawn({ stdout = `${JSON.stringify(PAYLOAD)}\n`, stderr = '', code 
     const child = new EventEmitter()
     child.stdin = {
       on: () => child.stdin,
+      write: input => { call.stdin += input ?? '' },
       end: input => {
         call.stdin += input ?? ''
         call.stdinClosed = true
@@ -87,10 +88,17 @@ test('builds the argv the CLI documents, with the prompt kept off it', () => {
   // the official CLI introduce itself to the model as Claude Code.
   const blank = buildClaudeArgs({ appendSystemPrompt: '   ' })
   assert.equal(blank[blank.indexOf('--append-system-prompt') + 1], DEFAULT_APPEND_SYSTEM_PROMPT)
-  const plan = buildClaudeArgs({ mode: 'plan', model: 'claude-opus-5-5' })
+  const plan = buildClaudeArgs({ mode: 'plan', stream: true, model: 'claude-opus-5-5', planDirectory: '/private/this run/plans' })
   assert.equal(plan[plan.indexOf('--permission-mode') + 1], 'plan')
+  assert.equal(plan[plan.indexOf('--permission-prompt-tool') + 1], 'stdio')
+  assert.deepEqual(JSON.parse(plan[plan.indexOf('--settings') + 1]), {
+    plansDirectory: '/private/this run/plans', permissions: { ask: ['ExitPlanMode'] },
+  })
   assert.equal(plan.includes('--allowedTools'), false)
   assert.equal(plan.includes('--dangerously-skip-permissions'), false)
+  assert.equal(plan.includes('--setting-sources'), false)
+  assert.throws(() => buildClaudeArgs({ mode: 'plan', planDirectory: 'relative/plans' }), /absolute path/u)
+  assert.equal(buildClaudeArgs({ mode: 'edit', planDirectory: '/private/plans' }).includes('--settings'), false)
 })
 
 test('builds the stdin payload: plain text, or one stream-json user message with images', () => {
@@ -409,7 +417,9 @@ test('MCP argv grants only the exact read-only search tool and disables native W
   }
   const plan = buildClaudeArgs({ mode: 'plan', searchBridge: bridge })
   assert.equal(plan[plan.indexOf('--permission-mode') + 1], 'plan')
-  assert.deepEqual(plan.slice(plan.indexOf('--allowedTools') + 1, plan.indexOf('--disallowedTools')), [bridge.toolName])
+  assert.equal(plan[plan.indexOf('--allowedTools') + 1], bridge.toolName)
+  assert.equal(plan[plan.indexOf('--permission-prompt-tool') + 1], 'stdio')
+  assert.deepEqual(JSON.parse(plan[plan.indexOf('--settings') + 1]), { permissions: { ask: ['ExitPlanMode'] } })
   assert.equal(plan.includes('--dangerously-skip-permissions'), false)
   assert.throws(() => buildClaudeArgs({ searchBridge: { ...bridge, toolName: 'mcp__anything__*' } }), /configuration is invalid/u)
 })
@@ -595,26 +605,111 @@ test('the startup watchdog leaves a JSON run alone: it prints only at the end', 
   assert.equal((await runner.run({ prompt: 'x' })).result, 'cli-ok')
 })
 
-test('a submitted plan is the request text, else a markdown file inside an allowed root', () => {
-  const root = mkdtempSync(join(tmpdir(), 'packy-plan-'))
-  const configDir = join(root, 'cfg')
-  const plans = join(configDir, 'plans')
-  mkdirSync(plans, { recursive: true })
-  const inside = join(plans, 'ok.md')
+/** Test fixtures are deleted only after checking the exact owned canonical root. */
+function testDirectory(t, prefix = 'packy-plan-test-') {
+  const parent = realpathSync(tmpdir())
+  const root = realpathSync(mkdtempSync(join(parent, prefix)))
+  const identity = lstatSync(root)
+  t.after(() => {
+    assert.equal(dirname(root), parent)
+    assert.equal(realpathSync(root), root)
+    const current = lstatSync(root)
+    assert.equal(current.isSymbolicLink(), false)
+    assert.equal(current.dev, identity.dev)
+    assert.equal(current.ino, identity.ino)
+    rmSync(root, { recursive: true, force: true })
+  })
+  return root
+}
+
+const planDirectoryOf = call => JSON.parse(call.args[call.args.indexOf('--settings') + 1]).plansDirectory
+const collect = async iterator => { const events = []; for await (const event of iterator) events.push(event); return events }
+
+/** Record owned production directories and keep filesystem operations real. */
+function recordingPlanFs() {
+  const created = []
+  const removed = []
+  return {
+    created, removed,
+    fs: {
+      realpathSync, lstatSync,
+      mkdtempSync: prefix => { const path = mkdtempSync(prefix); created.push(path); return path },
+      rmSync: (path, options) => {
+        assert.ok(created.includes(path))
+        assert.equal(realpathSync(path), path)
+        assert.equal(lstatSync(path).isSymbolicLink(), false)
+        removed.push(path)
+        return rmSync(path, options)
+      },
+    },
+  }
+}
+
+function assertPlansClean(recorded) {
+  assert.deepEqual(recorded.removed, recorded.created)
+  for (const path of recorded.created) assert.equal(existsSync(path), false, 'owned plan directory must be gone')
+}
+
+test('a submitted plan is inline text or a bounded markdown file inside its bound private directory', t => {
+  const root = testDirectory(t)
+  const planDirectory = join(root, 'private')
+  mkdirSync(planDirectory)
+  const inside = join(planDirectory, 'ok.md')
   writeFileSync(inside, '  steps without a heading  ')
-  const notes = join(plans, 'notes.txt')
+  const notes = join(planDirectory, 'notes.txt')
   writeFileSync(notes, '# Notes\n\nno')
   const outside = join(root, 'secret.md')
   writeFileSync(outside, '# Secret\n\nnope')
-  const link = join(plans, 'link.md')
+  const link = join(planDirectory, 'link.md')
   symlinkSync(outside, link)
-  assert.equal(readSubmittedPlan({ plan: '  # Ship\n\nnow  ' }, { configDir }), '# Ship\n\nnow')
-  assert.match(readSubmittedPlan({ planFilePath: inside }, { configDir, startedAt: Date.now() - 1000 }), /^# Plan\n\nsteps without a heading/u)
-  assert.equal(readSubmittedPlan({ planFilePath: outside }, { configDir, startedAt: 0 }), undefined)
-  assert.equal(readSubmittedPlan({ planFilePath: link }, { configDir, startedAt: 0 }), undefined)
-  assert.equal(readSubmittedPlan({ planFilePath: notes }, { configDir, startedAt: 0 }), undefined)
-  assert.equal(readSubmittedPlan({ planFilePath: inside }, { configDir, startedAt: Date.now() + 60_000 }), undefined)
-  assert.equal(readSubmittedPlan({ planFilePath: 'ok.md' }, { configDir, startedAt: 0 }), undefined)
+  const large = join(planDirectory, 'large.md')
+  writeFileSync(large, '# Oversize\n' + 'x'.repeat(200_000))
+  const directory = join(planDirectory, 'folder.md')
+  mkdirSync(directory)
+  const configDir = join(root, 'cfg')
+  const globalPlans = join(root, '.claude', 'plans')
+  mkdirSync(configDir)
+  mkdirSync(globalPlans, { recursive: true })
+  const shared = join(configDir, 'arbitrary.md')
+  const global = join(globalPlans, 'global.md')
+  writeFileSync(shared, '# Shared\n\nnever')
+  writeFileSync(global, '# Global\n\nnever')
+  assert.equal(readSubmittedPlan({ plan: '  # Ship\n\nnow  ' }), '# Ship\n\nnow')
+  assert.equal(readSubmittedPlan({ planFilePath: inside }, { planDirectory }), '# Plan\n\nsteps without a heading')
+  // Date/mtime are not run identity. Only the unique directory is.
+  assert.equal(readSubmittedPlan({ planFilePath: inside }, { planDirectory, startedAt: Date.now() + 60_000 }), '# Plan\n\nsteps without a heading')
+  for (const planFilePath of [outside, link, notes, large, directory, 'ok.md', shared, global]) {
+    let reads = 0
+    assert.equal(readSubmittedPlan({ planFilePath }, {
+      planDirectory, configDir, home: root, startedAt: 0,
+      readFile: () => { reads += 1; throw new Error('must not read') },
+    }), undefined)
+    assert.equal(reads, 0, 'rejected paths must never be read')
+  }
+  assert.equal(readSubmittedPlan({ planFilePath: shared }, { configDir }), undefined)
+  assert.equal(readSubmittedPlan({ planFilePath: global }, { home: root }), undefined)
+  let reason
+  assert.equal(readSubmittedPlan({ plan: '🙂'.repeat(100_000) }, { onRejected: value => { reason = value } }), undefined)
+  assert.equal(reason, 'too-large')
+  const bounded = readSubmittedPlan({ plan: '🙂'.repeat(40_000) })
+  assert.ok(Buffer.byteLength(bounded) <= 200_000)
+  assert.equal(bounded.includes('\uFFFD'), false)
+})
+
+test('file-only completion requires a bound private directory and never picks the newest of multiple files', t => {
+  const root = testDirectory(t)
+  const planDirectory = join(root, 'private')
+  mkdirSync(planDirectory)
+  assert.equal(findPlanWrittenDuringRun({ planDirectory }), undefined)
+  const first = join(planDirectory, 'first.md')
+  writeFileSync(first, '# First\n\nonly')
+  assert.equal(findPlanWrittenDuringRun({ planDirectory }), '# First\n\nonly')
+  const second = join(planDirectory, 'second.md')
+  writeFileSync(second, '# Second\n\nnewer')
+  const future = new Date(Date.now() + 60_000)
+  utimesSync(second, future, future)
+  assert.equal(findPlanWrittenDuringRun({ planDirectory }), undefined)
+  assert.equal(findPlanWrittenDuringRun({ configDir: root, home: root, startedAt: 0 }), undefined)
 })
 
 /**
@@ -653,7 +748,9 @@ function controlSpawn(script) {
           continue
         }
         call.frames.push(message)
-        script({ message, emit, stdout, call })
+        try { script({ message, emit, stdout, call }) } catch (error) {
+          queueMicrotask(() => child.emit('error', error))
+        }
       }
     }
     child.stdin = {
@@ -758,26 +855,476 @@ test('an ExitPlanMode without a plan is denied, and too many denials stop the ru
   assert.equal(burst.calls[0].killed, 'SIGTERM')
 })
 
-test('a plan file written during the run is reviewed when ExitPlanMode is absent', async () => {
-  const configDir = mkdtempSync(join(tmpdir(), 'packy-plan-home-'))
-  const plans = join(configDir, 'plans')
-  mkdirSync(plans)
-  const stale = join(plans, 'old.md')
+test('a private plan file is captured before cleanup when the CLI returns without ExitPlanMode', async t => {
+  const configDir = testDirectory(t)
+  const shared = join(configDir, 'plans')
+  mkdirSync(shared)
+  const stale = join(shared, 'old.md')
   writeFileSync(stale, '# Old\n\nignore')
-  const past = new Date(Date.now() - 60_000)
-  utimesSync(stale, past, past)
+  const recorded = recordingPlanFs()
+  const { spawnImpl, calls } = controlSpawn(({ message, emit, call }) => {
+    if (message.type !== 'user') return
+    const plans = planDirectoryOf(call)
+    assert.ok(isAbsolute(plans))
+    assert.notEqual(plans, shared)
+    assert.deepEqual(readdirSync(plans), [])
+    if (process.platform !== 'win32') assert.equal(lstatSync(plans).mode & 0o777, 0o700)
+    writeFileSync(join(plans, 'shimmering-peach.md'), 'count the files with git ls-files')
+    emit({ ...PAYLOAD, result: 'wrote the plan file' })
+  })
+  const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, spawnImpl, configDir, planFs: recorded.fs })
+  const events = await collect(runner.stream({ prompt: 'how many files', mode: 'plan' }))
+  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Plan\n\ncount the files with git ls-files')
+  assert.equal(calls[0].options.env.CLAUDE_CONFIG_DIR, configDir)
+  assert.equal(readFileSync(stale, 'utf8'), '# Old\n\nignore')
+  assertPlansClean(recorded)
+  await runner.close()
+})
+
+test('parallel CLI invocations never take another run’s plan even when it has a newer mtime', async t => {
+  const configDir = testDirectory(t)
+  const recorded = recordingPlanFs()
+  const active = new Map()
+  const { spawnImpl, calls } = controlSpawn(({ message, emit, call }) => {
+    if (message.type !== 'user') return
+    const label = message.message.content[0].text
+    const plans = planDirectoryOf(call)
+    const file = join(plans, 'same-slug.md')
+    writeFileSync(file, `# ${label}\n\n${label}-only`)
+    if (label === 'B') {
+      const future = new Date(Date.now() + 60_000)
+      utimesSync(file, future, future)
+    }
+    active.set(label, { emit, file })
+    if (active.size === 2) {
+      // Finish A while B’s newer plan exists, then finish B. Time is irrelevant.
+      active.get('A').emit({ ...PAYLOAD, result: 'A finished' })
+      active.get('B').emit({ ...PAYLOAD, result: 'B finished' })
+    }
+  })
+  const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, spawnImpl, configDir, planFs: recorded.fs })
+  const [a, b] = await Promise.all([
+    collect(runner.stream({ prompt: 'A', mode: 'plan' })),
+    collect(runner.stream({ prompt: 'B', mode: 'plan' })),
+  ])
+  assert.notEqual(planDirectoryOf(calls[0]), planDirectoryOf(calls[1]))
+  assert.equal(a.find(event => event.type === 'plan')?.plan, '# A\n\nA-only')
+  assert.equal(b.find(event => event.type === 'plan')?.plan, '# B\n\nB-only')
+  assert.deepEqual(new Set(recorded.removed), new Set(recorded.created))
+  for (const path of recorded.created) assert.equal(existsSync(path), false)
+  await runner.close()
+})
+
+test('no-write runs ignore shared startup files, recent previous plans, and concurrent global files', async t => {
+  const configDir = testDirectory(t)
+  const shared = join(configDir, 'plans')
+  mkdirSync(shared)
+  const stale = join(shared, 'startup-stale.md')
+  writeFileSync(stale, '# Previous\n\ndo not review')
+  // It lies inside the former two-second tolerance window and is still ignored.
+  const near = new Date(Date.now() - 100)
+  utimesSync(stale, near, near)
+  const recorded = recordingPlanFs()
+  const { spawnImpl, calls } = controlSpawn(({ message, emit, call }) => {
+    if (message.type !== 'user') return
+    assert.deepEqual(readdirSync(planDirectoryOf(call)), [])
+    if (call === calls[0]) writeFileSync(join(planDirectoryOf(call), 'first.md'), '# First\n\nthis run only')
+    // Another CLI updates the shared directory in the no-write run.
+    else writeFileSync(join(shared, 'other-run.md'), '# Other\n\nnot this run')
+    emit({ ...PAYLOAD, result: 'ordinary answer' })
+  })
+  const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, spawnImpl, configDir, planFs: recorded.fs })
+  const first = await collect(runner.stream({ prompt: 'write', mode: 'plan' }))
+  const second = await collect(runner.stream({ prompt: 'no write', mode: 'plan' }))
+  assert.equal(first.find(event => event.type === 'plan')?.plan, '# First\n\nthis run only')
+  assert.equal(second.some(event => event.type === 'plan'), false)
+  assert.equal(second.at(-1).result.result, 'ordinary answer')
+  assert.notEqual(planDirectoryOf(calls[0]), planDirectoryOf(calls[1]))
+  assert.equal(existsSync(stale), true)
+  assertPlansClean(recorded)
+  await runner.close()
+})
+
+const assistantTool = (id, name, input = {}) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } })
+const toolError = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } })
+
+test('real CLI native plan-write hard denials stop at the same budget without any control requests', async () => {
+  for (const [name, verb] of [['Write', 'write to'], ['Edit', 'edit']]) {
+    const recorded = recordingPlanFs()
+    const { spawnImpl, calls } = controlSpawn(({ message, emit }) => {
+      if (message.type !== 'user') return
+      for (let index = 1; index <= 10; index += 1) {
+        emit(assistantTool(`deny-${index}`, name, { file_path: '/outside/must-not-be-written.txt' }))
+        emit(toolError(`deny-${index}`, `Cannot ${verb} /outside/must-not-be-written.txt while in plan mode.`))
+      }
+    })
+    const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, spawnImpl, planFs: recorded.fs })
+    await assert.rejects(collect(runner.stream({ prompt: 'plan only', mode: 'plan' })), /too many denied permission prompts/u)
+    assert.equal(calls[0].frames.filter(frame => frame.type === 'control_response').length, 0)
+    assert.equal(calls[0].killed, 'SIGTERM')
+    assertPlansClean(recorded)
+    await runner.close()
+  }
+})
+
+test('ordinary Read/Bash/MCP execution errors never consume the plan permission budget', async () => {
   const { spawnImpl } = controlSpawn(({ message, emit }) => {
     if (message.type !== 'user') return
-    writeFileSync(join(plans, 'shimmering-peach.md'), 'count the files with git ls-files')
-    emit({ type: 'result', is_error: false, result: 'wrote the plan file', duration_ms: 5, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } })
+    const failures = [
+      ['Read', 'File does not exist.'],
+      ['Read', "EACCES: permission denied, open '/private/file'"],
+      ['Bash', 'fatal: not a git repository'],
+      ['Bash', 'Permission denied: ./script.sh'],
+      ['mcp__packycode_search_ab1234__web_search', 'PackyCode search failed on the selected backend.'],
+      // Gate-like text returned by a read is still not a native write denial.
+      ['Read', 'Cannot write to /outside/no while in plan mode.'],
+    ]
+    for (let index = 0; index < 24; index += 1) {
+      const [name, text] = failures[index % failures.length]
+      emit(assistantTool(`ordinary-${index}`, name))
+      emit(toolError(`ordinary-${index}`, [{ type: 'text', text }]))
+    }
+    emit(toolError('unknown-tool', 'Cannot write to /outside/no while in plan mode.'))
+    emit({ type: 'control_request', request_id: 'plan', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Still planning\n\nErrors are not permissions.' } } })
   })
-  const events = []
-  for await (const event of createClaudeRunner({
+  const runner = planRunner(spawnImpl)
+  const events = await collect(runner.stream({ prompt: 'plan only', mode: 'plan' }))
+  assert.equal(events.filter(event => event.type === 'tool-error').length, 25)
+  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Still planning\n\nErrors are not permissions.')
+  await runner.close()
+})
+
+test('control denials and their repeated native tool_results count once per tool_use_id', async () => {
+  const { spawnImpl, calls } = controlSpawn(({ message, emit, call }) => {
+    const request = index => {
+      emit(assistantTool(`tool-${index}`, 'Bash', { command: 'touch outside' }))
+      emit({ type: 'control_request', request_id: `permission-${index}`, request: { subtype: 'can_use_tool', tool_use_id: `tool-${index}`, tool_name: 'Bash', input: { command: 'touch outside' } } })
+    }
+    if (message.type === 'user') { request(1); return }
+    if (message.type !== 'control_response') return
+    const index = Number(message.response.request_id.split('-').at(-1))
+    if (call.responded?.has(index)) return
+    call.responded ??= new Set()
+    call.responded.add(index)
+    const text = message.response.response.message
+    emit(toolError(`tool-${index}`, text))
+    emit(toolError(`tool-${index}`, text))
+    // A transport replay is not another rejected action, either.
+    emit({ type: 'control_request', request_id: `permission-${index}`, request: { subtype: 'can_use_tool', tool_use_id: `tool-${index}`, tool_name: 'Bash', input: { command: 'touch outside' } } })
+    if (index < 8) request(index + 1)
+    else emit({ type: 'control_request', request_id: 'plan', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Finished\n\nEight distinct denials.' } } })
+  })
+  const runner = planRunner(spawnImpl)
+  const events = await collect(runner.stream({ prompt: 'plan only', mode: 'plan' }))
+  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Finished\n\nEight distinct denials.')
+  assert.equal(calls[0].killed, 'SIGTERM')
+  await runner.close()
+})
+
+test('ExitPlanMode reads only the private bound file and retains scrubbed bounded inline plans', async t => {
+  const configDir = testDirectory(t)
+  const shared = join(configDir, 'private-looking.md')
+  writeFileSync(shared, '# Shared secret\n\nnot allowed')
+  const token = 'sk-plan-dummy-key-never-exposed'
+  const capability = 'dummy-private-mcp-capability'
+  const bridge = bridgeStub()
+  const recorded = recordingPlanFs()
+  const { spawnImpl, calls } = controlSpawn(({ message, emit, call }) => {
+    if (message.type === 'user') {
+      emit({ type: 'control_request', request_id: 'outside', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { planFilePath: shared } } })
+    } else if (message.type === 'control_response' && message.response.request_id === 'outside') {
+      const file = join(planDirectoryOf(call), 'current.md')
+      writeFileSync(file, `# Private\n\n${token} ${capability}`)
+      emit({ type: 'control_request', request_id: 'inside', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { planFilePath: file } } })
+    }
+  })
+  const runner = createClaudeRunner({
+    binary: '/mock/claude', configDir, spawnImpl, planFs: recorded.fs,
+    resolveCredential: async () => ({ baseUrl: 'https://cf.example', token }),
+    createSearchBridge: async () => ({
+      ...await bridge.factory(), redactionValues: () => [capability],
+      scrub: text => text.split(capability).join('[redacted]'),
+    }),
+  })
+  const events = await collect(runner.stream({ prompt: 'plan only', mode: 'plan' }))
+  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Private\n\n[redacted] [redacted]')
+  assert.equal(calls[0].frames.filter(frame => frame.type === 'control_response').length, 1)
+  assert.equal(readFileSync(shared, 'utf8'), '# Shared secret\n\nnot allowed')
+  assertPlansClean(recorded)
+  assert.equal(bridge.closes, 1)
+  await runner.close()
+
+  const inline = controlSpawn(({ message, emit }) => {
+    if (message.type === 'user') emit({ type: 'control_request', request_id: 'oversize', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Inline\n\n' + 'x'.repeat(199_985) + token + 'y'.repeat(100) } } })
+    if (message.type === 'control_response') emit({ type: 'control_request', request_id: 'short', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: `# Inline\n\n${token}` } } })
+  })
+  const inlineRunner = createClaudeRunner({ binary: '/mock/claude', spawnImpl: inline.spawnImpl, resolveCredential: async () => ({ baseUrl: 'https://cf.example', token }) })
+  const value = await inlineRunner.run({ prompt: 'plan only', mode: 'plan' })
+  const refusal = inline.calls[0].frames.find(frame => frame.type === 'control_response')
+  assert.match(refusal.response.response.message, /200000-byte review limit/u)
+  assert.equal(value.result, '# Inline\n\n[redacted]')
+  await inlineRunner.close()
+})
+
+test('oversized file-only plans fail explicitly without returning a truncated review', async () => {
+  const recorded = recordingPlanFs()
+  const { spawnImpl } = controlSpawn(({ message, emit, call }) => {
+    if (message.type !== 'user') return
+    writeFileSync(join(planDirectoryOf(call), 'huge.md'), '# Too large\n\n' + 'x'.repeat(200_000))
+    emit(PAYLOAD)
+  })
+  const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, spawnImpl, planFs: recorded.fs })
+  await assert.rejects(collect(runner.stream({ prompt: 'plan only', mode: 'plan' })), /200000-byte review limit/u)
+  assertPlansClean(recorded)
+  await runner.close()
+})
+
+test('private plan directories stay inside the actual child cwd and preserve shared settings unchanged', async t => {
+  const root = testDirectory(t)
+  const cwd = join(root, 'project')
+  const configDir = join(root, 'config')
+  mkdirSync(cwd)
+  mkdirSync(configDir)
+  const settings = join(configDir, 'settings.json')
+  const contents = JSON.stringify({
+    permissions: { allow: ['ExitPlanMode'], deny: ['Bash(git push *)', 'Read(secret.txt)'] },
+    allowedMcpServers: [{ serverName: 'existing' }],
+  })
+  writeFileSync(settings, contents)
+  const recorded = recordingPlanFs()
+  const { spawnImpl, calls } = stubSpawn()
+  const runner = createClaudeRunner({ binary: '/mock/claude', resolveCredential: credential, configDir, spawnImpl, planFs: recorded.fs })
+  await runner.run({ prompt: 'plan only', mode: 'plan', cwd })
+  assert.equal(dirname(planDirectoryOf(calls[0])), realpathSync(cwd))
+  assert.equal(calls[0].options.cwd, cwd)
+  assert.equal(calls[0].options.env.CLAUDE_CONFIG_DIR, configDir)
+  assert.deepEqual(JSON.parse(calls[0].args[calls[0].args.indexOf('--settings') + 1]), {
+    plansDirectory: recorded.created[0], permissions: { ask: ['ExitPlanMode'] },
+  })
+  assert.equal(readFileSync(settings, 'utf8'), contents)
+  assert.equal(calls[0].args.includes('--strict-mcp-config'), false)
+  assert.equal(calls[0].args.includes('--setting-sources'), false)
+  assert.deepEqual(readdirSync(cwd), [], 'no gitignore/project settings or plan resources survive')
+  assertPlansClean(recorded)
+  await runner.close()
+})
+
+test('an unwritable plan cwd fails before credentials/spawn and never falls back to a shared directory', async t => {
+  const cwd = testDirectory(t)
+  let keys = 0
+  let spawns = 0
+  const attempted = []
+  const runner = createClaudeRunner({
     binary: '/mock/claude',
-    resolveCredential: async () => ({ baseUrl: 'https://cf.example', token: 'sk-test', label: 't' }),
-    spawnImpl,
-    configDir,
-  }).stream({ prompt: 'how many files', mode: 'plan' })) events.push(event)
-  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Plan\n\ncount the files with git ls-files')
-  assert.equal(findPlanWrittenDuringRun({ configDir, startedAt: Date.now() + 60_000 }), undefined)
+    resolveCredential: async () => { keys += 1; return credential() },
+    spawnImpl: () => { spawns += 1; throw new Error('must not spawn') },
+    planFs: {
+      realpathSync, lstatSync,
+      mkdtempSync: prefix => { attempted.push(prefix); throw Object.assign(new Error('read-only working directory'), { code: 'EACCES' }) },
+      rmSync: () => { throw new Error('nothing owned to remove') },
+    },
+  })
+  await assert.rejects(runner.run({ prompt: 'plan only', mode: 'plan', cwd }), /read-only working directory/u)
+  assert.equal(keys, 0)
+  assert.equal(spawns, 0)
+  assert.equal(dirname(attempted[0]), realpathSync(cwd))
+  assert.deepEqual(readdirSync(cwd), [])
+  await runner.close()
+})
+
+test('private plan resources close on success, setup errors, bad exits and synchronous/asynchronous spawn/stdin failures', async () => {
+  for (const variant of ['success', 'credential', 'binary', 'bridge', 'nonzero', 'invalid', 'sync-spawn', 'async-spawn', 'stdin']) {
+    const recorded = recordingPlanFs()
+    const bridge = bridgeStub()
+    const { spawnImpl } = stubSpawn({
+      code: variant === 'nonzero' ? 1 : 0,
+      stdout: variant === 'invalid' ? 'not JSON\n' : `${JSON.stringify(PAYLOAD)}\n`,
+      hang: ['async-spawn', 'stdin'].includes(variant),
+    })
+    const runner = createClaudeRunner({
+      planFs: recorded.fs,
+      binary: variant === 'binary' ? () => { throw new Error('binary setup failed') } : '/mock/claude',
+      resolveCredential: variant === 'credential' ? async () => { throw new Error('credential setup failed') } : credential,
+      createSearchBridge: variant === 'bridge' ? async () => { throw new Error('bridge setup failed') } : bridge.factory,
+      spawnImpl: (...args) => {
+        if (variant === 'sync-spawn') throw new Error('spawn failed')
+        const child = spawnImpl(...args)
+        if (variant === 'async-spawn') queueMicrotask(() => child.emit('error', new Error('spawn failed')))
+        if (variant === 'stdin') child.stdin.write = () => { throw new Error('input failed') }
+        return child
+      },
+    })
+    if (variant === 'success') await runner.run({ prompt: 'plan only', mode: 'plan' })
+    else await assert.rejects(runner.run({ prompt: 'plan only', mode: 'plan' }))
+    assert.equal(recorded.created.length, 1, variant)
+    assertPlansClean(recorded)
+    assert.equal(bridge.closes, ['credential', 'binary', 'bridge'].includes(variant) ? 0 : 1, variant)
+    await runner.close()
+  }
+})
+
+test('abort, timeouts, iterator.return and unload await private-plan cleanup as well as MCP revocation', async () => {
+  for (const variant of ['abort', 'timeout', 'watchdog', 'unload', 'key-return', 'bridge-return']) {
+    const recorded = recordingPlanFs()
+    const bridge = bridgeStub()
+    const { spawnImpl } = stubSpawn({ hang: true })
+    const controller = new AbortController()
+    let child
+    let ready
+    const spawned = new Promise(resolve => { ready = resolve })
+    const runner = createClaudeRunner({
+      binary: '/mock/claude', resolveCredential: credential, planFs: recorded.fs, createSearchBridge: bridge.factory,
+      spawnImpl: (...args) => { child = spawnImpl(...args); ready(); return child },
+      timeoutMs: variant === 'timeout' ? 20 : 1000,
+      startupTimeoutMs: variant === 'watchdog' ? 20 : 1000,
+    })
+    const keepAlive = setInterval(() => {}, 1000)
+    try {
+      if (variant.endsWith('-return')) {
+        for await (const event of runner.stream({ prompt: 'plan only', mode: 'plan' })) {
+          if (event.type === (variant === 'key-return' ? 'key' : 'search-bridge')) break
+        }
+      } else {
+        const pending = runner.run({ prompt: 'plan only', mode: 'plan', signal: controller.signal })
+        pending.catch(() => undefined)
+        await spawned
+        if (variant === 'abort') controller.abort()
+        if (variant === 'unload') await runner.close()
+        await assert.rejects(pending)
+      }
+      assert.equal(child.signalCode, 'SIGTERM', variant)
+      assert.equal(bridge.closes, 1, variant)
+      assertPlansClean(recorded)
+      await runner.close()
+    } finally { clearInterval(keepAlive) }
+  }
+})
+
+test('cancelled plan setup removes its directory before a late bridge factory settles', async () => {
+  for (const phase of ['pre', 'credential', 'binary', 'bridge']) {
+    const recorded = recordingPlanFs()
+    const bridge = bridgeStub()
+    const controller = new AbortController()
+    let entered
+    const ready = new Promise(resolve => { entered = resolve })
+    let release
+    const blocked = new Promise(resolve => { release = resolve })
+    let spawns = 0
+    const runner = createClaudeRunner({
+      planFs: recorded.fs,
+      binary: phase === 'binary' ? async () => { entered(); await blocked; return '/mock/claude' } : '/mock/claude',
+      resolveCredential: phase === 'credential' ? async () => { entered(); await blocked; return credential() } : credential,
+      createSearchBridge: phase === 'bridge' ? async () => { entered(); await blocked; return bridge.factory() } : bridge.factory,
+      spawnImpl: () => { spawns += 1; throw new Error('must not spawn') },
+    })
+    if (phase === 'pre') controller.abort()
+    const pending = runner.run({ prompt: 'plan only', mode: 'plan', signal: controller.signal })
+    if (phase !== 'pre') { await ready; controller.abort() }
+    await assert.rejects(pending, /aborted/u)
+    assert.equal(recorded.created.length, phase === 'pre' ? 0 : 1)
+    assertPlansClean(recorded)
+    release()
+    await runner.close()
+    assert.equal(spawns, 0)
+    if (phase === 'bridge') assert.equal(bridge.closes, 1)
+  }
+})
+
+test('replaced directory identities are never recursively removed, even during cleanup', async () => {
+  const recorded = recordingPlanFs()
+  const originalLstat = recorded.fs.lstatSync
+  let changed = false
+  recorded.fs.lstatSync = path => {
+    const info = originalLstat(path)
+    if (changed && recorded.created.includes(path)) {
+      const altered = Object.create(info)
+      altered.ino = info.ino + 1
+      return altered
+    }
+    return info
+  }
+  const { spawnImpl } = stubSpawn()
+  const runner = createClaudeRunner({
+    binary: '/mock/claude', resolveCredential: credential, planFs: recorded.fs,
+    spawnImpl: (...args) => { changed = true; return spawnImpl(...args) },
+  })
+  try {
+    await assert.rejects(runner.run({ prompt: 'plan only', mode: 'plan' }), /ownership changed; refusing/u)
+    assert.equal(recorded.removed.length, 0)
+    assert.equal(existsSync(recorded.created[0]), true)
+    await runner.close()
+  } finally {
+    changed = false
+    const path = recorded.created[0]
+    assert.equal(realpathSync(path), path)
+    assert.equal(originalLstat(path).isSymbolicLink(), false)
+    recorded.fs.rmSync(path, { recursive: true, force: true })
+  }
+})
+
+test('a bound root replaced by a symlink cannot authorize reading another directory', t => {
+  const root = testDirectory(t)
+  const planDirectory = join(root, 'private')
+  const saved = join(root, 'saved-private')
+  const outside = join(root, 'unrelated')
+  mkdirSync(planDirectory)
+  mkdirSync(outside)
+  const secret = join(outside, 'secret.md')
+  writeFileSync(secret, '# Never read\n\nnot this run')
+  // Verify both exact owned move locations before simulating root replacement.
+  assert.equal(realpathSync(planDirectory), planDirectory)
+  assert.equal(dirname(planDirectory), root)
+  assert.equal(dirname(saved), root)
+  assert.equal(existsSync(saved), false)
+  renameSync(planDirectory, saved)
+  symlinkSync(outside, planDirectory)
+  let reads = 0
+  const options = { planDirectory, readFile: () => { reads += 1; return '# leaked' } }
+  assert.equal(readSubmittedPlan({ planFilePath: join(planDirectory, 'secret.md') }, options), undefined)
+  assert.equal(findPlanWrittenDuringRun(options), undefined)
+  assert.equal(reads, 0)
+})
+
+test('private files cannot override CLI error results, absent results, or nonzero exits', async () => {
+  for (const variant of ['error-result', 'absent-result', 'nonzero']) {
+    const recorded = recordingPlanFs()
+    const { spawnImpl } = stubSpawn({
+      stdout: variant === 'absent-result' ? 'not a final result\n' : `${JSON.stringify({ ...PAYLOAD, is_error: variant === 'error-result', result: 'CLI failure' })}\n`,
+      code: variant === 'nonzero' ? 2 : 0,
+    })
+    const runner = createClaudeRunner({
+      binary: '/mock/claude', resolveCredential: credential, planFs: recorded.fs,
+      spawnImpl: (...args) => {
+        writeFileSync(join(planDirectoryOf({ args: args[1] }), 'current.md'), '# Not success\n\nThe CLI failed.')
+        return spawnImpl(...args)
+      },
+    })
+    const events = []
+    await assert.rejects(async () => { for await (const event of runner.stream({ prompt: 'plan only', mode: 'plan' })) events.push(event) }, /failed|exited/u)
+    assert.equal(events.some(event => ['plan', 'result'].includes(event.type)), false, variant)
+    assertPlansClean(recorded)
+    await runner.close()
+  }
+})
+
+test('a verification failure after creating a private directory still cleans verified owned resources', async () => {
+  const recorded = recordingPlanFs()
+  let once = true
+  recorded.fs.realpathSync = path => {
+    if (recorded.created.includes(path) && once) {
+      once = false
+      throw Object.assign(new Error('transient verification failure'), { code: 'EIO' })
+    }
+    return realpathSync(path)
+  }
+  let spawns = 0
+  const runner = createClaudeRunner({
+    binary: '/mock/claude', resolveCredential: credential, planFs: recorded.fs,
+    spawnImpl: () => { spawns += 1; throw new Error('must not spawn') },
+  })
+  await assert.rejects(runner.run({ prompt: 'plan only', mode: 'plan' }), /ownership could not be established/u)
+  assert.equal(spawns, 0)
+  assert.equal(recorded.created.length, 1)
+  assertPlansClean(recorded)
+  await runner.close()
 })

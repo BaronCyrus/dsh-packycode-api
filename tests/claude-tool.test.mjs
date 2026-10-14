@@ -174,7 +174,7 @@ test('without any plugin setting the CLI follows the session permission preset',
   assert.equal(capped.mode, 'edit', 'a sandboxed session caps a wider request')
 })
 
-test('DSH plan mode forces the CLI to plan even when a wider mode is requested', async () => {
+test('logged DSH plan mode still forces planning while approved exit is pending', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
   const record = join(dir, 'invocation.json')
   const script = join(dir, 'claude-plan.mjs')
@@ -202,7 +202,7 @@ process.stdin.on('end', () => process.exit(0))
   const permissions = permissionServices('danger-full-access', 'never')
   ctx.get = name => {
     if (name === 'agents') return { currentInitiator: () => ({ session }) }
-    if (name === 'planMode') return { get: agent => ({ active: false, pending: agent.session === session }) }
+    if (name === 'planMode') return { get: () => ({ active: true, pending: false }) }
     return permissions(name)
   }
   apply(ctx, { claudeCliPath: script, claudeCliMode: 'full' })
@@ -216,6 +216,22 @@ process.stdin.on('end', () => process.exit(0))
   assert.equal(seen.argv[seen.argv.indexOf('--permission-mode') + 1], 'plan')
   assert.equal(seen.argv.includes('--dangerously-skip-permissions'), false)
   assert.match(seen.argv.join('\n'), /ExitPlanMode/u)
+})
+
+test('a pending plan entry leaves executing tools at the current full ceiling until the next boundary', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
+  const { script } = writeStubCli(dir)
+  const session = { id: 's-pending-entry', header: { cwd: dir } }
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord('sk-stub-tool-key-pending') }), dir)
+  const permissions = permissionServices('danger-full-access', 'never')
+  ctx.get = name => {
+    if (name === 'agents') return { currentInitiator: () => ({ session }) }
+    if (name === 'planMode') return { get: () => ({ active: false, pending: true }) }
+    return permissions(name)
+  }
+  apply(ctx, { claudeCliPath: script })
+  const value = await registered.tools[0].execute({ prompt: 'Current batch task', mode: 'full' }, { agent: { session } })
+  assert.equal(value.mode, 'full')
 })
 
 test('an explicit plugin mode still wins over the session preset', async () => {

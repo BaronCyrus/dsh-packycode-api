@@ -24,7 +24,8 @@ export const CLAUDE_TOOL_PLAN_INSTRUCTIONS = 'This task was delegated to Claude 
 
 /**
  * @param options - the CLI runner, the most a run may do for a session, and
- *   whether that session is in DSH plan mode.
+ *   whether the executing batch's logged state is DSH plan mode (not a
+ *   pending selection for the next model request).
  * @returns the tool definition to register.
  */
 export function createClaudeCodeTool({ runner, modeCeiling, planActive }) {
@@ -75,7 +76,7 @@ export function createClaudeCodeTool({ runner, modeCeiling, planActive }) {
         ? sessionCwd
         : isAbsolute(requested) ? requested : (sessionCwd === undefined ? requested : join(sessionCwd, requested))
       const session = exec?.agent?.session
-      const planning = planActive?.(session) === true
+      const planning = planActive?.(session, exec?.agent) === true
       return await runner.run({
         prompt: args.prompt,
         mode: planning ? 'plan' : capClaudeMode(args.mode, modeCeiling(session)) ?? DEFAULT_CLAUDE_MODE,

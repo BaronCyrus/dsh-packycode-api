@@ -48,7 +48,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.3`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.4`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -67,7 +67,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.3`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.4`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -157,7 +157,7 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 - `cc`（Claude Code 专用）只接受官方 Claude CLI。用普通 API 客户端调 Claude 会 403：`This API endpoint is only accessible via the official Claude CLI`。本插件因此调用本机 `claude`，而不是改去 `cc-sale`，也不是伪造客户端身份。令牌如果没有开放给官方 CLI 的分组，这三个模型仍然不可用。
 - 选了 Claude 模型但本机没有 CLI 时，这一回合会直接说明未安装，并指向设置页的安装按钮。
 - CLI 使用插件配置的地址和当前 Key（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`），以及独立配置目录 `~/.dsh/packycode-claude-cli`。不隔离的话，`~/.claude/settings.json` 里的 `env` 会盖掉插件 Key。
-- CLI 权限默认跟随当前会话：`read-only` → 只读，`workspace-write` → 可编辑，`danger-full-access` 且不再审批 → `full`。CLI 不能向 DSH 弹审批，所以只要会话还要审批，就不会给它 `full`。也可把设置项 `claudeCliMode` 固定成 `read-only` / `edit` / `full`。DSH 计划模式优先于该映射和这个固定档：CLI 以 `--permission-mode plan` 只读探索。它调用 `ExitPlanMode`，或在没有该工具时把计划写进计划文件后返回，都会交给 DSH 审阅；批准或 `/plan off` 之后才恢复原来的档位。会话标题不进入计划模式。`claudeCliPath` 留空则自动查找；`claudeCliCwd` 留空则用当前会话工作区。
+- CLI 权限默认跟随当前会话：`read-only` → 只读，`workspace-write` → 可编辑，`danger-full-access` 且不再审批 → `full`。CLI 不能向 DSH 弹审批，所以只要会话还要审批，就不会给它 `full`。也可把设置项 `claudeCliMode` 固定成 `read-only` / `edit` / `full`。DSH 计划模式优先于该映射和这个固定档：CLI 以 `--permission-mode plan --permission-prompt-tool stdio` 只读探索，每轮在工作目录内创建一个独占的隐藏临时计划目录（CLI 不接受工作区外的自定义计划目录）；只存计划工件，不改项目代码或设置，工作区不可写时明确失败。`ExitPlanMode` 交给 DSH 审阅，不允许 CLI 在同一进程开始实施；只在本轮目录中查找未显式提交的计划，结束时清理。原生和 PTC 工具模式都支持审阅，完整计划及审阅反馈会带到下一轮；超过对话预算会明确报错，不静默截断约束。批准或 `/plan off` 在下一步生效，同一工具批次内的委派仍遵守当前计划状态。会话标题不进入计划模式。`claudeCliPath` 留空则自动查找；`claudeCliCwd` 留空则用当前会话工作区。
 - 思考过程和工具调用（`▸ Bash`、`▸ Read`，失败时带 `✗`）会出现在这一回合的思考区。它们是进度，不是 DSH 的工具调用。CLI 自己的工具不受 DSH 沙箱约束。
 - 思考区第一行是「▸ 启动 Claude Code CLI…」，CLI 起来后显示版本和模型。网关限流或繁忙（429、503 `账号并发排队已满` 等）时，CLI 会自己重试最多 10 次，每次重试都会显示成 `↻ 网关返回 HTTP 503，CLI 自动重试 n/10`，不再像卡住。重试用完仍失败时，会说明是 PackyCode 的 Claude 上游繁忙，不是 Key 的问题。CLI 启动后 2 分钟内没有任何输出会被停止并报告原因。
 - 对话记录和图片通过 stdin 交给 CLI（`--input-format stream-json`），不走命令行参数：Windows 命令行长度有上限，而且命令行带不了图片。对话里的图片会以图片形式发给 Claude（与 HTTP 路由相同的压缩规格：每张不超过 2048×2048、约 1 MiB；一回合最多 20 张、合计 20 MiB，超出时先舍弃最早的）。没随消息发出的图片会写明本机只读副本的路径，CLI 需要时可以用 Read 读取。
@@ -217,6 +217,8 @@ pnpm run check
 真机网关用 `node scripts/live-check.mjs` 验证：它通过插件注册的同一条路由，读余额和分组、让每个 HTTP 模型回答一次、演练 Key 轮换和失败分类，只打印 Key 的末 4 位。加 `--with-cli` 会用本机 Claude Code CLI 跑三个 Claude 模型，加 `--with-search` 会每个搜索后端各搜一次；默认运行只消耗少量额度。
 
 Claude CLI 的 MCP 接口验证用 `node scripts/cli-search-check.mjs`：运行真实 CLI，普通 Claude 响应和搜索数据默认由本地测试服务模拟，不消费额度；会检查三种权限模式、原生搜索禁用和临时资源清理。加 `--live --backend deepseek` 或 `--live --backend gpt` 会让只读模式的那一次搜索走真实后端（其它两种模式仍模拟）。这不等于验证了真实 Claude 上游对话或运行中的 DSH 集成。
+
+计划模式另用 `node scripts/cli-plan-check.mjs` 验证：真实 CLI 对接本地模拟网关，检查 stdio 计划提交、并发计划归属、本轮文件回退、旧计划隔离、实际拒绝次数上限和清理；不读取真实凭据、不消费额度、不启动 DSH。
 
 使用 Agent 修改或发布时，先读 [AGENTS.md](AGENTS.md)。发布由推送 `v*` 标签触发 [Publish workflow](.github/workflows/publish.yml)，不要在本机执行 `npm publish`。
 

@@ -313,6 +313,7 @@ test('a submitted plan becomes one exit_plan_mode call and not assistant text', 
     provider: 'packycode',
     model: 'claude-opus-5-5',
     messages: [{ role: 'user', content: [{ type: 'text', text: 'plan the change' }] }],
+    tools: [{ name: 'exit_plan_mode' }],
   }))
   const tool = chunks.find(chunk => chunk.type === 'block-end' && chunk.block?.type === 'tool-call')
   assert.equal(tool.block.name, 'exit_plan_mode')
@@ -571,4 +572,122 @@ test('models without a title route keep titling themselves', async () => {
     await consume(prepared.stream({ provider: 'packycode', model, purpose: 'session-title', messages: [] }))
     assert.deepEqual(inner.seen.at(-1), { prepared: model, dispatched: model, purpose: 'session-title' })
   }
+})
+
+const planCall = (plan, id = 'plan-review', extra = {}) => ({ type: 'tool-call', id, name: 'exit_plan_mode', arguments: JSON.stringify({ plan, ...extra }) })
+const reviewResult = (text, id = 'plan-review', isError = false) => ({ type: 'tool-result', toolCallId: id, isError, content: [{ type: 'text', text }] })
+
+const planAdapter = plan => createClaudeCliAdapter({
+  inner: innerAdapter(),
+  runner: stubRunner([{ type: 'plan', plan }, { type: 'result', result: { result: plan, inputTokens: 1, outputTokens: 2 } }]),
+  resolveMode: () => 'plan',
+})
+
+test('plan review chooses the current request catalog, including PTC and both modes', async () => {
+  for (const [tools, expected] of [
+    [[{ name: 'exit_plan_mode' }], 'exit_plan_mode'],
+    [[{ name: 'run_code' }], 'run_code'],
+    [[{ name: 'exit_plan_mode' }, { name: 'run_code' }], 'exit_plan_mode'],
+  ]) {
+    const plan = '# Review\n\nDo not publish or reveal credentials.'
+    const chunks = await consume(planAdapter(plan).stream({ model: 'claude-opus-5-5', messages: [], tools }))
+    const call = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call').block
+    assert.equal(call.name, expected)
+    const args = JSON.parse(call.arguments)
+    if (expected === 'run_code') {
+      assert.equal(args.code, `return await tools.exit_plan_mode(${JSON.stringify({ plan })})`)
+      assert.equal(args.description, 'Present completed plan for user review')
+      assert.deepEqual(Object.keys(args).sort(), ['code', 'description'])
+    } else assert.deepEqual(args, { plan })
+  }
+})
+
+test('missing review capabilities fail closed without an unknown native tool call', async () => {
+  const empty = await consume(planAdapter(' \n ').stream({ model: 'claude-opus-5-5', messages: [], tools: [{ name: 'exit_plan_mode' }] }))
+  assert.equal(empty.some(chunk => chunk.block?.type === 'tool-call'), false)
+  assert.match(empty.at(-1).reason.failure.message, /empty plan/u)
+  for (const tools of [undefined, [], [{ name: 'read' }]]) {
+    const chunks = await consume(planAdapter('# Review\n\nNo implementation yet.').stream({ model: 'claude-opus-5-5', messages: [], tools }))
+    assert.equal(chunks.some(chunk => chunk.block?.type === 'tool-call'), false)
+    assert.equal(chunks.at(-1).reason.kind, 'error')
+    assert.match(chunks.at(-1).reason.failure.message, /neither exit_plan_mode nor run_code/u)
+  }
+})
+
+test('durable plans and review feedback bypass the general 8k block cap, not the 48k prompt budget', async () => {
+  const plan = '# Safe implementation\n\n' + 'p'.repeat(9_000) + '\nNever commit, publish, or discard user changes.'
+  const feedback = 'The user chose to keep planning; their feedback: ' + 'f'.repeat(9_000) + '\nAdd a migration rollback.'
+  const messages = [
+    { role: 'assistant', content: [planCall(plan, 'plan-review', { apiKey: 'SECRET-PLAN-METADATA' })] },
+    { role: 'user', content: [reviewResult(feedback, 'plan-review', true)] },
+    ...Array.from({ length: 90 }, () => ({ role: 'user', content: [{ type: 'text', text: 'noise'.repeat(300) }] })),
+    { role: 'assistant', content: [{ type: 'tool-call', name: 'credential_tool', arguments: JSON.stringify({ token: 'SECRET-UNRELATED-TOOL' }) }] },
+    { role: 'user', content: [{ type: 'text', text: 'Revise the draft, keeping all original constraints.' }] },
+  ]
+  const prompt = renderDelegatedPrompt(JSON.parse(JSON.stringify({ messages })))
+  assert.ok(prompt.includes(plan), 'all original plan constraints survive a fork/resume-shaped serialization and old-turn trimming')
+  assert.ok(prompt.includes(feedback), 'review feedback is carried whole')
+  assert.match(prompt, /Revise the draft/u)
+  assert.match(prompt, /未批准\/失败/u)
+  assert.doesNotMatch(prompt, /SECRET-/u)
+  assert.match(prompt, /较早对话已截断/u)
+  assert.ok(prompt.length < 48_100)
+  const content = await buildDelegatedContent({ messages })
+  assert.ok(content.map(block => block.text ?? '').join('').includes(plan))
+})
+
+test('only the exact persisted PTC plan-review program is decoded; arbitrary programs and tool secrets stay private', () => {
+  const plan = '# PTC review\n\nKeep user data intact.'
+  const safe = { type: 'tool-call', id: 'ptc-review', name: 'run_code', arguments: JSON.stringify({ code: `return await tools.exit_plan_mode(${JSON.stringify({ plan })})`, description: 'Review' }) }
+  const request = { messages: [
+    { role: 'assistant', content: [safe] },
+    { role: 'user', content: [reviewResult('{"approved":true}', 'ptc-review')] },
+    { role: 'assistant', content: [{ type: 'tool-call', name: 'run_code', arguments: JSON.stringify({ code: `return await tools.exit_plan_mode(${JSON.stringify({ plan: 'SECRET-OTHER-PROGRAM', token: 'SECRET-TOKEN' })})` }) }] },
+    { role: 'user', content: [{ type: 'text', text: 'Proceed with the approved plan.' }] },
+  ] }
+  const prompt = renderDelegatedPrompt(request)
+  assert.ok(prompt.includes(plan))
+  assert.match(prompt, /"approved":true/u)
+  assert.doesNotMatch(prompt, /SECRET-/u)
+  assert.equal(renderDelegatedPrompt({ messages: [{ role: 'assistant', content: [{ ...safe, arguments: JSON.stringify({ code: `return await tools.exit_plan_mode({"plan":"SECRET-EXTRA-STATEMENT"}); evil()` }) }] }] }).includes('SECRET-'), false)
+})
+
+test('the latest revised plan supersedes an older draft when recent chat is trimmed', () => {
+  const revised = '# Revised\n\nNo production writes; use a staging fixture.'
+  const prompt = renderDelegatedPrompt({ messages: [
+    { role: 'assistant', content: [planCall('# Obsolete\n\nOLD-DRAFT', 'old')] },
+    { role: 'user', content: [reviewResult('Keep planning', 'old', true)] },
+    { role: 'assistant', content: [planCall(revised, 'new')] },
+    { role: 'user', content: [reviewResult('Plan approved', 'new')] },
+    ...Array.from({ length: 60 }, () => ({ role: 'user', content: [{ type: 'text', text: 'x'.repeat(1_000) }] })),
+    { role: 'user', content: [{ type: 'text', text: 'Continue' }] },
+  ] })
+  assert.ok(prompt.includes(revised))
+  assert.match(prompt, /Plan approved/u)
+  assert.doesNotMatch(prompt, /OLD-DRAFT/u)
+})
+
+test('oversize plans fail before review, and oversize durable context fails before spawning a new CLI', async () => {
+  const huge = '# Oversize\n\n' + 'x'.repeat(48_000)
+  const emitted = await consume(planAdapter(huge).stream({ model: 'claude-opus-5-5', messages: [], tools: [{ name: 'run_code' }] }))
+  assert.equal(emitted.some(chunk => chunk.block?.type === 'tool-call'), false)
+  assert.match(emitted.at(-1).reason.failure.message, /48,000.*before review/u)
+  const runner = stubRunner([])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const options = { model: 'claude-opus-5-5', messages: [
+    { role: 'assistant', content: [planCall('# Approved\n\n' + 'x'.repeat(40_000))] },
+    { role: 'user', content: [reviewResult('Plan approved')] },
+    { role: 'user', content: [{ type: 'text', text: 'Keep this additional constraint: ' + 'y'.repeat(9_000) }] },
+  ] }
+  assert.throws(() => renderDelegatedPrompt(options), /48,000.*not truncated/u)
+  const chunks = await consume(adapter.stream(options))
+  assert.equal(runner.calls.length, 0)
+  assert.equal(chunks.at(-1).reason.kind, 'error')
+  assert.match(chunks.at(-1).reason.failure.message, /48,000.*not truncated/u)
+})
+
+test('ordinary tool results keep their existing 8k cap', () => {
+  const prompt = renderDelegatedPrompt({ messages: [{ role: 'user', content: [reviewResult('x'.repeat(8_000) + 'TRUNCATE-ME', 'ordinary-tool')] }] })
+  assert.equal(prompt.includes('TRUNCATE-ME'), false)
+  assert.equal(prompt.includes('x'.repeat(8_000)), true)
 })

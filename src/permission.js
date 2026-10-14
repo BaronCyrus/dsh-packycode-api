@@ -37,13 +37,15 @@ export function claudeModeFor(sandbox, approval) {
 }
 
 /**
- * Whether this session should run the CLI in plan mode.
+ * Whether a prepared model request should run the CLI in plan mode.
  *
- * The model request runs inside `agent/pre-step`, before the plan-mode service
- * appends `plan/mode`. `pending` is that not-yet-logged selection and wins over
- * the logged `active` bit, matching the `plan:policy` section. Without the
- * service, the logged projection is the only signal. A missing session, a
- * missing service, or a throw means plan mode is off — never a failed turn.
+ * This selection is for request preparation only, not an executing tool batch.
+ * `pending` is the selection used for the proposed request assembly and wins
+ * over logged `active`, matching `plan:policy`. An accepted pre-step commits
+ * it; reading after that boundary sees the same selection as logged `active`.
+ * Without the service, the logged projection is the only signal. A missing
+ * session, a missing service, or a throw means plan mode is off — never a
+ * failed turn.
  * @param ctx - the plugin context; services are read without an inject requirement.
  * @param session - the session whose plan state is read.
  * @returns true when the CLI must plan instead of acting.
@@ -62,7 +64,31 @@ export function planModeForSession(ctx, session) {
   }
 }
 
-/** `pending` is the selection the in-flight request was assembled with. */
+/**
+ * Whether a tool in the current batch must plan, using logged active state.
+ *
+ * Approval queues `pending: false`; it does not authorize remaining tools in
+ * that batch to implement. Likewise, pending entry must not change a tool's
+ * current mode before the next accepted pre-step commits it.
+ * @param ctx - the plugin context.
+ * @param session - the executing tool's session.
+ * @param agent - the trusted executing agent, when provided by the tool runtime.
+ */
+export function planModeForToolExecution(ctx, session, agent) {
+  if (session === undefined || session === null) return false
+  try {
+    const caller = agent ?? ctx.get?.('agents')?.currentInitiator?.()
+    if (caller?.session === session) {
+      const state = ctx.get?.('planMode')?.get?.(caller)
+      if (state !== undefined && state !== null) return state.active === true
+    }
+    return ctx.get?.('sessionProjections')?.stateOf?.(session, 'plan')?.active === true
+  } catch {
+    return false
+  }
+}
+
+/** `pending` is the selection the proposed request was assembled with. */
 function planSelected(state) {
   if (typeof state?.pending === 'boolean') return state.pending
   return state?.active === true

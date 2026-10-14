@@ -84,12 +84,96 @@ function hostPath(lookup) {
   }
 }
 
+/** The only PTC program this adapter emits; its JSON literal also works in Python. */
+const PLAN_REVIEW_PROGRAM_PREFIX = 'return await tools.exit_plan_mode('
+
+/** Parse durable arguments without evaluating model-authored code. */
+function parsedArguments(value) {
+  try {
+    return typeof value === 'string' ? JSON.parse(value) : value
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Recover only the public plan, never arbitrary tool arguments or PTC code.
+ * The PTC allowlist is deliberately the exact, single-call program we emit.
+ */
+function planOfCall(block) {
+  if (block?.type !== 'tool-call') return undefined
+  const args = parsedArguments(block.arguments)
+  let plan
+  if (block.name === 'exit_plan_mode') plan = args?.plan
+  else if (block.name === 'run_code' && typeof args?.code === 'string') {
+    const code = args.code
+    if (!code.startsWith(PLAN_REVIEW_PROGRAM_PREFIX) || !code.endsWith(')')) return undefined
+    const review = parsedArguments(code.slice(PLAN_REVIEW_PROGRAM_PREFIX.length, -1))
+    if (review === null || typeof review !== 'object' || Object.keys(review).length !== 1) return undefined
+    plan = review.plan
+  }
+  return typeof plan === 'string' && plan.trim() !== '' ? plan : undefined
+}
+
+/** Keep the latest complete plan and its review from the persisted model transcript. */
+function planReviewContext(messages) {
+  let latest
+  for (const message of messages) {
+    if (message?.role !== 'assistant') continue
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      const plan = planOfCall(block)
+      if (plan !== undefined) latest = { plan, id: block.id }
+    }
+  }
+  if (latest === undefined) return undefined
+  let review
+  for (const message of messages) {
+    if (message?.role !== 'user') continue
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      if (block?.type !== 'tool-result' || latest.id === undefined || block.toolCallId !== latest.id) continue
+      const text = typeof block.content === 'string'
+        ? block.content
+        : (Array.isArray(block.content) ? block.content : []).filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n')
+      review = `[计划审阅${block.isError === true ? '未批准/失败' : '结果'}]\n${text}`
+    }
+  }
+  return {
+    id: latest.id,
+    turn: {
+      label: '计划审阅上下文',
+      parts: [{ kind: 'text', text: `[最近提交的完整计划；提交本身不代表已批准]\n${latest.plan}\n\n${review ?? '[尚无计划审阅结果；不要把提交视为实施许可]'}` }],
+    },
+  }
+}
+
+/**
+ * Select the review transport from this request's actual direct-tool catalog.
+ * `run_code` binds `tools` in both supported host language flavors.
+ */
+function planReviewCall(options, plan) {
+  if (plan.trim() === '') throw new Error('Claude Code submitted an empty plan; no review or implementation was authorized.')
+  // Reject a plan that cannot even fit by itself before asking for approval.
+  // The next request also checks its full review/current-request reservation.
+  const context = planReviewContext([{ role: 'assistant', content: [{ type: 'tool-call', name: 'exit_plan_mode', arguments: { plan } }] }]).turn
+  if (textLength(context.parts) + context.label.length + 3 >= MAX_PROMPT_CHARS) {
+    throw new Error('The submitted plan exceeds the CLI delegation budget (48,000 characters). Shorten or split it before review; no plan constraints were truncated and no implementation was authorized.')
+  }
+  const tools = Array.isArray(options?.tools) ? options.tools : []
+  if (tools.some(tool => tool?.name === 'exit_plan_mode')) return { name: 'exit_plan_mode', args: JSON.stringify({ plan }) }
+  if (tools.some(tool => tool?.name === 'run_code')) return {
+    name: 'run_code',
+    args: JSON.stringify({ code: `${PLAN_REVIEW_PROGRAM_PREFIX}${JSON.stringify({ plan })})`, description: 'Present completed plan for user review' }),
+  }
+  throw new Error('Claude Code submitted a plan, but this request has neither exit_plan_mode nor run_code available for host review; no implementation was authorized.')
+}
+
 /**
  * Flatten one message's content into ordered parts: text, image, and file.
  * Tool calls and results become short text so a turn that started on another
- * model still reads coherently; reasoning is not carried.
+ * model still reads coherently; reasoning is not carried. The latest review
+ * result is carried in full separately, not through the general 8k tool cap.
  */
-function collectParts(blocks, parts) {
+function collectParts(blocks, parts, reviewId) {
   for (const block of Array.isArray(blocks) ? blocks : []) {
     if (block === null || typeof block !== 'object') continue
     switch (block.type) {
@@ -108,6 +192,7 @@ function collectParts(blocks, parts) {
         parts.push({ kind: 'text', text: `[调用工具 ${block.name ?? block.id ?? ''}]` })
         break
       case 'tool-result': {
+        if (reviewId !== undefined && block.toolCallId === reviewId) break
         if (typeof block.content === 'string') {
           parts.push({ kind: 'text', text: `[工具结果] ${block.content.slice(0, MAX_BLOCK_CHARS)}` })
           break
@@ -143,16 +228,25 @@ const textLength = parts => parts.reduce((sum, part) => sum + (part.kind === 'te
  */
 function delegatedTurns(options) {
   const messages = Array.isArray(options?.messages) ? options.messages : []
+  // Tool arguments are durable on resume/fork, unlike a per-run memory cache or
+  // presentCall UI. Reserve the entire latest plan/review before trimming chat.
+  const review = planReviewContext(messages)
+  const reserved = review === undefined ? 0 : textLength(review.turn.parts) + review.turn.label.length + 3
   const turns = []
   for (const message of messages) {
     if (message === null || typeof message !== 'object' || message.role === 'system') continue
-    const parts = collectParts(message.content, [])
+    const parts = collectParts(message.content, [], review?.id)
     if (parts.length === 0 || (textLength(parts) === 0 && !parts.some(part => part.kind !== 'text'))) continue
     const label = message.role === 'user' ? '用户' : message.role === 'assistant' ? '助手' : String(message.role)
     turns.push({ label, parts })
   }
+  const newest = turns.at(-1)
+  const newestSize = newest === undefined ? 0 : textLength(newest.parts) + newest.label.length + 3
+  if (review !== undefined && reserved + newestSize > MAX_PROMPT_CHARS) {
+    throw new Error('The complete plan, its review, and the latest request exceed the CLI delegation budget (48,000 characters). Shorten or split the plan/request before continuing; plan constraints were not truncated.')
+  }
   const kept = []
-  let used = 0
+  let used = reserved
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index]
     const size = textLength(turn.parts) + turn.label.length + 3
@@ -164,7 +258,9 @@ function delegatedTurns(options) {
     if (kept.length === 0) kept.unshift({ label: turn.label, parts: tailOf(turn.parts, MAX_PROMPT_CHARS - turn.label.length - 3), clipped: true })
     break
   }
-  return { turns: kept, truncated: kept.length < turns.length || kept[0]?.clipped === true }
+  const truncated = kept.length < turns.length || kept[0]?.clipped === true
+  if (review !== undefined) kept.unshift(review.turn)
+  return { turns: kept, truncated }
 }
 
 /** Keep the last `budget` characters of a turn's text, and every part after them. */
@@ -654,8 +750,10 @@ export function createClaudeCliAdapter({
         }
       }
       if (submittedPlan !== undefined) {
-        // The plan is the tool argument, not a second copy of the assistant text.
-        yield* blocks.toolCall(`plan-${randomUUID()}`, 'exit_plan_mode', JSON.stringify({ plan: submittedPlan }))
+        // This argument persists in the host transcript; delegation recovers
+        // only its plan, including the exact single-call PTC program below.
+        const review = planReviewCall(options, submittedPlan)
+        yield* blocks.toolCall(`plan-${randomUUID()}`, review.name, review.args)
         yield { type: 'usage', usage: turnUsage(lastRequest, finished) }
         yield { type: 'finish', reason: { kind: 'tool-calls' } }
         return

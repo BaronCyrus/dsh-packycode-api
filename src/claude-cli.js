@@ -13,9 +13,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, sep } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { nvmBinDirs, pathFor, searchPath, withProgramDirOnPath } from './locate.js'
 import { waitForSharedRequest } from './request.js'
@@ -185,10 +185,11 @@ export function resolveSpawnCommand(binary, { platform = process.platform, exist
  *   consumes the streaming protocol, and instructions appended to the CLI's
  *   own system prompt ({@link DEFAULT_APPEND_SYSTEM_PROMPT} when blank). The
  *   CLI's system prompt and tool set are never replaced: they are part of
- *   what the official client sends.
+ *   what the official client sends. Plan runs supply an absolute private
+ *   planDirectory below the child's working directory.
  * @returns argv after the binary name.
  */
-export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt, searchBridge, disableNativeSearch = false } = {}) {
+export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = false, appendSystemPrompt, searchBridge, disableNativeSearch = false, planDirectory } = {}) {
   const spec = CLAUDE_CLI_MODES[mode]
   if (spec === undefined) {
     throw new Error(`claude_code mode must be one of ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
@@ -211,6 +212,21 @@ export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = fa
     // is added, so a web search does not stop to ask.
     if (searchBridge !== undefined) args.push('--allowedTools', searchBridge.toolName)
   } else args.push('--allowedTools', ...spec.allowedTools, ...(searchBridge === undefined ? [] : [searchBridge.toolName]))
+  if (mode === 'plan') {
+    // Print mode otherwise omits ExitPlanMode and hard-denies without ever
+    // sending can_use_tool to the host. Keep the real CLI's stdio gate active.
+    args.push('--permission-prompt-tool', 'stdio')
+    if (planDirectory !== undefined && (typeof planDirectory !== 'string' || !isAbsolute(planDirectory))) {
+      throw new Error('claude_code plan directory must be an absolute path')
+    }
+    // --settings merges omitted keys and permission lists with the existing
+    // configuration. Only plan storage and this one review gate are changed:
+    // an existing allow(ExitPlanMode) must not start implementation in the CLI.
+    args.push('--settings', JSON.stringify({
+      ...(planDirectory === undefined ? {} : { plansDirectory: planDirectory }),
+      permissions: { ask: ['ExitPlanMode'] },
+    }))
+  }
   if (disableNativeSearch || searchBridge !== undefined) args.push('--disallowedTools', 'WebSearch')
   // Add one private server for this run. Do not use --strict-mcp-config:
   // unrelated existing project/user MCP configurations remain untouched.
@@ -218,12 +234,14 @@ export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = fa
   return args
 }
 
-/** How many permission prompts one plan-mode run will refuse before stopping. */
+/** How many permission denials one plan-mode run may recover from. */
 const MAX_PLAN_DENIALS = 8
-/** A plan file larger than this is not read into the turn. */
+/** A plan file or submitted plan larger than this is not returned into the turn. */
 const PLAN_FILE_MAX_BYTES = 200_000
-const PLAN_FILE_CLOCK_SKEW_MS = 2_000
+const PLAN_DIRECTORY_PREFIX = '.dsh-packycode-plan-'
+const PLAN_FS = Object.freeze({ mkdtempSync, realpathSync, lstatSync, rmSync })
 const PLAN_EXIT_DENY = 'Write the plan to the plan file first, starting with a # heading, then call ExitPlanMode again.'
+const PLAN_TOO_LARGE_DENY = 'The plan exceeds the 200000-byte review limit. Write a complete, shorter plan without dropping constraints, then call ExitPlanMode again.'
 const PLAN_ACTION_DENY = 'Plan mode is active. Do not edit files or run commands that change the system. Continue read-only exploration, write the plan file, and call ExitPlanMode.'
 const PLAN_DIALOG_ERROR = 'Plan mode cannot ask the user from the CLI. Decide and continue, or call ExitPlanMode.'
 const PLAN_DENY_LIMIT_MESSAGE = 'claude_code plan mode stopped after too many denied permission prompts'
@@ -238,12 +256,66 @@ function planMarkdown(value) {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   if (trimmed === '') return undefined
-  const bounded = trimmed.length > PLAN_FILE_MAX_BYTES ? trimmed.slice(0, PLAN_FILE_MAX_BYTES) : trimmed
-  return /^#\s+\S/u.test(bounded) ? bounded : `# Plan\n\n${bounded}`
+  const markdown = /^#\s+\S/u.test(trimmed) ? trimmed : `# Plan\n\n${trimmed}`
+  // A partial plan can drop constraints. Refuse it rather than silently
+  // truncating something a parent model might subsequently approve.
+  return Buffer.byteLength(markdown) > PLAN_FILE_MAX_BYTES ? undefined : markdown
 }
 
-/** Whether `file` is the root itself or a path inside it, after resolving links. */
+/** Own exactly one newly created, owner-only directory, never a shared CLI home. */
+function createOwnedPlanDirectory(fs, cwd) {
+  // Official CLI 2.1.295 accepts plansDirectory only within its project root;
+  // an OS-temp directory outside cwd is ignored in favor of shared plans.
+  const parent = fs.realpathSync(cwd ?? process.cwd())
+  const directory = fs.mkdtempSync(join(parent, PLAN_DIRECTORY_PREFIX))
+  if (!isAbsolute(directory) || dirname(directory) !== parent || !directory.startsWith(join(parent, PLAN_DIRECTORY_PREFIX))) {
+    throw new Error('PackyCode plan directory ownership could not be established')
+  }
+  const identity = fs.lstatSync(directory)
+  if (!identity.isDirectory() || identity.isSymbolicLink()) {
+    throw new Error('PackyCode plan directory ownership could not be established')
+  }
+  const canonical = directory
+  let removed = false
+  const isOwned = () => {
+    try {
+      const current = fs.lstatSync(directory)
+      return current.isDirectory() && !current.isSymbolicLink()
+        && current.dev === identity.dev && current.ino === identity.ino
+        && fs.realpathSync(directory) === canonical
+    } catch { return false }
+  }
+  const owned = {
+    directory: canonical,
+    isOwned,
+    close() {
+      if (removed) return
+      let current
+      try { current = fs.lstatSync(directory) } catch (error) {
+        if (error?.code === 'ENOENT') { removed = true; return }
+        throw error
+      }
+      // Recheck the exact canonical path and inode immediately before delete.
+      // A replaced root or symlink is not ours; never recurse into its target.
+      if (!current.isDirectory() || current.isSymbolicLink() || !isOwned()) {
+        throw new Error('PackyCode plan directory ownership changed; refusing to remove it')
+      }
+      fs.rmSync(canonical, { recursive: true, force: true })
+      removed = true
+    },
+  }
+  if (!isOwned()) {
+    // Verification itself is part of setup; a transient failure after mkdir
+    // must not orphan a directory that still passes the exact ownership check.
+    owned.close()
+    throw new Error('PackyCode plan directory ownership could not be established')
+  }
+  return owned
+}
+
+/** Whether a file stays inside the immutable canonical directory bound to the run. */
 function pathInside(root, file, realpath) {
+  if (typeof root !== 'string' || !isAbsolute(root) || typeof file !== 'string' || !isAbsolute(file)) return false
   let rootReal
   let fileReal
   try {
@@ -252,99 +324,103 @@ function pathInside(root, file, realpath) {
   } catch {
     return false
   }
+  if (rootReal !== resolve(root)) return false
   const prefix = rootReal.endsWith(sep) ? rootReal : `${rootReal}${sep}`
-  return fileReal === rootReal || fileReal.startsWith(prefix)
+  return fileReal.startsWith(prefix)
+}
+
+/** A descriptor-based bounded read also rejects a replaced leaf before reading it. */
+function readBoundedPlanFile(file, expected) {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
+  try {
+    const info = fstatSync(fd)
+    if (!info.isFile() || (expected !== undefined && (info.dev !== expected.dev || info.ino !== expected.ino))) return undefined
+    if (info.size > PLAN_FILE_MAX_BYTES) throw Object.assign(new Error(PLAN_TOO_LARGE_DENY), { code: 'CLAUDE_PLAN_TOO_LARGE' })
+    const bytes = Buffer.allocUnsafe(PLAN_FILE_MAX_BYTES + 1)
+    let length = 0
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null)
+      if (count === 0) break
+      length += count
+    }
+    if (length > PLAN_FILE_MAX_BYTES) throw Object.assign(new Error(PLAN_TOO_LARGE_DENY), { code: 'CLAUDE_PLAN_TOO_LARGE' })
+    return bytes.subarray(0, length).toString('utf8')
+  } finally { closeSync(fd) }
 }
 
 /**
- * The plan a CLI `ExitPlanMode` request is submitting.
- *
- * The tool's own schema does not carry the plan; the CLI injects `plan` and
- * `planFilePath` from the file it told the model to write. Text on the request
- * wins. A path is read only when it resolves inside this run's config home or
- * `~/.claude/plans`, is a markdown file written for this run, and is bounded.
- * Anything else is ignored — a model-supplied path is not a licence to read
- * the disk.
- * @param input - the control request's `input`.
- * @param options - config home, when the run started, and file-system seams.
- * @returns plan markdown, or undefined when the request has none yet.
+ * The plan a CLI ExitPlanMode request submits. Inline text remains valid; a
+ * file must resolve inside this invocation's explicitly bound canonical
+ * planDirectory. Shared config homes and ~/.claude/plans are never searched.
+ * The caller supplies scrub so secrets are removed before the size check.
+ * @param input - the control request's input.
+ * @param options - the bound private plan directory, redactor, and filesystem seams.
+ * @returns bounded plan markdown, or undefined when the request has none yet.
  */
 export function readSubmittedPlan(input, {
-  configDir,
-  startedAt = Date.now(),
-  home = homedir(),
-  readFile = file => readFileSync(file, 'utf8'),
+  planDirectory,
+  scrub = value => value,
+  onRejected = () => undefined,
+  readFile = readBoundedPlanFile,
   stat = statSync,
   realpath = realpathSync,
 } = {}) {
-  const inline = planMarkdown(input?.plan)
-  if (inline !== undefined) return inline
-  const requested = typeof input?.planFilePath === 'string' ? input.planFilePath : ''
-  if (requested === '') return undefined
-  const roots = [configDir, join(home, '.claude', 'plans')].filter(root => typeof root === 'string' && root !== '')
-  if (!roots.some(root => pathInside(root, requested, realpath))) return undefined
-  let file
-  try {
-    file = realpath(requested)
-    const info = stat(file)
-    if (!info.isFile() || info.size > PLAN_FILE_MAX_BYTES || info.mtimeMs < startedAt - PLAN_FILE_CLOCK_SKEW_MS) return undefined
-  } catch {
-    return undefined
+  if (typeof input?.plan === 'string') {
+    const text = scrub(input.plan)
+    const inline = planMarkdown(text)
+    if (inline !== undefined) return inline
+    if (text.trim() !== '') { onRejected('too-large'); return undefined }
   }
-  if (!file.toLowerCase().endsWith('.md')) return undefined
+  const requested = typeof input?.planFilePath === 'string' ? input.planFilePath : ''
+  if (!pathInside(planDirectory, requested, realpath)) return undefined
   try {
-    return planMarkdown(readFile(file))
-  } catch {
+    const file = realpath(requested)
+    if (!file.toLowerCase().endsWith('.md')) return undefined
+    const info = stat(file)
+    if (!info.isFile()) return undefined
+    if (info.size > PLAN_FILE_MAX_BYTES) { onRejected('too-large'); return undefined }
+    const text = readFile(file, info)
+    if (typeof text !== 'string') return undefined
+    const safe = scrub(text)
+    const plan = planMarkdown(safe)
+    if (plan === undefined && safe.trim() !== '') onRejected('too-large')
+    return plan
+  } catch (error) {
+    if (error?.code === 'CLAUDE_PLAN_TOO_LARGE') onRejected('too-large')
     return undefined
   }
 }
 
 /**
- * The plan file a print-mode CLI wrote and then returned without calling
- * `ExitPlanMode`. `-p` often has no interactive plan tool, so the file is
- * what DSH reviews. Only a markdown file under this run's config `plans`
- * directory or `~/.claude/plans`, newer than the run, is eligible. The newest
- * one wins.
- * @param options - config home, when the run started, and file-system seams.
- * @returns plan markdown, or undefined when this run wrote none.
+ * A file-only completion from the CLI is accepted only from this run's new
+ * private plans directory. There is no shared-directory/mtime fallback. If
+ * more than one eligible file exists, do not guess which session submitted it.
+ * @param options - the bound private plan directory, redactor, and filesystem seams.
+ * @returns plan markdown, or undefined when absent or ambiguous.
  */
 export function findPlanWrittenDuringRun({
-  configDir,
-  startedAt = Date.now(),
-  home = homedir(),
+  planDirectory,
+  scrub = value => value,
+  onRejected = () => undefined,
   readdir = readdirSync,
-  readFile = file => readFileSync(file, 'utf8'),
+  readFile = readBoundedPlanFile,
   stat = statSync,
   realpath = realpathSync,
 } = {}) {
-  const roots = [typeof configDir === 'string' && configDir !== '' ? join(configDir, 'plans') : '', join(home, '.claude', 'plans')]
-    .filter(root => root !== '')
-  let newest
-  let newestMtime = -Infinity
-  for (const root of roots) {
-    let names
-    try {
-      names = readdir(root)
-    } catch {
-      continue
-    }
-    for (const name of names) {
-      if (typeof name !== 'string' || !name.toLowerCase().endsWith('.md')) continue
-      const candidate = join(root, name)
-      let info
-      try {
-        info = stat(candidate)
-      } catch {
-        continue
-      }
-      if (!info.isFile() || info.mtimeMs < startedAt - PLAN_FILE_CLOCK_SKEW_MS || info.mtimeMs < newestMtime) continue
-      const text = readSubmittedPlan({ planFilePath: candidate }, { configDir, startedAt, home, readFile, stat, realpath })
-      if (text === undefined) continue
-      newest = text
-      newestMtime = info.mtimeMs
-    }
+  if (typeof planDirectory !== 'string' || !isAbsolute(planDirectory)) return undefined
+  let names
+  try { names = readdir(planDirectory) } catch { return undefined }
+  let found
+  for (const name of names) {
+    if (typeof name !== 'string' || !name.toLowerCase().endsWith('.md')) continue
+    const candidate = join(planDirectory, name)
+    if (dirname(candidate) !== planDirectory) continue
+    const text = readSubmittedPlan({ planFilePath: candidate }, { planDirectory, scrub, onRejected, readFile, stat, realpath })
+    if (text === undefined) continue
+    if (found !== undefined) return undefined
+    found = text
   }
-  return newest
+  return found
 }
 
 /**
@@ -477,6 +553,24 @@ function toolResultText(content) {
 }
 
 /**
+ * Native plan/permission gates sometimes produce no control_request at all.
+ * Recognize their specific messages, never generic is_error, ENOENT, EACCES,
+ * a failed search, or a command's nonzero exit. An associated assistant tool
+ * use is required, so arbitrary user text cannot spend the denial budget.
+ */
+function nativePermissionDenial(name, text) {
+  if (typeof name !== 'string') return false
+  if (['Write', 'Edit', 'NotebookEdit'].includes(name)
+    && /^Cannot (?:write to|edit|modify) [\s\S]+ while in plan mode\.(?:\s|$)/u.test(text)) return true
+  if (['Bash', 'PowerShell'].includes(name)
+    && text.startsWith('Auto mode could not evaluate this action and is blocking it for safety')) return true
+  return text.startsWith(PLAN_ACTION_DENY) || text.startsWith(PLAN_EXIT_DENY)
+    || /^Permission to use [^\n]+ (?:has been|was) denied\b/u.test(text)
+    || /^Claude requested permissions to use [^\n]+, but you haven['’]t granted it yet\b/u.test(text)
+    || /^The user doesn['’]t want to proceed with this tool use\b/u.test(text)
+}
+
+/**
  * Read one `--output-format stream-json` line.
  *
  * The CLI prints both partial deltas (`stream_event`) and each finished
@@ -596,6 +690,7 @@ export function createClaudeRunner({
   startupTimeoutMs = DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS,
   platform = process.platform,
   createSearchBridge,
+  planFs = PLAN_FS,
 } = {}) {
   if (typeof resolveCredential !== 'function') throw new Error('the Claude Code CLI runner needs resolveCredential')
 
@@ -614,9 +709,9 @@ export function createClaudeRunner({
     if (disposed || signal?.aborted) throw new Error('claude_code was aborted')
     const cancellation = new AbortController()
     const runSignal = signal === undefined ? cancellation.signal : AbortSignal.any([signal, cancellation.signal])
-    const startedAt = Date.now()
-    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0, startedAt }
+    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0 }
     let child
+    let plans
     let bridge
     let bridgeClosing
     let pendingBridge
@@ -666,13 +761,16 @@ export function createClaudeRunner({
           owners.delete(owner)
           done()
         })
+        plans?.close()
         return
       }
       try {
         await closeBridge()
       } finally {
-        owners.delete(owner)
-        done()
+        try { plans?.close() } finally {
+          owners.delete(owner)
+          done()
+        }
       }
     }
     const checkAborted = () => {
@@ -690,6 +788,12 @@ export function createClaudeRunner({
     }
 
     try {
+      if (mode === 'plan') {
+        // Allocate before asynchronous setup, so its cancellation/failed spawn
+        // follows exactly the same owned-resource cleanup as the MCP bridge.
+        plans = createOwnedPlanDirectory(planFs, cwd)
+        state.planDirectory = plans.directory
+      }
       // Resolve per invocation, for its own model. The MCP capability below
       // is unrelated to this API key; no key goes into its config or args.
       const credential = await setup(resolveCredential({ model, signal: runSignal }))
@@ -710,7 +814,7 @@ export function createClaudeRunner({
         if (bridge === undefined || typeof bridge.close !== 'function') throw new Error('PackyCode CLI search bridge could not start')
       }
       checkAborted()
-      const args = buildClaudeArgs({ mode, model, stream, appendSystemPrompt, searchBridge: bridge, disableNativeSearch: typeof createSearchBridge === 'function' })
+      const args = buildClaudeArgs({ mode, model, stream, appendSystemPrompt, searchBridge: bridge, disableNativeSearch: typeof createSearchBridge === 'function', planDirectory: plans?.directory })
       child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
       if (timeoutMs > 0) {
         timer = setTimeout(() => { state.timedOut = true; kill() }, timeoutMs)
@@ -728,13 +832,18 @@ export function createClaudeRunner({
       child.stderr?.setEncoding?.('utf8')
       let controlBuffer = ''
       let stdinEnded = false
+      const onStdinError = () => {
+        if (state.settled || runSignal.aborted || typeof state.plan === 'string') return
+        state.stdinFailed = true
+        kill()
+      }
       const endStdin = () => {
         if (stdinEnded) return
         stdinEnded = true
-        try { child.stdin?.end?.() } catch { /* already closed */ }
+        try { child.stdin?.end?.() } catch { onStdinError() }
       }
       const writeStdin = frame => {
-        try { child.stdin?.write?.(frame) } catch { /* EPIPE once the child is gone */ }
+        try { child.stdin?.write?.(frame) } catch { onStdinError() }
       }
       const controlResponse = (requestId, response) => {
         writeStdin(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } })}\n`)
@@ -744,12 +853,23 @@ export function createClaudeRunner({
         endStdin()
         kill()
       }
-      const refuseControl = (requestId, kind) => {
-        state.denies += 1
+      const toolUses = new Map()
+      const deniedTools = new Set()
+      const deniedRequests = new Set()
+      const countDenial = (requestId, toolId) => {
+        const duplicate = (requestId !== undefined && deniedRequests.has(requestId))
+          || (toolId !== undefined && deniedTools.has(toolId))
+        if (requestId !== undefined) deniedRequests.add(requestId)
+        if (toolId !== undefined) deniedTools.add(toolId)
+        if (!duplicate) state.denies += 1
         if (state.denies > MAX_PLAN_DENIALS) {
           stopForDenials()
-          return
+          return false
         }
+        return true
+      }
+      const refuseControl = (requestId, kind, toolId) => {
+        if (!countDenial(requestId, toolId)) return
         if (kind === 'dialog') {
           writeStdin(`${JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: PLAN_DIALOG_ERROR } })}\n`)
           return
@@ -758,51 +878,69 @@ export function createClaudeRunner({
       }
       /**
        * Plan mode keeps stdin open so a permission prompt can be answered.
-       * `ExitPlanMode` with a plan stops the child; it is never allowed,
-       * because allowing it would make the CLI start editing in this process.
+       * ExitPlanMode is never allowed: stop with the submitted plan instead.
+       * Native hard denials share the same budget, keyed by tool_use_id so the
+       * tool_result following a control denial cannot charge it a second time.
        */
       const handlePlanLine = line => {
+        if (state.denyExhausted === true || typeof state.plan === 'string') return
         const trimmed = line.trim()
         if (!trimmed.startsWith('{')) return
         let message
-        try {
-          message = JSON.parse(trimmed)
-        } catch {
+        try { message = JSON.parse(trimmed) } catch { return }
+        if (message?.type === 'result') {
+          state.resultError = message.is_error === true
+          endStdin()
           return
         }
-        if (message?.type === 'result') {
-          endStdin()
+        if (state.resultError !== undefined) return
+        if (message?.type === 'assistant') {
+          for (const block of Array.isArray(message.message?.content) ? message.message.content : []) {
+            if (block?.type !== 'tool_use' || typeof block.id !== 'string') continue
+            toolUses.set(block.id, { name: block.name, input: block.input })
+            // Ordinary read-only exploration can run for many turns.
+            if (toolUses.size > 512) toolUses.delete(toolUses.keys().next().value)
+          }
+          return
+        }
+        if (message?.type === 'user') {
+          for (const block of Array.isArray(message.message?.content) ? message.message.content : []) {
+            if (block?.type !== 'tool_result' || block.is_error !== true || typeof block.tool_use_id !== 'string') continue
+            const tool = toolUses.get(block.tool_use_id)
+            if (nativePermissionDenial(tool?.name, toolResultText(block.content).trim())
+              && !countDenial(undefined, block.tool_use_id)) return
+          }
           return
         }
         if (message?.type !== 'control_request') return
         const requestId = message.request_id
         const request = message.request
         if (typeof requestId !== 'string' || request === null || typeof request !== 'object') {
-          state.denies += 1
-          if (state.denies > MAX_PLAN_DENIALS) stopForDenials()
+          countDenial(typeof requestId === 'string' ? requestId : undefined, undefined)
           return
         }
+        const toolId = typeof request.tool_use_id === 'string' ? request.tool_use_id
+          : [...toolUses].reverse().find(([, tool]) => tool.name === request.tool_name
+            && JSON.stringify(tool.input) === JSON.stringify(request.input))?.[0]
         if (request.subtype !== 'can_use_tool') {
-          refuseControl(requestId, 'dialog')
+          refuseControl(requestId, 'dialog', toolId)
           return
         }
         if (request.tool_name === 'ExitPlanMode') {
-          const plan = readSubmittedPlan(request.input, { configDir, startedAt })
+          let tooLarge = false
+          const plan = typeof request.input?.plan === 'string' || plans?.isOwned()
+            ? readSubmittedPlan(request.input, { planDirectory: plans?.directory, scrub, onRejected: reason => { tooLarge = reason === 'too-large' } }) : undefined
           if (plan !== undefined) {
-            state.plan = scrub(plan)
+            state.plan = plan
             endStdin()
             kill()
             return
           }
-          state.denies += 1
-          if (state.denies > MAX_PLAN_DENIALS) {
-            stopForDenials()
-            return
-          }
-          controlResponse(requestId, { behavior: 'deny', message: PLAN_EXIT_DENY })
+          if (!countDenial(requestId, toolId)) return
+          controlResponse(requestId, { behavior: 'deny', message: tooLarge ? PLAN_TOO_LARGE_DENY : PLAN_EXIT_DENY })
           return
         }
-        refuseControl(requestId, 'tool')
+        refuseControl(requestId, 'tool', toolId)
       }
       child.stdout?.on('data', chunk => {
         state.sawOutput = true
@@ -837,6 +975,7 @@ export function createClaudeRunner({
         child.on('close', (code, killSignal) => {
           if (state.settled) return
           state.settled = true
+          if (mode === 'plan' && controlBuffer.trim() !== '') handlePlanLine(controlBuffer)
           if (state.timedOut) return reject(new Error(`claude_code timed out after ${Math.round(timeoutMs / 1000)}s`))
           if (state.silent) {
             const detail = state.stderr.trim().split('\n').slice(-4).join(' ').slice(0, 400)
@@ -845,9 +984,18 @@ export function createClaudeRunner({
           // The caller's abort wins over a plan captured in the same moment.
           // Our own kill() aborts only the internal cancellation signal.
           if (signal?.aborted) return reject(new Error('claude_code was aborted'))
+          if (state.stdinFailed === true) return reject(new Error('claude_code could not write to CLI input'))
           if (state.denyExhausted === true) return reject(new Error(PLAN_DENY_LIMIT_MESSAGE))
           if (typeof state.plan === 'string') return resolve({ code, killSignal })
           if (runSignal.aborted) return reject(new Error('claude_code was aborted'))
+          // Capture file-only completion before cleanup removes this run's
+          // private directory. Never read after a cancelled or failing child.
+          if (mode === 'plan' && code === 0 && state.resultError === false && plans?.isOwned()) {
+            let tooLarge = false
+            const written = findPlanWrittenDuringRun({ planDirectory: plans.directory, scrub, onRejected: reason => { tooLarge ||= reason === 'too-large' } })
+            if (tooLarge) return reject(new Error(PLAN_TOO_LARGE_DENY))
+            if (written !== undefined) state.plan = written
+          }
           resolve({ code, killSignal })
         })
       })
@@ -855,7 +1003,7 @@ export function createClaudeRunner({
       closed.catch(() => undefined)
       // Attach error listeners before feeding stdin: a quick EPIPE must not
       // crash the host or miss child completion.
-      child.stdin?.on?.('error', () => undefined)
+      child.stdin?.on?.('error', onStdinError)
       // Plan mode has to answer control requests after the user message, so
       // stdin stays open until a result, a captured plan, or a hard stop.
       if (mode === 'plan') writeStdin(input)
@@ -1019,12 +1167,6 @@ export function createClaudeRunner({
             // A truncated tail is not a result.
           }
         }
-        // Print mode often has no ExitPlanMode tool. The plan file the CLI
-        // wrote on the way out is still the plan DSH should review.
-        if (mode === 'plan' && typeof state.plan !== 'string' && exitStatus?.code === 0) {
-          const written = findPlanWrittenDuringRun({ configDir, startedAt: state.startedAt })
-          if (written !== undefined) state.plan = scrub(written)
-        }
         if (typeof state.plan === 'string') {
           if (deltaKind !== undefined) {
             const tail = deltaRedactor.flush({ boundary: true })
@@ -1069,7 +1211,9 @@ export function createClaudeRunner({
         }
       } finally {
         stopIfAbandoned()
-        await closeBridge()
+        // iterator.return() owns the private plan directory too: wait for the
+        // terminated child and its cleanup, not just immediate MCP revocation.
+        try { await closed.catch(() => undefined) } finally { await closeBridge() }
       }
     },
     /** Revoke bridges and stop every invocation when the plugin unloads. */

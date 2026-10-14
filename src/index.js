@@ -38,7 +38,7 @@ import { createGroupReader } from './groups.js'
 import { normalizeHost } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
 import { PackyCodeKeyRing } from './key-ring.js'
-import { AUTO_CLAUDE_MODE, claudeModeForSession, planModeForSession } from './permission.js'
+import { AUTO_CLAUDE_MODE, claudeModeForSession, planModeForSession, planModeForToolExecution } from './permission.js'
 import { createPackyCodePluginManager } from './plugin-version.js'
 import { connectSettings, fieldValue, live, unwritable } from './preferences.js'
 import { createRouteAdapter } from './route.js'
@@ -317,7 +317,9 @@ export function apply(ctx, config) {
       () => toolsCtx.tools.register(createClaudeCodeTool({
         runner: claudeRunner,
         modeCeiling: cliModeCeiling,
-        planActive: session => planModeForSession(ctx, session),
+        // A selected transition takes effect only at the next accepted step,
+        // never halfway through the batch executing this tool.
+        planActive: (session, agent) => planModeForToolExecution(ctx, session, agent),
       })),
       'packycode-api: claude_code tool',
     )
@@ -357,7 +359,7 @@ export {
 } from './claude-adapter.js'
 export { CLAUDE_TOOL_INSTRUCTIONS, createClaudeCodeTool } from './claude-tool.js'
 export { createClaudeSearchBridge, cliSearchInstructions } from './claude-search-mcp.js'
-export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession, planModeForSession } from './permission.js'
+export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession, planModeForSession, planModeForToolExecution } from './permission.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { accountHostOrder, normalizeHost, statusHostOrder } from './hosts.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'

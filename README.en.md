@@ -44,7 +44,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.3`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.4`.
 
 Then **manually restart the desktop application**. Refreshing the page does not reload the plugin inside the Host process.
 
@@ -63,7 +63,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, and 
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.3`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.4`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 A local checkout can be linked with `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`.
 
@@ -153,7 +153,7 @@ A model in the list does not mean the current token group allows it. When changi
 - The `cc` group accepts only the official Claude CLI. A normal API client gets `403 This API endpoint is only accessible via the official Claude CLI`. This plugin runs the local `claude` binary for that group instead of switching the token to `cc-sale` or pretending to be the official client. If the token has no group the official CLI may use, the three Claude models still will not run.
 - Selecting a Claude model when the CLI is missing fails that turn with an install hint. It does not surface as a missing binary name alone.
 - The CLI receives this plugin's endpoint and current key (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`) and an isolated config directory, `~/.dsh/packycode-claude-cli`. Without that isolation, `env` in `~/.claude/settings.json` would override the plugin key.
-- CLI permission follows the session by default: `read-only` stays read-only, `workspace-write` may edit, and `danger-full-access` with approval disabled may use `full`. The CLI cannot ask the DSH user for approval, so a session that still asks never gets `full`. `claudeCliMode` can pin `read-only`, `edit`, or `full`. DSH plan mode wins over that mapping and over the pin: the CLI runs with `--permission-mode plan`. Calling `ExitPlanMode`, or returning after writing the plan file when that tool is absent, submits the plan to DSH's review instead of editing in the same process. The previous mode returns after approval or `/plan off`. Session titles stay out of plan mode. An empty `claudeCliPath` is looked up automatically; an empty `claudeCliCwd` uses the session workspace.
+- CLI permission follows the session by default: `read-only` stays read-only, `workspace-write` may edit, and `danger-full-access` with approval disabled may use `full`. The CLI cannot ask the DSH user for approval, so a session that still asks never gets `full`. `claudeCliMode` can pin `read-only`, `edit`, or `full`. DSH plan mode wins over that mapping and over the pin: the CLI runs read-only with `--permission-mode plan --permission-prompt-tool stdio`, using one private hidden temporary plan directory inside the working directory per invocation (the CLI rejects custom plan directories outside the project root). This stores only planning artifacts, changes no project code or settings, and fails explicitly for an unwritable workspace. `ExitPlanMode` hands the plan to DSH for review; it never starts implementation in that CLI process. File fallback reads only this invocation's directory, which is cleaned afterwards. Review works in native and PTC tool modes, and the complete plan and review feedback reach the next turn; exceeding the conversation budget fails explicitly instead of silently truncating constraints. Approval or `/plan off` takes effect from the next step; delegations in the same tool batch keep the current plan state. Session titles stay out of plan mode. An empty `claudeCliPath` is looked up automatically; an empty `claudeCliCwd` uses the session workspace.
 - Thinking and tool activity (`▸ Bash`, `▸ Read`, and `✗` on failure) appear in that turn's reasoning block. They are progress, not DSH tool calls. The CLI's own tools are outside the DSH sandbox.
 - The reasoning block opens with `▸ 启动 Claude Code CLI…` and then shows the CLI's version and model once it is up. When the gateway throttles or is busy (429, 503 `账号并发排队已满` / per-account wait queue full, and similar), the CLI retries up to 10 times on its own; each retry now shows as `↻ 网关返回 HTTP 503，CLI 自动重试 n/10` instead of looking hung. When the retries run out, the turn says PackyCode's Claude upstream is busy, not that the key is bad. A CLI that prints nothing for 2 minutes after starting is stopped and reported.
 - The conversation and its images reach the CLI over stdin (`--input-format stream-json`), not argv: a Windows command line is length-limited and cannot carry an image. Images in the conversation are sent to Claude as images, at the HTTP route's request size (at most 2048×2048, about 1 MiB each; at most 20 images and 20 MiB per turn, dropping the oldest first). An image left out is named with its read-only local copy, which the CLI can open with Read.
@@ -213,6 +213,8 @@ pnpm run check
 `node scripts/live-check.mjs` checks the live gateway through the same route the plugin registers: balance and groups, one answer per HTTP model, a rotation rehearsal, and the failure classification, printing only the key's last four characters. `--with-cli` also runs the three Claude models through the local Claude Code CLI, and `--with-search` runs one search per backend; the default run spends a small amount of quota.
 
 `node scripts/cli-search-check.mjs` runs the real CLI against a local test gateway and MCP bridge; Claude responses and search data are mocked by default, with no quota consumed. It checks all three permission modes, native-search exclusion and temporary-resource cleanup. `--live --backend deepseek` or `--live --backend gpt` sends the read-only mode's one search to the real backend (edit/full remain mocked). This does not verify actual Claude upstream turns or a running DSH integration.
+
+`node scripts/cli-plan-check.mjs` checks plan mode with the real CLI and a local fake gateway: stdio handoff, concurrent plan ownership, invocation-only file fallback, stale-plan exclusion, actual denial limits and cleanup. It reads no real credentials, spends no quota and starts no DSH instance.
 
 Read [AGENTS.md](AGENTS.md) before agent-assisted changes or a release. Publishing is the [Publish workflow](.github/workflows/publish.yml), triggered by pushing a `v*` tag. Do not run `npm publish` locally.
 
