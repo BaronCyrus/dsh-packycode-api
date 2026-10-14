@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.3
+
+- **Plan review when the CLI has no ExitPlanMode.** Print mode often does not offer that tool, so a plan-mode turn wrote `~/.dsh/packycode-claude-cli/plans/*.md` and came back as ordinary text. A plan file written during the run is now submitted through DSH's `exit_plan_mode` when the CLI returns. An older file in that directory is ignored.
+
 ## 1.1.2
 
 - **Claude CLI follows DSH plan mode.** While the current session's plan mode is on (including a selection that applies on this step but is not logged yet), a Claude model turn and the `claude_code` tool run the local CLI with `--permission-mode plan`. That wins over the session permission preset and over an explicit `claudeCliMode` pin. The CLI may explore read-only; other permission prompts are denied, and after eight denials the run stops instead of hanging. `ExitPlanMode` is never allowed inside the CLI process. A submitted plan becomes the assistant's `exit_plan_mode` tool call, so DSH's existing review approves it and the next step implements. The delegation tool returns the plan text for the parent model to submit. Session titles stay read-only. A host without the plan-mode service behaves as before.

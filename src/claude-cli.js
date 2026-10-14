@@ -13,7 +13,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 
@@ -300,6 +300,54 @@ export function readSubmittedPlan(input, {
 }
 
 /**
+ * The plan file a print-mode CLI wrote and then returned without calling
+ * `ExitPlanMode`. `-p` often has no interactive plan tool, so the file is
+ * what DSH reviews. Only a markdown file under this run's config `plans`
+ * directory or `~/.claude/plans`, newer than the run, is eligible. The newest
+ * one wins.
+ * @param options - config home, when the run started, and file-system seams.
+ * @returns plan markdown, or undefined when this run wrote none.
+ */
+export function findPlanWrittenDuringRun({
+  configDir,
+  startedAt = Date.now(),
+  home = homedir(),
+  readdir = readdirSync,
+  readFile = file => readFileSync(file, 'utf8'),
+  stat = statSync,
+  realpath = realpathSync,
+} = {}) {
+  const roots = [typeof configDir === 'string' && configDir !== '' ? join(configDir, 'plans') : '', join(home, '.claude', 'plans')]
+    .filter(root => root !== '')
+  let newest
+  let newestMtime = -Infinity
+  for (const root of roots) {
+    let names
+    try {
+      names = readdir(root)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (typeof name !== 'string' || !name.toLowerCase().endsWith('.md')) continue
+      const candidate = join(root, name)
+      let info
+      try {
+        info = stat(candidate)
+      } catch {
+        continue
+      }
+      if (!info.isFile() || info.mtimeMs < startedAt - PLAN_FILE_CLOCK_SKEW_MS || info.mtimeMs < newestMtime) continue
+      const text = readSubmittedPlan({ planFilePath: candidate }, { configDir, startedAt, home, readFile, stat, realpath })
+      if (text === undefined) continue
+      newest = text
+      newestMtime = info.mtimeMs
+    }
+  }
+  return newest
+}
+
+/**
  * Build what the CLI reads from stdin for one run.
  *
  * A streaming run reads one `stream-json` user message, whose content may mix
@@ -566,8 +614,8 @@ export function createClaudeRunner({
     if (disposed || signal?.aborted) throw new Error('claude_code was aborted')
     const cancellation = new AbortController()
     const runSignal = signal === undefined ? cancellation.signal : AbortSignal.any([signal, cancellation.signal])
-    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0 }
     const startedAt = Date.now()
+    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0, startedAt }
     let child
     let bridge
     let bridgeClosing
@@ -963,6 +1011,20 @@ export function createClaudeRunner({
           yield* drain()
         }
         await completion
+        if (buffer.trim().startsWith('{')) {
+          try {
+            const event = readClaudeStreamEvents(JSON.parse(scrub(buffer.trim()))).find(item => item.type === 'result')
+            if (event !== undefined) sawResult = event.result
+          } catch {
+            // A truncated tail is not a result.
+          }
+        }
+        // Print mode often has no ExitPlanMode tool. The plan file the CLI
+        // wrote on the way out is still the plan DSH should review.
+        if (mode === 'plan' && typeof state.plan !== 'string' && exitStatus?.code === 0) {
+          const written = findPlanWrittenDuringRun({ configDir, startedAt: state.startedAt })
+          if (written !== undefined) state.plan = scrub(written)
+        }
         if (typeof state.plan === 'string') {
           if (deltaKind !== undefined) {
             const tail = deltaRedactor.flush({ boundary: true })
@@ -985,14 +1047,6 @@ export function createClaudeRunner({
             },
           }
           return
-        }
-        if (buffer.trim().startsWith('{')) {
-          try {
-            const event = readClaudeStreamEvents(JSON.parse(scrub(buffer.trim()))).find(item => item.type === 'result')
-            if (event !== undefined) sawResult = event.result
-          } catch {
-            // A truncated tail is not a result.
-          }
         }
         if (sawResult === undefined) {
           throw new Error(failureMessage(undefined, undefined, state.stderr))

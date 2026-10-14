@@ -48,7 +48,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.2`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.3`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -67,7 +67,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.2`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.3`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -157,7 +157,7 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 - `cc`（Claude Code 专用）只接受官方 Claude CLI。用普通 API 客户端调 Claude 会 403：`This API endpoint is only accessible via the official Claude CLI`。本插件因此调用本机 `claude`，而不是改去 `cc-sale`，也不是伪造客户端身份。令牌如果没有开放给官方 CLI 的分组，这三个模型仍然不可用。
 - 选了 Claude 模型但本机没有 CLI 时，这一回合会直接说明未安装，并指向设置页的安装按钮。
 - CLI 使用插件配置的地址和当前 Key（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`），以及独立配置目录 `~/.dsh/packycode-claude-cli`。不隔离的话，`~/.claude/settings.json` 里的 `env` 会盖掉插件 Key。
-- CLI 权限默认跟随当前会话：`read-only` → 只读，`workspace-write` → 可编辑，`danger-full-access` 且不再审批 → `full`。CLI 不能向 DSH 弹审批，所以只要会话还要审批，就不会给它 `full`。也可把设置项 `claudeCliMode` 固定成 `read-only` / `edit` / `full`。DSH 计划模式优先于该映射和这个固定档：CLI 以 `--permission-mode plan` 只读探索，调用 `ExitPlanMode` 后把计划交给 DSH 审阅，批准或 `/plan off` 之后才恢复原来的档位。会话标题不进入计划模式。`claudeCliPath` 留空则自动查找；`claudeCliCwd` 留空则用当前会话工作区。
+- CLI 权限默认跟随当前会话：`read-only` → 只读，`workspace-write` → 可编辑，`danger-full-access` 且不再审批 → `full`。CLI 不能向 DSH 弹审批，所以只要会话还要审批，就不会给它 `full`。也可把设置项 `claudeCliMode` 固定成 `read-only` / `edit` / `full`。DSH 计划模式优先于该映射和这个固定档：CLI 以 `--permission-mode plan` 只读探索。它调用 `ExitPlanMode`，或在没有该工具时把计划写进计划文件后返回，都会交给 DSH 审阅；批准或 `/plan off` 之后才恢复原来的档位。会话标题不进入计划模式。`claudeCliPath` 留空则自动查找；`claudeCliCwd` 留空则用当前会话工作区。
 - 思考过程和工具调用（`▸ Bash`、`▸ Read`，失败时带 `✗`）会出现在这一回合的思考区。它们是进度，不是 DSH 的工具调用。CLI 自己的工具不受 DSH 沙箱约束。
 - 思考区第一行是「▸ 启动 Claude Code CLI…」，CLI 起来后显示版本和模型。网关限流或繁忙（429、503 `账号并发排队已满` 等）时，CLI 会自己重试最多 10 次，每次重试都会显示成 `↻ 网关返回 HTTP 503，CLI 自动重试 n/10`，不再像卡住。重试用完仍失败时，会说明是 PackyCode 的 Claude 上游繁忙，不是 Key 的问题。CLI 启动后 2 分钟内没有任何输出会被停止并报告原因。
 - 对话记录和图片通过 stdin 交给 CLI（`--input-format stream-json`），不走命令行参数：Windows 命令行长度有上限，而且命令行带不了图片。对话里的图片会以图片形式发给 Claude（与 HTTP 路由相同的压缩规格：每张不超过 2048×2048、约 1 MiB；一回合最多 20 张、合计 20 MiB，超出时先舍弃最早的）。没随消息发出的图片会写明本机只读副本的路径，CLI 需要时可以用 Read 读取。

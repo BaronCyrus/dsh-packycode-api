@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -15,6 +15,7 @@ import {
   buildClaudeInput,
   createClaudeRunner,
   findClaudeBinary,
+  findPlanWrittenDuringRun,
   parseClaudeResult,
   readClaudeStreamEvents,
   readSubmittedPlan,
@@ -755,4 +756,28 @@ test('an ExitPlanMode without a plan is denied, and too many denials stop the ru
   const responses = burst.calls[0].frames.filter(frame => frame.type === 'control_response')
   assert.equal(responses.length, 8)
   assert.equal(burst.calls[0].killed, 'SIGTERM')
+})
+
+test('a plan file written during the run is reviewed when ExitPlanMode is absent', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'packy-plan-home-'))
+  const plans = join(configDir, 'plans')
+  mkdirSync(plans)
+  const stale = join(plans, 'old.md')
+  writeFileSync(stale, '# Old\n\nignore')
+  const past = new Date(Date.now() - 60_000)
+  utimesSync(stale, past, past)
+  const { spawnImpl } = controlSpawn(({ message, emit }) => {
+    if (message.type !== 'user') return
+    writeFileSync(join(plans, 'shimmering-peach.md'), 'count the files with git ls-files')
+    emit({ type: 'result', is_error: false, result: 'wrote the plan file', duration_ms: 5, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } })
+  })
+  const events = []
+  for await (const event of createClaudeRunner({
+    binary: '/mock/claude',
+    resolveCredential: async () => ({ baseUrl: 'https://cf.example', token: 'sk-test', label: 't' }),
+    spawnImpl,
+    configDir,
+  }).stream({ prompt: 'how many files', mode: 'plan' })) events.push(event)
+  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Plan\n\ncount the files with git ls-files')
+  assert.equal(findPlanWrittenDuringRun({ configDir, startedAt: Date.now() + 60_000 }), undefined)
 })

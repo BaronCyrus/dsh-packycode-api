@@ -212,7 +212,7 @@ const plainDescription = part => (part.kind === 'image' ? `[图片 ${attachmentN
 export function delegationInstructions(options, cwd, { plan = false } = {}) {
   const system = typeof options?.system === 'string' && options.system.trim() !== '' ? options.system.trim() : ''
   const lead = plan
-    ? '本回合 DeepSeek Harness 处于计划模式。只做只读探索，把完整实施计划写成以一级标题开头的 Markdown，写入 CLI 指定的计划文件，然后调用 ExitPlanMode 提交审阅。不要修改项目、不要开始实施。'
+    ? '本回合 DeepSeek Harness 处于计划模式。只做只读探索，把完整实施计划写成以一级标题开头的 Markdown，写入 CLI 指定的计划文件。若有 ExitPlanMode 就调用它；没有也在写完后停下来。不要修改项目、不要开始实施。DeepSeek Harness 会用这份计划打开审阅。'
       + '用户消息是 DeepSeek Harness 会话的近期对话记录，最后一条是当前请求；其中的图片已作为图片随消息附上，「只读副本」路径也可以用 Read 工具读取。'
     : '本回合由 DeepSeek Harness 委派给 Claude Code 执行。用户消息是 DeepSeek Harness 会话的近期对话记录，最后一条是当前请求；'
       + '其中的图片已作为图片随消息附上，「只读副本」路径也可以用 Read 工具读取。'
