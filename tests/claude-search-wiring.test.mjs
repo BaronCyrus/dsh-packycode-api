@@ -63,7 +63,7 @@ function context() {
         installSection(_owner, _ns, _schema, base, hooks) { seen.current = { ...base }; hooks.setSource(() => seen.current) },
         update: async (_ns, patch) => { Object.assign(seen.current, patch) },
       } })
-      if (names.includes('connection')) return callback({ connection: { rpc: { handle: (_channel, handler) => { seen.handler = handler; return () => {} } } } })
+      if (names.includes('connection')) return callback({ effect: ctx.effect, connection: { rpc: { handle: (_channel, handler) => { seen.handler = handler; return () => {} } } } })
       if (names.includes('tools')) return callback({ tools: { register: () => () => {} } })
     },
     effect(callback) { const disposer = callback(); if (typeof disposer === 'function') seen.disposers.push(disposer); return disposer },

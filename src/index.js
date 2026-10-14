@@ -323,15 +323,21 @@ export function apply(ctx, config) {
     modelSelection,
   })
   /**
-   * Connection registers a channel through `owner.webServer`, read on its own
-   * row's fiber — which is why this plugin ships the `connection` inject patch
-   * in `cordis.patch.yml`. Without that service the read is refused, the
-   * channel never reaches the web server, and the browser answers HTTP 405
-   * while the boot log stays clean. A profile with neither service (a headless
-   * run) simply never runs this callback.
+   * The shipped Connection getter retains its own service context, whose row
+   * need not inject webServer. Register with our injected context explicitly:
+   * a first hot install then mounts the channel without rebuilding Connection.
+   * The native registry still owns admission and the wire protocol. Its
+   * explicit-owner entry is internal, so retain the public RPC contract for
+   * other Connection implementations. A headless profile can omit this scope.
    */
   ctx.inject(['connection', 'webServer'], connectionCtx => {
-    ctx.effect(() => connectionCtx.connection.rpc.handle(CHANNEL, handler), 'packycode-api: loopback account RPC')
+    const service = connectionCtx.connection
+    connectionCtx.effect(
+      () => typeof service.register === 'function'
+        ? service.register(connectionCtx, CHANNEL, handler)
+        : service.rpc.handle(CHANNEL, handler),
+      'packycode-api: loopback account RPC',
+    )
   })
 
   ctx.inject(['tools'], toolsCtx => {

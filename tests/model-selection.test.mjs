@@ -54,7 +54,7 @@ function host({ generation = '0.2', writable = true, failWrite = false, initial 
     on(event, callback) { seen.listeners.set(event, callback) },
     inject(names, callback) {
       if (names.includes('settings')) return callback({ settings, effect: ctx.effect })
-      if (names.includes('connection')) return callback({ connection: { rpc: { handle(_channel, handler) { seen.handler = handler; return () => {} } } } })
+      if (names.includes('connection')) return callback({ effect: ctx.effect, connection: { rpc: { handle(_channel, handler) { seen.handler = handler; return () => {} } } } })
       // These fixtures intentionally mount no search or CLI tool service.
     },
     effect(callback) { return callback() },

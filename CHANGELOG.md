@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.7
+
+- Fixed HTTP 405 from the settings RPC after a first hot install. The shipped Connection getter retains its own row's context, which need not inject `webServer`; the browser channel now registers with this plugin's `connection` / `webServer` injection scope as its explicit owner. Native Connection admission, authentication and RPC envelopes remain in use. The explicit-owner entry is internal to the shipped service, so other Connection implementations retain the public `rpc.handle` contract.
+- Removed the bundle override of the protected `connection` row. First installation now mounts the plugin's own channel without rebuilding that row or restarting DSH; unloading or losing the optional webserver scope removes the channel. Installation instructions now describe the restart-free first install.
+- Added real Connection / Cordis HTTP regressions for the 0.1.5 and 0.2.0-rc.2 hosts, covering first install, authenticated settings access, uninstall/reinstall and optional webserver availability. The 0.2 test host uses a separate development fixture with matching host dependencies.
+- Validation: 284 tests passed, both bundles rebuilt and the tarball generated. The six HTTP lifecycle/authentication checks also passed against the built host bundle, without restarting the fixture's existing server or Connection service.
+
 ## 1.1.6
 
 - Fixed the missing `image` input capability on `deepseek-flash`, following [DeepSeek's official vision guide](https://api-docs.deepseek.com/guides/vision/). DSH can now send image attachments through the existing Chat Completions route. Audited the two GPT models, Grok 4.7 and three Claude models against their vendor documentation; all six already declare image input.

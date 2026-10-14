@@ -5,19 +5,3 @@
 - insert:
     - id: packycode-api
       name: 'dsh-packycode-api'
-
-# Connection registers a plugin's RPC channel through `owner.webServer`, where
-# the owner is the Connection row's own fiber — not the caller's. The shipped
-# dsh-web-app row injects `webRuntime` alone, so that read is refused with
-# `cannot get property "webServer" without inject`, the channel never reaches
-# the web server, and the browser's calls answer HTTP 405 while the boot log
-# stays clean.
-#
-# An entry patch replaces the whole inject list, so name every service that
-# fiber actually touches: `credentials` is the module's own inject, `webRuntime`
-# carries the row's `trustedHosts: !!js ctx.webRuntime.trustedHosts`, and
-# `webServer` is what channel registration reads. The name guard leaves a
-# replacement Connection implementation untouched.
-- id: connection
-  name: '@deepseek-ai/dsh-client-connection'
-  inject: [credentials, webRuntime, webServer]

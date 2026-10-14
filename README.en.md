@@ -45,9 +45,9 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.6`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.7`.
 
-Then **manually restart the desktop application**. Refreshing the page does not reload the plugin inside the Host process.
+A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
 
 ### 2. Add a key
 
@@ -64,7 +64,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.6`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.7`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 A local checkout can be linked with `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`.
 

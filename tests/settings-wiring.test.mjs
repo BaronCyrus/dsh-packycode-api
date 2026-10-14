@@ -46,6 +46,7 @@ function makeContext({ installSection = true, update = true } = {}) {
       }
       if (services.includes('connection')) {
         return callback({
+          effect: ctx.effect,
           connection: {
             rpc: {
               handle(channel, handler) {

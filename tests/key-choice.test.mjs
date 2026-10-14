@@ -68,7 +68,7 @@ function context() {
     },
     get: () => undefined,
     inject(names, callback) {
-      if (names.includes('connection')) return callback({ connection: { rpc: { handle: (_c, handler) => { seen.handler = handler; return () => {} } } } })
+      if (names.includes('connection')) return callback({ effect: ctx.effect, connection: { rpc: { handle: (_c, handler) => { seen.handler = handler; return () => {} } } } })
       if (names.includes('tools')) return callback({ tools: { register: () => () => {} } })
       return undefined
     },

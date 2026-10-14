@@ -91,7 +91,7 @@ async function makeContext({ settings: generation = '0.2' } = {}) {
       if (names.includes('web')) return callback({ web, effect: ctx.effect })
       if (names.includes('tools')) return callback({ tools: { register: () => () => {} } })
       if (names.includes('connection')) {
-        return callback({ connection: { rpc: { handle: (_channel, handler) => { seen.handler = handler; return () => {} } } } })
+        return callback({ effect: ctx.effect, connection: { rpc: { handle: (_channel, handler) => { seen.handler = handler; return () => {} } } } })
       }
       return callback(ctx)
     },

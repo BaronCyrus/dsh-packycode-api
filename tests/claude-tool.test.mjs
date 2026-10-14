@@ -53,7 +53,7 @@ function contextWithTools(credentials, dir) {
     inject(services, callback) {
       registered.injected.push(services)
       if (services.includes('settings')) return callback({ settings: { installSection: () => {} } })
-      if (services.includes('connection')) return callback({ connection: { rpc: { handle: () => () => {} } } })
+      if (services.includes('connection')) return callback({ effect: ctx.effect, connection: { rpc: { handle: () => () => {} } } })
       if (services.includes('tools')) {
         return callback({
           tools: {
