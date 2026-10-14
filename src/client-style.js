@@ -76,6 +76,13 @@ export const STYLE = `
 .pkc-reach>span[data-state=no]{color:var(--dsw-alias-label-caption);text-decoration:line-through}
 .pkc-add{display:flex;flex-direction:column;gap:8px;padding-top:14px;border-top:.5px solid var(--dsw-alias-border-l2)}
 
+.pkc-models{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0;padding:0;min-width:0;border:0}
+.pkc-model{display:flex;align-items:center;gap:10px;min-width:0;padding:10px 12px;border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-interactive-bg-hover);cursor:pointer}
+.pkc-model>input{flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary)}
+.pkc-model>span{display:flex;flex-direction:column;min-width:0;gap:2px}
+.pkc-model b{font-size:13px;font-weight:500}
+.pkc-models:disabled .pkc-model{opacity:.5;cursor:not-allowed}
+
 .pkc-setting{display:grid;grid-template-columns:112px minmax(0,1fr);gap:6px 16px;align-items:start}
 .pkc-setting>.pkc-label{padding-top:5px}
 .pkc-setting>div{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -101,6 +108,7 @@ export const STYLE = `
 @media (max-width:640px){
   .pkc-stats{grid-template-columns:1fr}
   .pkc-setting{grid-template-columns:1fr}
+  .pkc-models{grid-template-columns:1fr}
   .pkc-setting>.pkc-label{padding-top:0}
 }
 `

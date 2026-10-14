@@ -67,6 +67,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'deepseek-flash': true,
     'gpt-6.1-sol': false,
     'gpt-6-astra': false,
+    'grok-4.7': false,
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,

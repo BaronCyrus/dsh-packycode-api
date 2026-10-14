@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { apply, Config } from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
+import { fieldValue } from '../src/preferences.js'
 
 const USER_PATCH = '- id: permission\n  config:\n    defaultPreset: danger-full-access\n'
 
@@ -120,8 +121,8 @@ const settle = () => new Promise(resolve => { setTimeout(resolve, 20) })
 
 test('the search preference fields are part of the plugin Config', () => {
   const resolved = new Config({})
-  assert.equal(resolved.searchProvider, 'default')
-  assert.equal(resolved.searchBackend, 'deepseek')
+  assert.equal(fieldValue(resolved.searchProvider), 'default')
+  assert.equal(fieldValue(resolved.searchBackend), 'deepseek')
   assert.throws(() => new Config({ searchProvider: 'everything' }))
 })
 

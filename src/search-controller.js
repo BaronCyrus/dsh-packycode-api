@@ -20,14 +20,17 @@ import {
   SEARCH_MODES,
 } from './search.js'
 import { usableFallback } from './search-composition.js'
+import { fieldValue } from './preferences.js'
 
 /** Routers other subscription plugins register; shown so the user knows who holds the slot. */
 const FOREIGN_ROUTERS = Object.freeze({ codex: 'codex-subscription-auto', kimi: 'kimi-subscription-auto' })
 
 /** Normalize a stored preference; anything unknown reads as the default. */
 export function readSearchChoice(value) {
-  const mode = SEARCH_MODES.includes(value?.searchProvider) ? value.searchProvider : SEARCH_MODE_DEFAULT
-  const backend = SEARCH_BACKENDS.includes(value?.searchBackend) ? value.searchBackend : DEFAULT_SEARCH_BACKEND
+  const provider = fieldValue(value?.searchProvider)
+  const selectedBackend = fieldValue(value?.searchBackend)
+  const mode = SEARCH_MODES.includes(provider) ? provider : SEARCH_MODE_DEFAULT
+  const backend = SEARCH_BACKENDS.includes(selectedBackend) ? selectedBackend : DEFAULT_SEARCH_BACKEND
   return { mode, backend }
 }
 

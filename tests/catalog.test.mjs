@@ -9,7 +9,7 @@ import { DEFAULT_API_HOST, DEFAULT_REASONING_LEVEL, PROVIDER } from '../src/cons
 const byId = id => PACKYCODE_MODELS.find(model => model.id === id)
 
 test('ships exactly the models verified against the gateway', () => {
-  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
   for (const model of PACKYCODE_MODELS) assert.equal(model.provider, PROVIDER)
 })
 
@@ -30,6 +30,13 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
     assert.equal(byId(id).maxTokens, 128_000, id)
   }
   assert.equal(byId('gpt-6-astra').maxTokens, 128_000)
+  assert.equal(byId('grok-4.7').name, 'Grok 4.7')
+  assert.equal(byId('grok-4.7').api, 'openai-responses')
+  assert.equal(byId('grok-4.7').baseUrl, `${DEFAULT_API_HOST}/v1`)
+  assert.deepEqual([...byId('grok-4.7').input], ['text', 'image'])
+  assert.equal(byId('grok-4.7').contextWindow, 500_000)
+  assert.equal(byId('grok-4.7').maxTokens, 500_000)
+  assert.equal(byId('grok-4.7').compat.supportsLongCacheRetention, false)
   // Anthropic traffic carries no /v1: the Anthropic client appends /v1/messages.
   for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).api, 'anthropic-messages')
@@ -42,6 +49,7 @@ test("offers each vendor's documented effort levels", () => {
   assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6.1-sol')), ['low', 'medium', 'high', 'xhigh', 'max'])
   // developers.openai.com: GPT-6 Astra `reasoning.effort` is low | medium | high | xhigh | max.
   assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6-astra')), ['low', 'medium', 'high', 'xhigh', 'max'])
+  assert.deepEqual(getSupportedThinkingLevels(byId('grok-4.7')), ['low', 'medium', 'high', 'xhigh'])
   for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.deepEqual(getSupportedThinkingLevels(byId(id)), ['low', 'medium', 'high', 'xhigh', 'max'])
   }

@@ -25,6 +25,7 @@
 | 能力 | 使用体验 |
 | --- | --- |
 | **自带模型路由** | 安装后模型选择器出现 `PackyCode` 分组，不需要配置 provider，也不用改 `cordis.patch.yml` |
+| **自选显示的模型** | 设置页的模型列表默认全选；取消勾选后，切换列表立即隐藏该模型，已有会话仍可继续使用 |
 | **多 Key 按顺序使用** | 额度用尽或 Key 被拒绝时自动切到下一个可用 Key；失败的那一步由重试接手 |
 | **按分组选 Key** | 每个 Key 后面列出它所在的 PackyCode 分组和能用的模型；当前 Key 的分组用不了所选模型（例如没有 cc 分组却选了 Claude）时，这一轮自动改用分组合适的 Key |
 | **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条，并给出这些 Key 的合计；输入框右侧显示当前 Key 的剩余额度 |
@@ -48,7 +49,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.4`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.5`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -60,14 +61,14 @@ dsh-packycode-api
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。`deepseek-flash`、`gpt-6.1-sol` 和 `gpt-6-astra` 添加 Key 后即可用。三个 Claude 模型还需要本机装有 Claude Code CLI，见下文。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。`deepseek-flash`、`gpt-6.1-sol`、`gpt-6-astra` 和 `grok-4.7` 通过 HTTP 调用；三个 Claude 模型还需要本机装有 Claude Code CLI，见下文。Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.4`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.5`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -76,6 +77,8 @@ dsh-packycode-api
 </details>
 
 ## 日常使用
+
+**选择显示的模型。** 在 **设置 → PackyCode → 显示的模型** 中勾选要在切换列表里看到的模型，默认全选，也支持「全选」和「全不选」。选择保存在当前 profile，修改后立即生效；取消勾选不会中断已有会话。后续新增的模型默认勾选。
 
 **换 Key。** Key 按添加顺序使用。点「切到此 Key」指定优先使用的 Key，下一轮就生效；「重命名」改备注（最多 60 字，不能为空）；充值或更换后点「重新启用」。
 
@@ -142,11 +145,16 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 | `deepseek-flash` | HTTP，chat/completions | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
 | `gpt-6-astra` | 同上 | 同上 | 同上 |
+| `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
 | `claude-opus-5-5` | 本机 Claude Code CLI | 选择器档位同上，实际档位由 CLI 决定 | 能给官方 CLI 用的分组，比如cc分组 |
 | `claude-sonnet-5-5` | 同上 | 同上 | 同上 |
 | `claude-haiku-5-5` | 同上；会话标题也固定走它 | 同上 | 同上 |
 
 列表里看得到模型，不代表当前令牌分组一定放行。换分组时不要把对应分组一起去掉。
+
+Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
+
+Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses 模型默认省略。当前网关的 Grok 路由会将这个字段误报成 `Incorrect API key provided`。
 
 <details>
 <summary>协议、分组和 CLI 的具体约束</summary>

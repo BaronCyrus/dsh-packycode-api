@@ -346,16 +346,16 @@ test('loopback RPC exposes version and update endpoints with sanitized errors', 
   })
   assert.deepEqual(await failing('plugin/version', {}), {
     ok: false,
-    error: { message: 'PackyCode plugin version check failed' },
+    error: { code: 'packycode/request-failed', message: 'PackyCode plugin version check failed', details: {} },
   })
   assert.deepEqual(await failing('plugin/update', {}), {
     ok: false,
-    error: { message: 'PackyCode request failed' },
+    error: { code: 'packycode/request-failed', message: 'PackyCode request failed', details: {} },
   })
 
   const missing = rpc(undefined)
   assert.deepEqual(await missing('plugin/version', {}), {
     ok: false,
-    error: { message: 'PackyCode plugin version is unavailable' },
+    error: { code: 'packycode/request-failed', message: 'PackyCode plugin version is unavailable', details: {} },
   })
 })

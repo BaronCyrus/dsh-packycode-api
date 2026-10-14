@@ -38,6 +38,7 @@ import { createGroupReader } from './groups.js'
 import { normalizeHost } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
 import { PackyCodeKeyRing } from './key-ring.js'
+import { createModelSelectionController } from './model-selection.js'
 import { AUTO_CLAUDE_MODE, claudeModeForSession, planModeForSession, planModeForToolExecution } from './permission.js'
 import { createPackyCodePluginManager } from './plugin-version.js'
 import { connectSettings, fieldValue, live, unwritable } from './preferences.js'
@@ -81,6 +82,8 @@ export const Config = z.object({
   searchProvider: live(z.union([...SEARCH_MODES]).default(SEARCH_MODE_DEFAULT)),
   /** Which PackyCode model runs a search: `deepseek` or `gpt`. */
   searchBackend: live(z.union([...SEARCH_BACKENDS]).default(DEFAULT_SEARCH_BACKEND)),
+  /** Only the picker is filtered; an existing session can keep its model. */
+  hiddenModels: live(z.array(z.string()).default([])),
 })
 
 export function apply(ctx, config) {
@@ -94,6 +97,7 @@ export function apply(ctx, config) {
     statusHost: normalizeHost(config?.statusHost, DEFAULT_STATUS_HOST),
     searchProvider: fieldValue(config?.searchProvider),
     searchBackend: fieldValue(config?.searchBackend),
+    hiddenModels: fieldValue(config?.hiddenModels),
   })
   const hosts = () => {
     const current = source() ?? {}
@@ -130,6 +134,14 @@ export function apply(ctx, config) {
   }
   const fallbackSessionId = `${PLUGIN_ID}-${randomUUID()}`
   const attachments = () => ctx.get?.('attachments') ?? ctx.attachments
+  const modelPreference = { writable: false, set: undefined }
+  let refreshModels = () => {}
+  const modelSelection = createModelSelectionController({
+    readPreference: () => source() ?? {},
+    writePreference: patch => modelPreference.set(patch),
+    isWritable: () => modelPreference.writable === true && typeof modelPreference.set === 'function',
+    onChange: () => refreshModels(),
+  })
 
   // ── the model route ───────────────────────────────────────────────────────
 
@@ -195,8 +207,8 @@ export function apply(ctx, config) {
   }
 
   // CLI-backed ids run the Claude Code CLI; everything else keeps the pi-ai path.
-  ctx.llm.registerAdapter([PROVIDER], createClaudeCliAdapter({
-    inner: createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments: attachments }),
+  const registration = ctx.llm.registerAdapter([PROVIDER], createClaudeCliAdapter({
+    inner: createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments: attachments, isModelVisible: modelSelection.isVisible }),
     runner: claudeRunner,
     // Plan mode is "do not implement yet" for this turn, so it wins over the
     // permission ceiling and an explicit claudeCliMode pin. Titles ignore it.
@@ -212,6 +224,12 @@ export function apply(ctx, config) {
     // is explained from a fresh reading.
     explainKey: runKey => keys.describe(runKey),
   }))
+  refreshModels = () => {
+    // Atomic replacement announces the changed catalog to DSH's model
+    // directories without unmounting the route or interrupting a turn.
+    if (typeof registration?.replace === 'function') registration.replace([PROVIDER])
+    else ctx.emit?.('llm/adapters-updated')
+  }
   ctx.llm.registerConfigurableProviders([{
     provider: PROVIDER,
     displayName: DISPLAY_NAME,
@@ -264,14 +282,17 @@ export function apply(ctx, config) {
     onChange: () => {
       balance.invalidate()
       groups.invalidate()
+      modelSelection.reconcile()
       void search.reconcile()
     },
     hostPreference,
     searchPreference,
+    modelPreference,
   }))
   // A volatile field changed (the PackyCode panel, or a hand edit of the
   // profile patch): follow it without restarting the route.
   ctx.on?.('loader/volatile-update', () => {
+    modelSelection.reconcile()
     void search.reconcile()
   })
 
@@ -299,6 +320,7 @@ export function apply(ctx, config) {
     claudeCli,
     pluginManager: createPackyCodePluginManager(),
     search,
+    modelSelection,
   })
   /**
    * Connection registers a channel through `owner.webServer`, read on its own
@@ -383,6 +405,7 @@ export {
 } from './failures.js'
 export { catalogCoverage, createGroupReader, parsePricing, parseSelectedGroups, pickKeyForModel } from './groups.js'
 export { createKeyChooser } from './key-chooser.js'
+export { createModelSelectionController, readHiddenModels } from './model-selection.js'
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'
 export { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 export { createPackyCodeProfile, createRouteAdapter } from './route.js'

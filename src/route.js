@@ -1,6 +1,6 @@
 /**
  * The HTTP model route: the pi-ai provider profile and the adapter that
- * serves the catalog's HTTP models (DeepSeek and GPT) with the ring's keys.
+ * serves the catalog's HTTP models (DeepSeek, GPT and Grok) with the ring's keys.
  *
  * @module dsh-packycode-api/route
  */
@@ -104,7 +104,7 @@ export function createPackyCodeProfile(provider) {
  *   supplies none, and the attachment store image input is read from.
  * @returns a `PiAiAdapter` serving the `packycode` route.
  */
-export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments }) {
+export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments, isModelVisible = () => true }) {
   const raw = createPackyCodeProvider()
   /**
    * The gateway's Codex-group check refuses a Responses request that carries
@@ -127,7 +127,13 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   const provider = Object.freeze({ ...raw, stream: guarded('stream'), streamSimple: guarded('streamSimple') })
   const profiles = new Map([[PROVIDER, createPackyCodeProfile(provider)]])
 
-  return new PiAiAdapter({
+  // Visibility affects discovery only. Resolution and prepared/in-flight
+  // turns still use the complete catalog, including a now-hidden model.
+  return new (class extends PiAiAdapter {
+    async listModels(provider) {
+      return (await super.listModels(provider)).filter(model => isModelVisible(model.id))
+    }
+  })({
     profiles: () => profiles,
     resolveApiKey: async () => {
       const active = await keys.active()

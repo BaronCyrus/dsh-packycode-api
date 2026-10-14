@@ -4,7 +4,7 @@
  * Every reply carries only what this plugin owns: key labels and state, the
  * balance and group projections the host built, host overrides, whether this
  * device has the Claude Code CLI, the plugin version, and the web search
- * preference. Key material never crosses this boundary.
+ * preference and model visibility. Key material never crosses this boundary.
  *
  * @module dsh-packycode-api/rpc
  */
@@ -15,7 +15,8 @@ import { normalizeHost } from './hosts.js'
 export { normalizeHost } from './hosts.js'
 
 const ok = value => ({ ok: true, value })
-const failed = message => ({ ok: false, error: { message } })
+// Connection 0.2 validates all three error fields, even on plugin channels.
+const failed = message => ({ ok: false, error: { code: 'packycode/request-failed', message, details: {} } })
 
 /** Only sentences this plugin authored may reach the browser. */
 const SAFE_MESSAGE = /^(?:PackyCode|That |Unknown |PackyCode's |add |the )[\s\S]{0,180}$/u
@@ -29,7 +30,7 @@ const keyId = payload => String(payload?.id ?? '')
  *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search, modelSelection }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
@@ -38,6 +39,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
   const manager = () => need(pluginManager, 'PackyCode plugin version is unavailable')
   const webSearch = () => need(search, 'PackyCode web search is unavailable in this runtime')
   const groupReader = () => need(groups, 'PackyCode key groups are unavailable in this runtime')
+  const models = () => need(modelSelection, 'PackyCode model selection is unavailable in this runtime')
 
   const status = async () => ({
     ...(await ring.list()),
@@ -90,6 +92,8 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       searchProvider: payload?.searchProvider,
       searchBackend: payload?.searchBackend,
     }),
+    'models/status': () => models().status(),
+    'models/update': payload => models().update({ selectedIds: payload?.selectedIds }),
   }
 
   return async (endpoint, payload, signal) => {

@@ -14,7 +14,8 @@
  * model does not support is refused before the request is sent: Claude Opus
  * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol and GPT-6 Astra
  * `reasoning.effort` (developers.openai.com model pages), DeepSeek thinking
- * mode (`thinking` toggle plus `low|high|max` effort).
+ * mode (`thinking` toggle plus `low|high|max` effort), and Grok 4.7
+ * (docs.x.ai/developers/grok-4-7).
  *
  * @module dsh-packycode-api/catalog
  */
@@ -57,6 +58,9 @@ const ALWAYS_THINKING_LEVELS = Object.freeze({
   xhigh: 'xhigh',
   max: 'max',
 })
+
+/** Grok 4.7 supports low | medium | high | xhigh, with no off or max. */
+const GROK_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, max: null })
 
 export const PACKYCODE_MODELS = Object.freeze([
   Object.freeze({
@@ -106,6 +110,23 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+  }),
+  Object.freeze({
+    // docs.x.ai/developers/grok-4-7: Responses; text/image input; 500K
+    // context, no separate text-output cap. pi-ai requires a numeric output
+    // ceiling and bounds it by the remaining context on each request.
+    id: 'grok-4.7',
+    name: 'Grok 4.7',
+    api: 'openai-responses',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 500_000,
+    maxTokens: 500_000,
+    thinkingLevelMap: GROK_LEVELS,
+    compat: Object.freeze({ supportsLongCacheRetention: false }),
   }),
   Object.freeze({
     id: 'claude-opus-5-5',

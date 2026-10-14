@@ -37,7 +37,7 @@ function keyRingAuth() {
 
 /** Build the route's pi-ai provider (unguarded; the plugin wraps its streams). */
 export function createPackyCodeProvider() {
-  return createProvider({
+  const provider = createProvider({
     id: PROVIDER,
     name: DISPLAY_NAME,
     baseUrl: DEFAULT_API_HOST,
@@ -48,6 +48,18 @@ export function createPackyCodeProvider() {
       'openai-responses': openAIResponsesApi(),
       'anthropic-messages': anthropicMessagesApi(),
     },
+  })
+  // Only GPT's Responses route requires prompt_cache_key here. Sending it
+  // to Grok makes the gateway return a misleading upstream API-key error.
+  // pi-ai's public cacheRetention option omits this field without changing
+  // the model, protocol, reasoning, session headers, or credential source.
+  const requestOptions = (model, options) => model.api === 'openai-responses' && !model.id.startsWith('gpt-')
+    ? { ...options, cacheRetention: 'none' }
+    : options
+  return Object.freeze({
+    ...provider,
+    stream: (model, context, options) => provider.stream(model, context, requestOptions(model, options)),
+    streamSimple: (model, context, options) => provider.streamSimple(model, context, requestOptions(model, options)),
   })
 }
 

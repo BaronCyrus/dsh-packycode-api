@@ -25,6 +25,7 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | Capability | What it does |
 | --- | --- |
 | **Built-in model route** | Adds a `PackyCode` group to the model picker. No provider configuration and no `cordis.patch.yml` edits |
+| **Choose visible models** | All models are selected by default in Settings. Unchecking a model immediately hides it from the picker; existing sessions can keep using it |
 | **Keys used in order** | An exhausted or rejected key is disabled and the next usable key takes over; the failed step is retried on that key |
 | **Keys chosen by group** | Each key lists its PackyCode groups and the models they reach; when the active key's groups cannot reach the selected model (no `cc` group for Claude, say), that turn runs on a stored key whose groups can |
 | **Visible balance** | Settings lists each key's remaining, used, limit, reset period, and a usage bar, plus a total of those keys. The composer shows the active key's remaining balance |
@@ -44,7 +45,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.4`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.5`.
 
 Then **manually restart the desktop application**. Refreshing the page does not reload the plugin inside the Host process.
 
@@ -56,14 +57,14 @@ Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label 
 
 ### 3. Select a model
 
-Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, and `gpt-6-astra` work once a key is stored. The three Claude models also need the Claude Code CLI on this device; see below.
+Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt-6-astra`, and `grok-4.7` use HTTP. The three Claude models also need the Claude Code CLI on this device; see below. Your key's groups must cover the selected model.
 
 <details>
 <summary>Verify the install / other profiles / a local checkout</summary>
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.4`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.5`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 A local checkout can be linked with `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`.
 
@@ -72,6 +73,8 @@ A profile without a browser can still use the model route. It just has no settin
 </details>
 
 ## Daily use
+
+**Choose visible models.** Under **Settings → PackyCode → Visible models**, check the models you want in the picker. All are selected by default, with Select all / Select none controls. The selection is saved in the current profile and applies immediately; unchecking a model does not interrupt an existing session. New catalog models are selected by default.
 
 **Switch keys.** Keys are used in the order they were added. **Use this key** picks the preferred key, effective from the next turn; **Rename** changes its label (at most 60 characters, empty names are refused); **Re-enable** puts a disabled key back after a top-up or replacement.
 
@@ -138,11 +141,16 @@ Claude Code CLI → temporary local MCP web_search → selected PackyCode DeepSe
 | `deepseek-flash` | HTTP, chat/completions | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
 | `gpt-6-astra` | Same | Same | Same |
+| `grok-4.7` (Grok 4.7) | HTTP, Responses, text/image input; 500K context | Cannot be off; `low` / `medium` / `high` / `xhigh` | The Grok coverage read from the gateway in Settings |
 | `claude-opus-5-5` | Local Claude Code CLI | The picker offers the same levels; the CLI chooses the actual effort | A group the official CLI is allowed to use; see below |
 | `claude-sonnet-5-5` | Same | Same | Same |
 | `claude-haiku-5-5` | Same; session titles always use this model | Same | Same |
 
 A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
+
+Grok 4.7's context and reasoning levels follow the [official guide](https://docs.x.ai/developers/grok-4-7). There is no separate text-output limit; the plugin uses the context size as its numeric output ceiling, bounded by the remaining context per request.
+
+Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present.
 
 <details>
 <summary>Protocol, group, and CLI constraints</summary>

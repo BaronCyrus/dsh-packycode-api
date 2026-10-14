@@ -13,18 +13,15 @@
  * It prints no key material, only a masked tail. Run it from the repository
  * root after `pnpm run build`:
  *
- *   node scripts/live-check.mjs [--with-cli] [--with-search]
+ *   node scripts/live-check.mjs [--with-cli] [--with-search] [--key-label LABEL]
  *
  * `--with-cli` also runs each CLI-backed Claude model through the local
  * Claude Code CLI; `--with-search` runs one web search per backend. Both
  * spend more quota than the default run.
  */
 
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { readStoredKey } from './stored-key.mjs'
 
 import {
   CLI_BACKED_MODEL_IDS,
@@ -42,23 +39,9 @@ import {
 } from '../lib/index.js'
 
 const PROVIDER = 'packycode'
-const CREDENTIAL_NAME = 'PACKY_CODE_API_KEY'
 const SESSION_ID = 'live-check-session'
 const HOSTS = Object.freeze({ apiHost: 'https://cf.api.fan', statusHost: 'https://www.packyapi.ai' })
-const HTTP_MODELS = ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra']
-
-function readStoredKey() {
-  const path = join(homedir(), '.dsh', '.credentials.yaml')
-  let text
-  try {
-    text = readFileSync(path, 'utf8')
-  } catch {
-    throw new Error(`no DSH credentials file at ${path}; store ${CREDENTIAL_NAME} first`)
-  }
-  const match = new RegExp(`^\\s*${CREDENTIAL_NAME}:\\s*(.+)$`, 'mu').exec(text)
-  if (match === null) throw new Error(`${CREDENTIAL_NAME} is not present in ${path}`)
-  return match[1].trim().replace(/^['"]|['"]$/gu, '')
-}
+const HTTP_MODELS = ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7']
 
 /** In-memory stand-in for the DSH credential-record service. */
 function fakeCredentials() {
@@ -128,7 +111,10 @@ const describe = ({ answer, finish }) => (finish?.kind === 'stop'
   : `→ FAILED: ${String(finish?.failure?.message ?? 'no finish').slice(0, 140)}`)
 
 async function main() {
-  const key = readStoredKey()
+  const labelIndex = process.argv.indexOf('--key-label')
+  const label = labelIndex < 0 ? undefined : process.argv[labelIndex + 1]
+  if (labelIndex >= 0 && (label === undefined || label.startsWith('--'))) throw new Error('--key-label needs a key label')
+  const key = await readStoredKey({ label })
   const mask = text => String(text).split(key).join(`…${key.slice(-4)}`)
   console.log(`stored key: …${key.slice(-4)} (${key.length} chars)\n`)
   const route = await routeWith([[key, 'live-check']])

@@ -56,6 +56,15 @@ export const zh = {
   groupsPartial: '部分',
   groupsStale: '分组为上次读取的结果',
 
+  modelsTitle: '显示的模型',
+  modelsIntro: '切换模型时只显示已勾选的 PackyCode 模型，默认全选。修改后立即生效；已有会话仍可继续使用原模型。',
+  modelsChecking: '正在读取模型设置…',
+  modelsFailed: '模型设置读取或保存失败',
+  modelsAll: '全选',
+  modelsNone: '全不选',
+  modelsCount: '已选 {count} / {total}',
+  modelsEmpty: '未勾选任何模型，切换列表将隐藏 PackyCode 的模型。',
+
   advanced: '高级：接口地址',
   apiHost: '模型接口地址',
   statusHost: '余额接口地址',
@@ -139,6 +148,14 @@ export const zh = {
 
 export const en = {
   nav: 'PackyCode',
+  modelsTitle: 'Visible models',
+  modelsIntro: 'Only selected PackyCode models appear when switching models. All are selected by default. Changes apply immediately; existing sessions can keep their current model.',
+  modelsChecking: 'Reading model settings…',
+  modelsFailed: 'Could not read or save model settings',
+  modelsAll: 'Select all',
+  modelsNone: 'Select none',
+  modelsCount: '{count} / {total} selected',
+  modelsEmpty: 'No models selected. PackyCode models are hidden from the picker.',
   intro: 'Paste a PackyCode (PackyAPI) API key to use the built-in model route. Keys are used in order: an exhausted or rejected key hands over to the next one, and a key whose groups cannot reach the selected model is passed over for one whose groups can.',
 
   accountsTitle: 'Accounts and keys',

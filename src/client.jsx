@@ -27,6 +27,7 @@ const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
 const MODEL_FAMILIES = [
   ['DeepSeek', ['deepseek-flash']],
   ['GPT', ['gpt-6.1-sol', 'gpt-6-astra']],
+  ['Grok', ['grok-4.7']],
   ['Claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
 ]
 
@@ -439,6 +440,67 @@ function AccountsCard({ call, t }) {
   )
 }
 
+// ── model visibility ────────────────────────────────────────────────────────
+
+function ModelsCard({ call, t }) {
+  const [state, setState] = react.useState()
+  const [busy, setBusy] = react.useState(false)
+  const [error, setError] = react.useState()
+
+  react.useEffect(() => {
+    let live = true
+    call('models/status').then(value => {
+      if (live) setState(value)
+    }).catch(failure => {
+      if (live) setError(clearMessage(failure))
+    })
+    return () => { live = false }
+  }, [call])
+
+  const models = state?.models ?? []
+  const selectedIds = models.filter(model => model.selected).map(model => model.id)
+  const disabled = busy || state?.writable !== true
+  const update = ids => {
+    if (disabled) return
+    setBusy(true)
+    setError(undefined)
+    call('models/update', { selectedIds: ids })
+      .then(setState)
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <Card title={t('modelsTitle')} aside={state !== undefined && <span className="pkc-meta">{fill(t('modelsCount'), { count: selectedIds.length, total: models.length })}</span>}>
+      <p className="pkc-note">{t('modelsIntro')}</p>
+      {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('modelsChecking')}</p>}
+      {state !== undefined && (
+        <>
+          <div className="pkc-actions">
+            <Button disabled={disabled || selectedIds.length === models.length} onClick={() => update(models.map(model => model.id))}>{t('modelsAll')}</Button>
+            <Button disabled={disabled || selectedIds.length === 0} onClick={() => update([])}>{t('modelsNone')}</Button>
+          </div>
+          <fieldset className="pkc-models" aria-label={t('modelsTitle')} disabled={disabled}>
+            {models.map(model => (
+              <label key={model.id} className="pkc-model">
+                <input
+                  type="checkbox"
+                  checked={model.selected}
+                  onChange={event => update(event.target.checked ? [...selectedIds, model.id] : selectedIds.filter(id => id !== model.id))}
+                />
+                <span><b>{model.name}</b><span className="pkc-meta pkc-mono">{model.id}</span></span>
+              </label>
+            ))}
+          </fieldset>
+          {selectedIds.length === 0 && <p className="pkc-note">{t('modelsEmpty')}</p>}
+          {state.writable !== true && <p className="pkc-note">{t('searchNotWritable')}</p>}
+        </>
+      )}
+      {error !== undefined && <p className="pkc-error" role="alert">{`${t('modelsFailed')}: ${error}`}</p>}
+    </Card>
+  )
+}
+
 // ── web search ──────────────────────────────────────────────────────────────
 
 /** Web search routing and backend, written through the host. */
@@ -758,6 +820,7 @@ function PackyCodeSection({ rpc, t }) {
     <div className="pkc">
       <p className="pkc-intro">{t('intro')}</p>
       <AccountsCard call={call} t={t} />
+      <ModelsCard call={call} t={t} />
       <SearchCard call={call} t={t} />
       <ClaudeCliCard call={call} t={t} />
       <VersionCard call={call} t={t} />

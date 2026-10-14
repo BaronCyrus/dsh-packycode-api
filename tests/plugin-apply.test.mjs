@@ -66,7 +66,7 @@ test('registers one route and one directory entry, and defers the browser surfac
   assert.equal(registered.adapters.length, 1)
   assert.deepEqual(registered.adapters[0].providers, ['packycode'])
   const models = await registered.adapters[0].adapter.listModels('packycode')
-  assert.deepEqual(models.map(model => model.id), ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+  assert.deepEqual(models.map(model => model.id), ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 
   assert.deepEqual(registered.directories[0], [{
     provider: 'packycode',
