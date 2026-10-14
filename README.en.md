@@ -45,7 +45,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.5`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.6`.
 
 Then **manually restart the desktop application**. Refreshing the page does not reload the plugin inside the Host process.
 
@@ -64,7 +64,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.5`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.6`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 A local checkout can be linked with `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`.
 
@@ -138,7 +138,7 @@ Claude Code CLI → temporary local MCP web_search → selected PackyCode DeepSe
 
 | Model | How it runs | Effort | Token group |
 | --- | --- | --- | --- |
-| `deepseek-flash` | HTTP, chat/completions | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
+| `deepseek-flash` | HTTP, chat/completions, images allowed | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
 | `gpt-6-astra` | Same | Same | Same |
 | `grok-4.7` (Grok 4.7) | HTTP, Responses, text/image input; 500K context | Cannot be off; `low` / `medium` / `high` / `xhigh` | The Grok coverage read from the gateway in Settings |
@@ -147,6 +147,8 @@ Claude Code CLI → temporary local MCP web_search → selected PackyCode DeepSe
 | `claude-haiku-5-5` | Same; session titles always use this model | Same | Same |
 
 A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
+
+All seven models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Chat Completions request.
 
 Grok 4.7's context and reasoning levels follow the [official guide](https://docs.x.ai/developers/grok-4-7). There is no separate text-output limit; the plugin uses the context size as its numeric output ceiling, bounded by the remaining context per request.
 

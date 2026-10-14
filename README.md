@@ -49,7 +49,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.5`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.6`。
 
 完成后**手动重启桌面应用**。仅刷新页面不会重新加载 Host 里的插件。
 
@@ -68,7 +68,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.5`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.6`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
 
@@ -142,7 +142,7 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 
 | 模型 | 怎么调用 | 推理档位 | 适合的令牌分组 |
 | --- | --- | --- | --- |
-| `deepseek-flash` | HTTP，chat/completions | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
+| `deepseek-flash` | HTTP，chat/completions，可带图 | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
 | `gpt-6-astra` | 同上 | 同上 | 同上 |
 | `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
@@ -151,6 +151,8 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 | `claude-haiku-5-5` | 同上；会话标题也固定走它 | 同上 | 同上 |
 
 列表里看得到模型，不代表当前令牌分组一定放行。换分组时不要把对应分组一起去掉。
+
+当前目录中的 7 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 chat/completions 请求发送。
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 

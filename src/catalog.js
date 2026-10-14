@@ -64,13 +64,15 @@ const GROK_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, max: null })
 
 export const PACKYCODE_MODELS = Object.freeze([
   Object.freeze({
+    // api-docs.deepseek.com/guides/vision: Flash accepts text and images
+    // through the OpenAI-compatible Chat Completions API.
     id: 'deepseek-flash',
     name: 'DeepSeek Flash',
     api: 'openai-completions',
     provider: PROVIDER,
     baseUrl: COMPLETIONS_BASE,
     reasoning: true,
-    input: Object.freeze(['text']),
+    input: Object.freeze(['text', 'image']),
     cost: NO_COST,
     contextWindow: 1_000_000,
     maxTokens: 384_000,

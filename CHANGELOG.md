@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6
+
+- Fixed the missing `image` input capability on `deepseek-flash`, following [DeepSeek's official vision guide](https://api-docs.deepseek.com/guides/vision/). DSH can now send image attachments through the existing Chat Completions route. Audited the two GPT models, Grok 4.7 and three Claude models against their vendor documentation; all six already declare image input.
+- Added a regression that sends an image through the registered host route and checks the actual Chat Completions `image_url` payload. `scripts/live-check.mjs --with-vision` also checks DeepSeek's answers to two color fixtures without revealing the colors in the prompt.
+- Validation: 278 offline tests, both rebuilt bundles and the versioned tarball. The built route passed all four HTTP model checks, key rotation and secret-free RPC projections. DeepSeek correctly identified both 512×512 red and blue PNGs through the attachment service seam.
+
 ## 1.1.5
 
 - Added `grok-4.7`, displayed as **Grok 4.7**, to the PackyCode `openai-responses` route at `https://cf.api.fan/v1`. [The official Grok 4.7 guide](https://docs.x.ai/developers/grok-4-7) declares a 500,000-token context, text/image input, text output, and `low` / `medium` / `high` / `xhigh` reasoning (default `high`, no off or max). There is no separate documented text-output cap; the numeric pi-ai ceiling is 500,000, bounded by remaining context per request. Only GPT Responses requests keep `prompt_cache_key`: the gateway's Grok route rejects this field with a misleading `Incorrect API key provided` error. Non-GPT Responses requests use pi-ai's `cacheRetention: 'none'` to omit it; the model, protocol, effort and plugin-owned credential stay the same.

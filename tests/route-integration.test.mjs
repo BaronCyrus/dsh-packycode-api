@@ -56,7 +56,7 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
 
   const deepseek = await adapter.resolveModel(PROVIDER, 'deepseek-flash')
   assert.deepEqual(deepseek.reasoning.efforts.map(effort => effort.id), ['off', 'low', 'high', 'max'])
-  assert.deepEqual([...deepseek.inputModalities], ['text'])
+  assert.deepEqual([...deepseek.inputModalities], ['text', 'image'])
 })
 
 test('preparing a call returns the model and a stream, without opening one', async () => {

@@ -13,6 +13,12 @@ test('ships exactly the models verified against the gateway', () => {
   for (const model of PACKYCODE_MODELS) assert.equal(model.provider, PROVIDER)
 })
 
+test('every current model declares the text and image inputs documented by its vendor', () => {
+  for (const model of PACKYCODE_MODELS) {
+    assert.deepEqual([...model.input], ['text', 'image'], model.id)
+  }
+})
+
 test('pins each model to the protocol and base URL the gateway serves', () => {
   // OpenAI traffic carries /v1 and never an endpoint path; the SDK appends it.
   assert.equal(byId('deepseek-flash').api, 'openai-completions')

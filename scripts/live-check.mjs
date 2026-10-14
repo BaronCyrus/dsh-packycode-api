@@ -13,15 +13,18 @@
  * It prints no key material, only a masked tail. Run it from the repository
  * root after `pnpm run build`:
  *
- *   node scripts/live-check.mjs [--with-cli] [--with-search] [--key-label LABEL]
+ *   node scripts/live-check.mjs [--with-cli] [--with-search] [--with-vision] [--key-label LABEL]
  *
  * `--with-cli` also runs each CLI-backed Claude model through the local
  * Claude Code CLI; `--with-search` runs one web search per backend. Both
  * spend more quota than the default run.
+ * `--with-vision` checks DeepSeek with two color images through the host's
+ * attachment service seam; the prompt does not disclose the colors.
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { readStoredKey } from './stored-key.mjs'
+import { createVisionFixture } from './vision-fixture.mjs'
 
 import {
   CLI_BACKED_MODEL_IDS,
@@ -78,17 +81,17 @@ const NO_GROUPS = Object.freeze({
 })
 
 /** The plugin's composition, around one ring. */
-async function routeWith(entries, { groupReader } = {}) {
+async function routeWith(entries, { groupReader, resolveAttachments } = {}) {
   const ring = new PackyCodeKeyRing(fakeCredentials())
   for (const [key, label] of entries) await ring.add(key, label)
   const groups = groupReader ?? createGroupReader({ listKeys: () => ring.secrets(), getHosts: () => HOSTS })
   const keys = createKeyChooser({ ring, groups, logger })
-  const adapter = createRouteAdapter({ ring, keys, fallbackSessionId: SESSION_ID })
+  const adapter = createRouteAdapter({ ring, keys, fallbackSessionId: SESSION_ID, resolveAttachments })
   return { ring, groups, keys, adapter }
 }
 
 /** One turn through an adapter; the finish reason and the streamed text. */
-async function turn(adapter, model, text = 'Reply with exactly: ok') {
+async function turn(adapter, model, text = 'Reply with exactly: ok', { image } = {}) {
   const prepared = await adapter.prepareCall(PROVIDER, model)
   let answer = ''
   let finish
@@ -98,7 +101,7 @@ async function turn(adapter, model, text = 'Reply with exactly: ok') {
     sessionId: SESSION_ID,
     reasoningEffort: 'high',
     maxTokens: 2048,
-    messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })],
+    messages: [createUserMessage({ content: [{ type: 'text', text }, ...(image === undefined ? [] : [image])], source: { kind: 'user' } })],
   })) {
     if (chunk.type === 'text-delta') answer += chunk.text
     if (chunk.type === 'finish') finish = chunk.reason
@@ -117,7 +120,8 @@ async function main() {
   const key = await readStoredKey({ label })
   const mask = text => String(text).split(key).join(`…${key.slice(-4)}`)
   console.log(`stored key: …${key.slice(-4)} (${key.length} chars)\n`)
-  const route = await routeWith([[key, 'live-check']])
+  let visionFixture
+  const route = await routeWith([[key, 'live-check']], { resolveAttachments: () => visionFixture?.attachments })
 
   console.log('1) balance')
   const balance = createBalanceReader({ listKeys: () => route.ring.secrets(), getHosts: () => HOSTS })
@@ -214,6 +218,20 @@ async function main() {
   const groupProjection = await handler('groups')
   console.log(`   groups ok=${groupProjection.ok}: ${groupProjection.value?.keys?.[0]?.groups?.join(', ')}`)
   console.log(`   projections carry key material: ${JSON.stringify([projection, groupProjection]).includes(key) ? 'YES (bug)' : 'no'}`)
+
+  if (process.argv.includes('--with-vision')) {
+    console.log('\n9) DeepSeek identifies images through the registered route')
+    for (const color of ['red', 'blue']) {
+      visionFixture = createVisionFixture(color)
+      const result = await turn(route.adapter, 'deepseek-flash',
+        'What is the dominant color in this image? Reply with exactly one lowercase English color word.',
+        { image: visionFixture.block })
+      console.log(`   ${color} image ${mask(describe(result))}`)
+      if (result.finish?.kind !== 'stop' || result.answer.toLowerCase() !== color || visionFixture.reads.length !== 1) {
+        throw new Error(`DeepSeek vision check failed for the ${color} image`)
+      }
+    }
+  }
 }
 
 await main()
