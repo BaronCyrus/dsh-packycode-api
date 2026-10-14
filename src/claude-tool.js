@@ -10,20 +10,27 @@ import { isAbsolute, join } from 'node:path'
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import { CLAUDE_CLI_MODES, DEFAULT_CLAUDE_MODE } from './claude-cli.js'
+import { DEFAULT_CLAUDE_MODE } from './claude-cli.js'
 import { capClaudeMode } from './permission.js'
+
+/** Modes a caller of `claude_code` may ask for. Plan mode is not one of them. */
+const CLAUDE_TOOL_MODES = Object.freeze(['read-only', 'edit', 'full'])
 
 /** What a `claude_code` tool run is told about where its task came from. */
 export const CLAUDE_TOOL_INSTRUCTIONS = 'This task was delegated to Claude Code by another agent in DeepSeek Harness through its claude_code tool. The task text is self-contained; complete it with your own tools and reply with the final result only.'
 
+/** What the same run is told while the parent session is in DSH plan mode. */
+export const CLAUDE_TOOL_PLAN_INSTRUCTIONS = 'This task was delegated to Claude Code while DeepSeek Harness is in plan mode. Explore read-only, write a complete markdown plan that starts with a # heading to the CLI plan file, then call ExitPlanMode. Do not edit the project or start implementing. Reply with the plan text only.'
+
 /**
- * @param options - the CLI runner, and the most a run may do for a session.
+ * @param options - the CLI runner, the most a run may do for a session, and
+ *   whether that session is in DSH plan mode.
  * @returns the tool definition to register.
  */
-export function createClaudeCodeTool({ runner, modeCeiling }) {
+export function createClaudeCodeTool({ runner, modeCeiling, planActive }) {
   return defineTool({
     name: 'claude_code',
-    description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands); it defaults to, and is capped at, what this session\'s permission preset allows. It starts a fresh CLI session per call, takes tens of seconds, and bills through this plugin\'s stored PackyCode keys. Web searches use the selected DeepSeek/GPT backend through a read-only MCP tool rather than native WebSearch. Its internal tool calls are not part of this session\'s transcript — only the returned answer is.',
+    description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands); it defaults to, and is capped at, what this session\'s permission preset allows. While this session is in DSH plan mode the CLI plans instead, whatever `mode` says, and the returned result is the plan for you to submit with exit_plan_mode — do not treat it as permission to edit. It starts a fresh CLI session per call, takes tens of seconds, and bills through this plugin\'s stored PackyCode keys. Web searches use the selected DeepSeek/GPT backend through a read-only MCP tool rather than native WebSearch. Its internal tool calls are not part of this session\'s transcript — only the returned answer is.',
     parameters: {
       prompt: {
         type: 'string',
@@ -32,7 +39,7 @@ export function createClaudeCodeTool({ runner, modeCeiling }) {
       },
       mode: {
         type: 'string',
-        enum: Object.keys(CLAUDE_CLI_MODES),
+        enum: [...CLAUDE_TOOL_MODES],
         description: 'What the CLI may do on its own. Defaults to the most this session\'s permission preset allows; a wider mode is capped to it. Ask for "full" only when the task genuinely needs shell commands.',
       },
       model: {
@@ -67,11 +74,13 @@ export function createClaudeCodeTool({ runner, modeCeiling }) {
       const cwd = requested === ''
         ? sessionCwd
         : isAbsolute(requested) ? requested : (sessionCwd === undefined ? requested : join(sessionCwd, requested))
+      const session = exec?.agent?.session
+      const planning = planActive?.(session) === true
       return await runner.run({
         prompt: args.prompt,
-        mode: capClaudeMode(args.mode, modeCeiling(exec?.agent?.session)) ?? DEFAULT_CLAUDE_MODE,
+        mode: planning ? 'plan' : capClaudeMode(args.mode, modeCeiling(session)) ?? DEFAULT_CLAUDE_MODE,
         model: args.model,
-        appendSystemPrompt: CLAUDE_TOOL_INSTRUCTIONS,
+        appendSystemPrompt: planning ? CLAUDE_TOOL_PLAN_INSTRUCTIONS : CLAUDE_TOOL_INSTRUCTIONS,
         cwd,
         signal: exec?.signal,
       })

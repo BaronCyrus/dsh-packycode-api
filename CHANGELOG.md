@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- **Claude CLI follows DSH plan mode.** While the current session's plan mode is on (including a selection that applies on this step but is not logged yet), a Claude model turn and the `claude_code` tool run the local CLI with `--permission-mode plan`. That wins over the session permission preset and over an explicit `claudeCliMode` pin. The CLI may explore read-only; other permission prompts are denied, and after eight denials the run stops instead of hanging. `ExitPlanMode` is never allowed inside the CLI process. A submitted plan becomes the assistant's `exit_plan_mode` tool call, so DSH's existing review approves it and the next step implements. The delegation tool returns the plan text for the parent model to submit. Session titles stay read-only. A host without the plan-mode service behaves as before.
+
 ## 1.1.1
 
 - **Claude CLI search through MCP.** CLI-backed Claude turns and the `claude_code` delegation tool now get a temporary, authenticated, loopback HTTP MCP `web_search` tool calling the plugin's selected DeepSeek/GPT backend. Native CLI `WebSearch` is explicitly denied in every permission mode: it makes a separate Claude server-tool request that PackyCode can refuse even when ordinary turns work. The official CLI/system identity is preserved; no vendor headers or identities are forged. Backend selection applies to CLI searches even when DSH routing is set to Off/Do not take over; the DSH routing mode remains independent, and headless profiles need no `web` service. MCP callbacks capture their originating session ID before losing agent context and always call the direct PackyCode provider, never an auto-router fallback.

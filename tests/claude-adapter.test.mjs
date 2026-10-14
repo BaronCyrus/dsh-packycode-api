@@ -302,6 +302,42 @@ test('a session title runs on the small model, read-only, outside the workspace'
   assert.equal(call.prompt, '登录页报错了')
 })
 
+test('a submitted plan becomes one exit_plan_mode call and not assistant text', async () => {
+  const runner = stubRunner([
+    { type: 'reasoning', text: 'looked around' },
+    { type: 'plan', plan: '# Ship\n\nDo it.' },
+    { type: 'result', result: { result: '# Ship\n\nDo it.', inputTokens: 2, outputTokens: 3, mode: 'plan' } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner, resolveMode: () => 'plan', resolveCwd: () => '/work' })
+  const chunks = await consume(adapter.stream({
+    provider: 'packycode',
+    model: 'claude-opus-5-5',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'plan the change' }] }],
+  }))
+  const tool = chunks.find(chunk => chunk.type === 'block-end' && chunk.block?.type === 'tool-call')
+  assert.equal(tool.block.name, 'exit_plan_mode')
+  assert.equal(JSON.parse(tool.block.arguments).plan, '# Ship\n\nDo it.')
+  assert.equal(chunks.at(-1).reason.kind, 'tool-calls')
+  assert.equal(chunks.some(chunk => chunk.type === 'text-delta'), false)
+  assert.match(runner.calls[0].appendSystemPrompt, /ExitPlanMode/u)
+  assert.equal(runner.calls[0].appendSystemPrompt.includes('直接输出最终结果'), false)
+  assert.equal(runner.calls[0].mode, 'plan')
+})
+
+test('a session title stays read-only while the session is in plan mode', async () => {
+  const runner = stubRunner([{ type: 'result', result: { result: 'title', inputTokens: 1, outputTokens: 1 } }])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner, resolveMode: () => 'plan', resolveCwd: () => '/work' })
+  await consume(adapter.stream({
+    provider: 'packycode',
+    model: 'claude-opus-5-5',
+    purpose: 'session-title',
+    system: 'Return only the title.',
+    messages: [{ role: 'user', content: [{ type: 'text', text: '登录页报错了' }] }],
+  }))
+  assert.equal(runner.calls[0].mode, 'read-only')
+  assert.equal(runner.calls[0].appendSystemPrompt, 'Return only the title.')
+})
+
 test('every CLI-backed model is routed to the CLI with its own id', async () => {
   for (const id of CLI_BACKED_MODEL_IDS) {
     const runner = stubRunner([{ type: 'result', result: { result: '', inputTokens: 0, outputTokens: 0 } }])
@@ -336,6 +372,9 @@ test('a delegated prompt drops the harness system prompt and marks what it canno
   assert.match(instructions, /工作目录：\/work\/repo/u)
   assert.match(instructions, /补充：回答用中文/u)
   assert.equal(prompt.includes('工作目录'), false)
+  const planning = delegationInstructions(request, '/work/repo', { plan: true })
+  assert.match(planning, /ExitPlanMode/u)
+  assert.equal(planning.includes('直接输出最终结果'), false)
 })
 
 test('a long conversation is trimmed to its most recent turns', () => {

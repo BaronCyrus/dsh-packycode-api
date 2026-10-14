@@ -23,6 +23,7 @@
  * @module dsh-packycode-api/claude-adapter
  */
 
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
@@ -208,12 +209,16 @@ const plainDescription = part => (part.kind === 'image' ? `[图片 ${attachmentN
  * @param cwd - the working directory the CLI will run in, when known.
  * @returns the instructions text.
  */
-export function delegationInstructions(options, cwd) {
+export function delegationInstructions(options, cwd, { plan = false } = {}) {
   const system = typeof options?.system === 'string' && options.system.trim() !== '' ? options.system.trim() : ''
-  return [
-    '本回合由 DeepSeek Harness 委派给 Claude Code 执行。用户消息是 DeepSeek Harness 会话的近期对话记录，最后一条是当前请求；'
+  const lead = plan
+    ? '本回合 DeepSeek Harness 处于计划模式。只做只读探索，把完整实施计划写成以一级标题开头的 Markdown，写入 CLI 指定的计划文件，然后调用 ExitPlanMode 提交审阅。不要修改项目、不要开始实施。'
+      + '用户消息是 DeepSeek Harness 会话的近期对话记录，最后一条是当前请求；其中的图片已作为图片随消息附上，「只读副本」路径也可以用 Read 工具读取。'
+    : '本回合由 DeepSeek Harness 委派给 Claude Code 执行。用户消息是 DeepSeek Harness 会话的近期对话记录，最后一条是当前请求；'
       + '其中的图片已作为图片随消息附上，「只读副本」路径也可以用 Read 工具读取。'
-      + '请用你自己的工具完成任务，直接输出最终结果；不要反问、不要复述流程。',
+      + '请用你自己的工具完成任务，直接输出最终结果；不要反问、不要复述流程。'
+  return [
+    lead,
     cwd === undefined ? undefined : `工作目录：${cwd}`,
     system === '' ? undefined : `补充说明（来自 DeepSeek Harness，其中提到的工具你未必拥有）：${system.slice(0, 2_000)}`,
   ].filter(part => part !== undefined).join('\n')
@@ -403,6 +408,15 @@ function createBlockWriter() {
       if (open?.kind === 'reasoning') open.sealed = false
       yield* write('reasoning', `${separator}${line}`)
     },
+    /** One complete tool call after whatever text or reasoning is open. */
+    *toolCall(id, name, args) {
+      yield* close()
+      index += 1
+      const block = { type: 'tool-call', id, name, arguments: args }
+      yield { type: 'block-start', index, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index, id, name, argumentsDelta: args }
+      yield { type: 'block-end', index, block }
+    },
     close,
   }
 }
@@ -482,12 +496,13 @@ async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imag
     }
   }
   const cwd = cwdOf()
+  const mode = modeOf()
   const content = await buildDelegatedContent(options, { attachments: attachmentsOf(), limits: imageLimits, signal: options?.signal })
   return {
     content,
-    appendSystemPrompt: delegationInstructions(options, cwd),
+    appendSystemPrompt: delegationInstructions(options, cwd, { plan: mode === 'plan' }),
     model: options.model,
-    mode: modeOf(),
+    mode,
     cwd,
   }
 }
@@ -586,6 +601,8 @@ export function createClaudeCliAdapter({
     let retries = 0
     /** The key this run uses, as the runner described it (never the token). */
     let runKey
+    /** Set when the CLI submitted a plan; the turn then ends as DSH's review tool. */
+    let submittedPlan
     try {
       let finished
       let lastRequest
@@ -626,12 +643,22 @@ export function createClaudeCliAdapter({
           case 'request-usage':
             lastRequest = event.usage
             break
+          case 'plan':
+            if (typeof event.plan === 'string' && event.plan !== '') submittedPlan = event.plan
+            break
           case 'result':
             finished = event.result
             break
           default:
             break
         }
+      }
+      if (submittedPlan !== undefined) {
+        // The plan is the tool argument, not a second copy of the assistant text.
+        yield* blocks.toolCall(`plan-${randomUUID()}`, 'exit_plan_mode', JSON.stringify({ plan: submittedPlan }))
+        yield { type: 'usage', usage: turnUsage(lastRequest, finished) }
+        yield { type: 'finish', reason: { kind: 'tool-calls' } }
+        return
       }
       yield* blocks.close()
       yield { type: 'usage', usage: turnUsage(lastRequest, finished) }

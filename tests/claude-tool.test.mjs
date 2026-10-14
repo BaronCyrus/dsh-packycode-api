@@ -174,6 +174,50 @@ test('without any plugin setting the CLI follows the session permission preset',
   assert.equal(capped.mode, 'edit', 'a sandboxed session caps a wider request')
 })
 
+test('DSH plan mode forces the CLI to plan even when a wider mode is requested', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
+  const record = join(dir, 'invocation.json')
+  const script = join(dir, 'claude-plan.mjs')
+  writeFileSync(script, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs'
+let stdin = ''
+let answered = false
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', chunk => {
+  stdin += chunk
+  if (!answered && stdin.includes('\\n')) {
+    answered = true
+    writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), stdin }))
+    process.stdout.write(JSON.stringify({
+      type: 'result', is_error: false, result: '# From cli\\n\\nsteps',
+      duration_ms: 10, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 },
+    }) + '\\n')
+  }
+})
+process.stdin.on('end', () => process.exit(0))
+`)
+  chmodSync(script, 0o755)
+  const session = { id: 's-plan', header: { cwd: dir } }
+  const { ctx, registered } = contextWithTools(fakeCredentials({ record: singleKeyRecord('sk-stub-tool-key-0005') }), dir)
+  const permissions = permissionServices('danger-full-access', 'never')
+  ctx.get = name => {
+    if (name === 'agents') return { currentInitiator: () => ({ session }) }
+    if (name === 'planMode') return { get: agent => ({ active: false, pending: agent.session === session }) }
+    return permissions(name)
+  }
+  apply(ctx, { claudeCliPath: script, claudeCliMode: 'full' })
+  const value = await registered.tools[0].execute(
+    { prompt: 'ship it', mode: 'full' },
+    { agent: { session } },
+  )
+  assert.equal(value.mode, 'plan')
+  assert.match(value.result, /# From cli/u)
+  const seen = JSON.parse(readFileSync(record, 'utf8'))
+  assert.equal(seen.argv[seen.argv.indexOf('--permission-mode') + 1], 'plan')
+  assert.equal(seen.argv.includes('--dangerously-skip-permissions'), false)
+  assert.match(seen.argv.join('\n'), /ExitPlanMode/u)
+})
+
 test('an explicit plugin mode still wins over the session preset', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'packy-cli-'))
   const { script } = writeStubCli(dir)

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 
@@ -14,6 +17,7 @@ import {
   findClaudeBinary,
   parseClaudeResult,
   readClaudeStreamEvents,
+  readSubmittedPlan,
   summarizeToolUse,
 } from '../src/claude-cli.js'
 
@@ -82,6 +86,10 @@ test('builds the argv the CLI documents, with the prompt kept off it', () => {
   // the official CLI introduce itself to the model as Claude Code.
   const blank = buildClaudeArgs({ appendSystemPrompt: '   ' })
   assert.equal(blank[blank.indexOf('--append-system-prompt') + 1], DEFAULT_APPEND_SYSTEM_PROMPT)
+  const plan = buildClaudeArgs({ mode: 'plan', model: 'claude-opus-5-5' })
+  assert.equal(plan[plan.indexOf('--permission-mode') + 1], 'plan')
+  assert.equal(plan.includes('--allowedTools'), false)
+  assert.equal(plan.includes('--dangerously-skip-permissions'), false)
 })
 
 test('builds the stdin payload: plain text, or one stream-json user message with images', () => {
@@ -398,6 +406,10 @@ test('MCP argv grants only the exact read-only search tool and disables native W
       assert.equal(args.includes('--dangerously-skip-permissions'), false)
     }
   }
+  const plan = buildClaudeArgs({ mode: 'plan', searchBridge: bridge })
+  assert.equal(plan[plan.indexOf('--permission-mode') + 1], 'plan')
+  assert.deepEqual(plan.slice(plan.indexOf('--allowedTools') + 1, plan.indexOf('--disallowedTools')), [bridge.toolName])
+  assert.equal(plan.includes('--dangerously-skip-permissions'), false)
   assert.throws(() => buildClaudeArgs({ searchBridge: { ...bridge, toolName: 'mcp__anything__*' } }), /configuration is invalid/u)
 })
 
@@ -580,4 +592,167 @@ test('the startup watchdog leaves a JSON run alone: it prints only at the end', 
   })
   await new Promise(resolve => setTimeout(resolve, 5))
   assert.equal((await runner.run({ prompt: 'x' })).result, 'cli-ok')
+})
+
+test('a submitted plan is the request text, else a markdown file inside an allowed root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'packy-plan-'))
+  const configDir = join(root, 'cfg')
+  const plans = join(configDir, 'plans')
+  mkdirSync(plans, { recursive: true })
+  const inside = join(plans, 'ok.md')
+  writeFileSync(inside, '  steps without a heading  ')
+  const notes = join(plans, 'notes.txt')
+  writeFileSync(notes, '# Notes\n\nno')
+  const outside = join(root, 'secret.md')
+  writeFileSync(outside, '# Secret\n\nnope')
+  const link = join(plans, 'link.md')
+  symlinkSync(outside, link)
+  assert.equal(readSubmittedPlan({ plan: '  # Ship\n\nnow  ' }, { configDir }), '# Ship\n\nnow')
+  assert.match(readSubmittedPlan({ planFilePath: inside }, { configDir, startedAt: Date.now() - 1000 }), /^# Plan\n\nsteps without a heading/u)
+  assert.equal(readSubmittedPlan({ planFilePath: outside }, { configDir, startedAt: 0 }), undefined)
+  assert.equal(readSubmittedPlan({ planFilePath: link }, { configDir, startedAt: 0 }), undefined)
+  assert.equal(readSubmittedPlan({ planFilePath: notes }, { configDir, startedAt: 0 }), undefined)
+  assert.equal(readSubmittedPlan({ planFilePath: inside }, { configDir, startedAt: Date.now() + 60_000 }), undefined)
+  assert.equal(readSubmittedPlan({ planFilePath: 'ok.md' }, { configDir, startedAt: 0 }), undefined)
+})
+
+/**
+ * A CLI stand-in whose stdin is the stream-json control channel. `script`
+ * sees each complete JSON frame and may emit stdout lines.
+ */
+function controlSpawn(script) {
+  const calls = []
+  const spawnImpl = (binary, args, options) => {
+    const call = { binary, args, options, stdin: '', frames: [], killed: undefined, parsed: 0 }
+    calls.push(call)
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.exitCode = null
+    child.signalCode = null
+    child.kill = signal => {
+      call.killed = signal
+      child.signalCode = signal
+      queueMicrotask(() => child.emit('close', null, signal))
+      return true
+    }
+    const emit = message => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(message)}\n`))
+    const stdout = text => queueMicrotask(() => child.stdout.emit('data', text))
+    const consume = () => {
+      const lines = call.stdin.split('\n')
+      const complete = lines.slice(0, -1)
+      while (call.parsed < complete.length) {
+        const line = complete[call.parsed]
+        call.parsed += 1
+        if (line.trim() === '') continue
+        let message
+        try {
+          message = JSON.parse(line)
+        } catch {
+          continue
+        }
+        call.frames.push(message)
+        script({ message, emit, stdout, call })
+      }
+    }
+    child.stdin = {
+      on: () => child.stdin,
+      write: chunk => {
+        call.stdin += String(chunk ?? '')
+        consume()
+      },
+      end: chunk => {
+        if (chunk !== undefined && chunk !== '') call.stdin += String(chunk)
+        call.stdinClosed = true
+        consume()
+        if (call.killed === undefined) queueMicrotask(() => child.emit('close', 0, null))
+      },
+    }
+    return child
+  }
+  return { spawnImpl, calls }
+}
+
+const planRunner = spawnImpl => createClaudeRunner({
+  binary: '/mock/claude',
+  resolveCredential: async () => ({ baseUrl: 'https://cf.example', token: 'sk-test', label: 't' }),
+  spawnImpl,
+  configDir: '/tmp/packy-plan-cfg',
+})
+
+test('plan mode denies other tools and stops on ExitPlanMode without allowing it', async () => {
+  const { spawnImpl, calls } = controlSpawn(({ message, emit }) => {
+    if (message.type === 'user' && calls[0].askedBash !== true) {
+      calls[0].askedBash = true
+      emit({ type: 'control_request', request_id: 'bash-1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'rm -rf .' } } })
+    }
+    if (message.type === 'control_response' && message.response?.request_id === 'bash-1' && calls[0].askedPlan !== true) {
+      calls[0].askedPlan = true
+      emit({
+        type: 'control_request',
+        request_id: 'plan-1',
+        request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Ship it\n\nDo the thing.' } },
+      })
+    }
+  })
+  const events = []
+  for await (const event of planRunner(spawnImpl).stream({ prompt: 'plan it', mode: 'plan', model: 'claude-opus-5-5' })) events.push(event)
+  assert.equal(events.find(event => event.type === 'plan')?.plan, '# Ship it\n\nDo the thing.')
+  const call = calls[0]
+  assert.equal(call.args[call.args.indexOf('--permission-mode') + 1], 'plan')
+  assert.equal(call.args.includes('--input-format'), true)
+  assert.equal(call.killed, 'SIGTERM')
+  const decisions = call.frames.filter(frame => frame.type === 'control_response').map(frame => frame.response?.response)
+  assert.equal(decisions[0]?.behavior, 'deny')
+  assert.equal(decisions.some(decision => decision?.behavior === 'allow'), false)
+  const finished = await planRunner(controlSpawn(({ message, emit }) => {
+    if (message.type === 'user') {
+      emit({
+        type: 'control_request',
+        request_id: 'plan-1',
+        request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: 'steps only' } },
+      })
+    }
+  }).spawnImpl).run({ prompt: 'plan it', mode: 'plan' })
+  assert.equal(finished.mode, 'plan')
+  assert.match(finished.result, /^# Plan\n\nsteps only/u)
+})
+
+test('an ExitPlanMode without a plan is denied, and too many denials stop the run', async () => {
+  const missing = controlSpawn(({ message, emit, call }) => {
+    if (message.type === 'user' && call.asked !== true) {
+      call.asked = true
+      emit({ type: 'control_request', request_id: 'plan-1', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { planFilePath: '/nope/secret.md' } } })
+    }
+    if (message.type === 'control_response' && message.response?.request_id === 'plan-1') {
+      emit({ type: 'result', is_error: false, result: 'still planning', duration_ms: 5, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } })
+    }
+  })
+  const events = []
+  for await (const event of planRunner(missing.spawnImpl).stream({ prompt: 'plan it', mode: 'plan' })) events.push(event)
+  assert.equal(events.some(event => event.type === 'plan'), false)
+  assert.equal(events.at(-1)?.result?.result, 'still planning')
+  assert.match(missing.calls[0].frames.find(frame => frame.type === 'control_response')?.response?.response?.message ?? '', /plan file/u)
+
+  const burst = controlSpawn(({ message, stdout, call }) => {
+    if (message.type !== 'user' || call.flooded === true) return
+    call.flooded = true
+    const lines = []
+    for (let index = 1; index <= 9; index += 1) {
+      lines.push(JSON.stringify({
+        type: 'control_request',
+        request_id: `bash-${index}`,
+        request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'rm -rf .' } },
+      }))
+    }
+    stdout(`${lines.join('\n')}\n`)
+  })
+  await assert.rejects(async () => {
+    for await (const _event of planRunner(burst.spawnImpl).stream({ prompt: 'plan it', mode: 'plan' })) {
+      // the ninth denial stops the run
+    }
+  }, /too many denied permission prompts/u)
+  const responses = burst.calls[0].frames.filter(frame => frame.type === 'control_response')
+  assert.equal(responses.length, 8)
+  assert.equal(burst.calls[0].killed, 'SIGTERM')
 })

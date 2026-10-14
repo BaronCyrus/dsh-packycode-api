@@ -13,9 +13,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { nvmBinDirs, pathFor, searchPath, withProgramDirOnPath } from './locate.js'
 import { waitForSharedRequest } from './request.js'
@@ -29,6 +29,11 @@ export const CLAUDE_CLI_MODES = Object.freeze({
   'read-only': Object.freeze({ allowedTools: Object.freeze(['Read', 'Grep', 'Glob']) }),
   edit: Object.freeze({ allowedTools: Object.freeze(['Read', 'Grep', 'Glob', 'Edit', 'Write', 'NotebookEdit']) }),
   full: Object.freeze({ skipPermissions: true }),
+  /**
+   * DSH plan mode. Not a permission rank: file edits stay blocked, and
+   * `ExitPlanMode` is handed back to DSH instead of letting the CLI implement.
+   */
+  plan: Object.freeze({ permissionMode: 'plan' }),
 })
 
 export const DEFAULT_CLAUDE_MODE = 'edit'
@@ -200,12 +205,98 @@ export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = fa
   }
   args.push('--append-system-prompt', searchBridge === undefined ? instructions : `${instructions}\n\n${searchBridge.instructions}`)
   if (spec.skipPermissions === true) args.push('--dangerously-skip-permissions')
-  else args.push('--allowedTools', ...spec.allowedTools, ...(searchBridge === undefined ? [] : [searchBridge.toolName]))
+  else if (typeof spec.permissionMode === 'string') {
+    args.push('--permission-mode', spec.permissionMode)
+    // Reads are already allowed in plan mode. Only the read-only search tool
+    // is added, so a web search does not stop to ask.
+    if (searchBridge !== undefined) args.push('--allowedTools', searchBridge.toolName)
+  } else args.push('--allowedTools', ...spec.allowedTools, ...(searchBridge === undefined ? [] : [searchBridge.toolName]))
   if (disableNativeSearch || searchBridge !== undefined) args.push('--disallowedTools', 'WebSearch')
   // Add one private server for this run. Do not use --strict-mcp-config:
   // unrelated existing project/user MCP configurations remain untouched.
   if (searchBridge !== undefined) args.push('--mcp-config', searchBridge.configPath)
   return args
+}
+
+/** How many permission prompts one plan-mode run will refuse before stopping. */
+const MAX_PLAN_DENIALS = 8
+/** A plan file larger than this is not read into the turn. */
+const PLAN_FILE_MAX_BYTES = 200_000
+const PLAN_FILE_CLOCK_SKEW_MS = 2_000
+const PLAN_EXIT_DENY = 'Write the plan to the plan file first, starting with a # heading, then call ExitPlanMode again.'
+const PLAN_ACTION_DENY = 'Plan mode is active. Do not edit files or run commands that change the system. Continue read-only exploration, write the plan file, and call ExitPlanMode.'
+const PLAN_DIALOG_ERROR = 'Plan mode cannot ask the user from the CLI. Decide and continue, or call ExitPlanMode.'
+const PLAN_DENY_LIMIT_MESSAGE = 'claude_code plan mode stopped after too many denied permission prompts'
+
+/**
+ * Markdown DSH's `exit_plan_mode` will accept. A body without a heading gets
+ * one, because the review tool requires the plan to start with `#`.
+ * @param value - candidate plan text.
+ * @returns the plan, or undefined when there is nothing to submit.
+ */
+function planMarkdown(value) {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (trimmed === '') return undefined
+  const bounded = trimmed.length > PLAN_FILE_MAX_BYTES ? trimmed.slice(0, PLAN_FILE_MAX_BYTES) : trimmed
+  return /^#\s+\S/u.test(bounded) ? bounded : `# Plan\n\n${bounded}`
+}
+
+/** Whether `file` is the root itself or a path inside it, after resolving links. */
+function pathInside(root, file, realpath) {
+  let rootReal
+  let fileReal
+  try {
+    rootReal = realpath(root)
+    fileReal = realpath(file)
+  } catch {
+    return false
+  }
+  const prefix = rootReal.endsWith(sep) ? rootReal : `${rootReal}${sep}`
+  return fileReal === rootReal || fileReal.startsWith(prefix)
+}
+
+/**
+ * The plan a CLI `ExitPlanMode` request is submitting.
+ *
+ * The tool's own schema does not carry the plan; the CLI injects `plan` and
+ * `planFilePath` from the file it told the model to write. Text on the request
+ * wins. A path is read only when it resolves inside this run's config home or
+ * `~/.claude/plans`, is a markdown file written for this run, and is bounded.
+ * Anything else is ignored — a model-supplied path is not a licence to read
+ * the disk.
+ * @param input - the control request's `input`.
+ * @param options - config home, when the run started, and file-system seams.
+ * @returns plan markdown, or undefined when the request has none yet.
+ */
+export function readSubmittedPlan(input, {
+  configDir,
+  startedAt = Date.now(),
+  home = homedir(),
+  readFile = file => readFileSync(file, 'utf8'),
+  stat = statSync,
+  realpath = realpathSync,
+} = {}) {
+  const inline = planMarkdown(input?.plan)
+  if (inline !== undefined) return inline
+  const requested = typeof input?.planFilePath === 'string' ? input.planFilePath : ''
+  if (requested === '') return undefined
+  const roots = [configDir, join(home, '.claude', 'plans')].filter(root => typeof root === 'string' && root !== '')
+  if (!roots.some(root => pathInside(root, requested, realpath))) return undefined
+  let file
+  try {
+    file = realpath(requested)
+    const info = stat(file)
+    if (!info.isFile() || info.size > PLAN_FILE_MAX_BYTES || info.mtimeMs < startedAt - PLAN_FILE_CLOCK_SKEW_MS) return undefined
+  } catch {
+    return undefined
+  }
+  if (!file.toLowerCase().endsWith('.md')) return undefined
+  try {
+    return planMarkdown(readFile(file))
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -475,7 +566,8 @@ export function createClaudeRunner({
     if (disposed || signal?.aborted) throw new Error('claude_code was aborted')
     const cancellation = new AbortController()
     const runSignal = signal === undefined ? cancellation.signal : AbortSignal.any([signal, cancellation.signal])
-    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false }
+    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0 }
+    const startedAt = Date.now()
     let child
     let bridge
     let bridgeClosing
@@ -586,12 +678,99 @@ export function createClaudeRunner({
       }
       child.stdout?.setEncoding?.('utf8')
       child.stderr?.setEncoding?.('utf8')
+      let controlBuffer = ''
+      let stdinEnded = false
+      const endStdin = () => {
+        if (stdinEnded) return
+        stdinEnded = true
+        try { child.stdin?.end?.() } catch { /* already closed */ }
+      }
+      const writeStdin = frame => {
+        try { child.stdin?.write?.(frame) } catch { /* EPIPE once the child is gone */ }
+      }
+      const controlResponse = (requestId, response) => {
+        writeStdin(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } })}\n`)
+      }
+      const stopForDenials = () => {
+        state.denyExhausted = true
+        endStdin()
+        kill()
+      }
+      const refuseControl = (requestId, kind) => {
+        state.denies += 1
+        if (state.denies > MAX_PLAN_DENIALS) {
+          stopForDenials()
+          return
+        }
+        if (kind === 'dialog') {
+          writeStdin(`${JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: PLAN_DIALOG_ERROR } })}\n`)
+          return
+        }
+        controlResponse(requestId, { behavior: 'deny', message: PLAN_ACTION_DENY })
+      }
+      /**
+       * Plan mode keeps stdin open so a permission prompt can be answered.
+       * `ExitPlanMode` with a plan stops the child; it is never allowed,
+       * because allowing it would make the CLI start editing in this process.
+       */
+      const handlePlanLine = line => {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('{')) return
+        let message
+        try {
+          message = JSON.parse(trimmed)
+        } catch {
+          return
+        }
+        if (message?.type === 'result') {
+          endStdin()
+          return
+        }
+        if (message?.type !== 'control_request') return
+        const requestId = message.request_id
+        const request = message.request
+        if (typeof requestId !== 'string' || request === null || typeof request !== 'object') {
+          state.denies += 1
+          if (state.denies > MAX_PLAN_DENIALS) stopForDenials()
+          return
+        }
+        if (request.subtype !== 'can_use_tool') {
+          refuseControl(requestId, 'dialog')
+          return
+        }
+        if (request.tool_name === 'ExitPlanMode') {
+          const plan = readSubmittedPlan(request.input, { configDir, startedAt })
+          if (plan !== undefined) {
+            state.plan = scrub(plan)
+            endStdin()
+            kill()
+            return
+          }
+          state.denies += 1
+          if (state.denies > MAX_PLAN_DENIALS) {
+            stopForDenials()
+            return
+          }
+          controlResponse(requestId, { behavior: 'deny', message: PLAN_EXIT_DENY })
+          return
+        }
+        refuseControl(requestId, 'tool')
+      }
       child.stdout?.on('data', chunk => {
         state.sawOutput = true
         clearStartup()
         const text = String(chunk)
         state.stdout = scrub((state.stdout + text).slice(-MAX_CAPTURE_BYTES))
         onStdout?.(text)
+        if (mode !== 'plan') return
+        controlBuffer += text
+        let index = controlBuffer.indexOf('\n')
+        while (index !== -1) {
+          const line = controlBuffer.slice(0, index)
+          controlBuffer = controlBuffer.slice(index + 1)
+          handlePlanLine(line)
+          index = controlBuffer.indexOf('\n')
+        }
       })
       child.stderr?.on('data', chunk => {
         state.stderr = scrub((state.stderr + String(chunk)).slice(-MAX_CAPTURE_BYTES))
@@ -615,6 +794,11 @@ export function createClaudeRunner({
             const detail = state.stderr.trim().split('\n').slice(-4).join(' ').slice(0, 400)
             return reject(new Error(`Claude Code CLI printed nothing within ${Math.round(startupTimeoutMs / 1000)}s of starting and was stopped${detail === '' ? '' : `: ${detail}`}`))
           }
+          // The caller's abort wins over a plan captured in the same moment.
+          // Our own kill() aborts only the internal cancellation signal.
+          if (signal?.aborted) return reject(new Error('claude_code was aborted'))
+          if (state.denyExhausted === true) return reject(new Error(PLAN_DENY_LIMIT_MESSAGE))
+          if (typeof state.plan === 'string') return resolve({ code, killSignal })
           if (runSignal.aborted) return reject(new Error('claude_code was aborted'))
           resolve({ code, killSignal })
         })
@@ -624,7 +808,10 @@ export function createClaudeRunner({
       // Attach error listeners before feeding stdin: a quick EPIPE must not
       // crash the host or miss child completion.
       child.stdin?.on?.('error', () => undefined)
-      child.stdin?.end?.(input)
+      // Plan mode has to answer control requests after the user message, so
+      // stdin stays open until a result, a captured plan, or a hard stop.
+      if (mode === 'plan') writeStdin(input)
+      else child.stdin?.end?.(input)
       if (runSignal.aborted) kill()
       return { child, state, closed, kill, closeBridge, scrub, deltaRedactor: createDeltaRedactor([token, ...(bridge?.redactionValues?.() ?? [])]), key: describeRunKey(credential), searchBackend: bridge?.backend }
     } catch (error) {
@@ -641,7 +828,26 @@ export function createClaudeRunner({
      * @param options - prompt, mode, model, working directory, and cancellation.
      * @returns the CLI's answer plus its own accounting.
      */
-    async run({ prompt, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch } = {}) {
+    async run({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch } = {}) {
+      // Plan mode speaks the streaming control protocol even for a one-shot
+      // result: that is the only stdin on which a permission prompt can be
+      // answered. The returned shape stays the non-streaming one.
+      if (mode === 'plan') {
+        let finished
+        for await (const event of this.stream({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, enableSearch })) {
+          if (event.type === 'result') finished = event.result
+        }
+        if (finished === undefined) throw new Error('claude_code plan mode ended without a result')
+        return {
+          result: finished.result,
+          model: finished.model,
+          mode: 'plan',
+          costUsd: finished.costUsd,
+          durationMs: finished.durationMs,
+          inputTokens: finished.inputTokens,
+          outputTokens: finished.outputTokens,
+        }
+      }
       const startedAt = Date.now()
       const { state, closed } = await start({ prompt, mode, model, appendSystemPrompt, cwd, signal, enableSearch, stream: false })
       const { code, killSignal } = await closed
@@ -757,6 +963,29 @@ export function createClaudeRunner({
           yield* drain()
         }
         await completion
+        if (typeof state.plan === 'string') {
+          if (deltaKind !== undefined) {
+            const tail = deltaRedactor.flush({ boundary: true })
+            if (tail !== '') yield { type: deltaKind, text: tail }
+          }
+          const usage = sawResult?.usage ?? {}
+          yield { type: 'plan', plan: state.plan }
+          yield {
+            type: 'result',
+            result: {
+              result: state.plan,
+              model: typeof sawResult?.model === 'string' && sawResult.model !== '' ? sawResult.model : (model ?? ''),
+              mode: 'plan',
+              costUsd: typeof sawResult?.total_cost_usd === 'number' ? sawResult.total_cost_usd : 0,
+              durationMs: typeof sawResult?.duration_ms === 'number' ? sawResult.duration_ms : Date.now() - startedAt,
+              inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
+              outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+              cacheReadTokens: typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0,
+              cacheWriteTokens: typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0,
+            },
+          }
+          return
+        }
         if (buffer.trim().startsWith('{')) {
           try {
             const event = readClaudeStreamEvents(JSON.parse(scrub(buffer.trim()))).find(item => item.type === 'result')

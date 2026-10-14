@@ -37,6 +37,38 @@ export function claudeModeFor(sandbox, approval) {
 }
 
 /**
+ * Whether this session should run the CLI in plan mode.
+ *
+ * The model request runs inside `agent/pre-step`, before the plan-mode service
+ * appends `plan/mode`. `pending` is that not-yet-logged selection and wins over
+ * the logged `active` bit, matching the `plan:policy` section. Without the
+ * service, the logged projection is the only signal. A missing session, a
+ * missing service, or a throw means plan mode is off — never a failed turn.
+ * @param ctx - the plugin context; services are read without an inject requirement.
+ * @param session - the session whose plan state is read.
+ * @returns true when the CLI must plan instead of acting.
+ */
+export function planModeForSession(ctx, session) {
+  if (session === undefined || session === null) return false
+  try {
+    const agent = ctx.get?.('agents')?.currentInitiator?.()
+    if (agent?.session === session) {
+      const state = ctx.get?.('planMode')?.get?.(agent)
+      if (state !== undefined && state !== null) return planSelected(state)
+    }
+    return ctx.get?.('sessionProjections')?.stateOf?.(session, 'plan')?.active === true
+  } catch {
+    return false
+  }
+}
+
+/** `pending` is the selection the in-flight request was assembled with. */
+function planSelected(state) {
+  if (typeof state?.pending === 'boolean') return state.pending
+  return state?.active === true
+}
+
+/**
  * Read a session's CLI mode from the host's permission services.
  * @param ctx - the plugin context; services are read without an inject requirement.
  * @param session - the session whose permission state is read.
