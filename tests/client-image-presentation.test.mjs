@@ -1,0 +1,97 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+import vm from 'node:vm'
+
+import { zh } from '../src/client-copy.js'
+import { imageConversationNode, IMAGE_CHAT_KIND } from '../src/image-conversation.js'
+
+/** Run the built client with deterministic Hook lifetimes and the public image-loader seam. */
+function clientFixture() {
+  let active
+  const states = new Map()
+  const element = (type, props) => ({ type, props: props ?? {} })
+  const react = {
+    useState(initial) {
+      const state = active, index = state.index++
+      if (!(index in state.values)) state.values[index] = initial
+      return [state.values[index], value => { state.values[index] = typeof value === 'function' ? value(state.values[index]) : value }]
+    },
+    useEffect(fn, deps) {
+      const index = active.index++
+      if (!active.effects[index] || deps.some((value, i) => value !== active.effects[index].deps[i])) {
+        active.effects[index]?.cleanup?.()
+        active.effects[index] = { deps, cleanup: fn() }
+      }
+    },
+  }
+  const slots = new Map()
+  const reads = []
+  const opened = []
+  let definition
+  let client
+  const preview = 'blob:session-owned-generated-preview'
+  const conversation = { events: { register: value => { definition = value } },
+    imageUrl: async (sessionId, attachment) => { reads.push({ sessionId, attachment }); return preview } }
+  vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
+    window: { open: () => assert.fail('the native viewer should be used'), __ModuleLoader__: { load: spec => { client = spec.factory(name => name === 'react' ? react : { jsx: element, jsxs: element }) } } },
+    document: { head: { append() {} }, createElement: () => ({ dataset: {}, remove() {} }) },
+  })
+  const ctx = {
+    locale: { register() {}, bind: () => key => zh[key] }, effect: fn => fn(),
+    get: name => ({ uiConversation: conversation, connection: { rpc: { call: () => assert.fail('preview/replay must not make a paid RPC') } },
+      nativeImageViewer: { open: request => { opened.push(request); return true } } })[name],
+    inject(names, callback) { if (names.length === 1 && names[0] === 'uiConversation') callback(ctx) },
+    slots: { inject: (_name, fn) => fn(), register(spec, component) { slots.set(`${spec.name}:${spec.key ?? spec.id}`, { spec, component }) } },
+  }
+  client.apply(ctx)
+  const render = (tree, path = 'root') => {
+    if (Array.isArray(tree)) return tree.flatMap((part, i) => render(part, `${path}:${i}`))
+    if (!tree || typeof tree !== 'object') return []
+    if (typeof tree.type === 'function') {
+      const state = states.get(path) ?? { index: 0, values: [], effects: [] }
+      states.set(path, state)
+      active = state; state.index = 0
+      const child = tree.type(tree.props)
+      active = undefined
+      return render(child, `${path}:child`)
+    }
+    return [tree, ...render(tree.props.children, `${path}:children`)]
+  }
+  return { slots, reads, opened, render, preview, definition: () => definition }
+}
+
+test('built main-chat gallery uses the same session image loader/viewer as tool details, including old PTC history', async () => {
+  const fx = clientFixture()
+  assert.equal(fx.definition().kind, IMAGE_CHAT_KIND)
+  const gallery = fx.slots.get(`conversation.chat.node:${IMAGE_CHAT_KIND}`)
+  const details = fx.slots.get('tool.call.toolview:packycode_image_generate')
+  assert.ok(gallery && details)
+  const attachment = { attachmentId: `sha256:${'a'.repeat(64)}`, bytes: 100, width: 1152, height: 2048, mediaType: 'image/png', name: 'saved-output.png' }
+  const end = { type: 'turn/end', seq: 10, data: { turn: 1 } }
+  const entries = [
+    { type: 'tool/ptc-dispatch', seq: 4, data: { turn: 1, name: 'packycode_image_generate', subCallId: 'nested-image', isError: false, content: [{ type: 'image', attachment }] } }, end,
+  ]
+  const node = imageConversationNode.buildViewNode({ key: 'saved-gallery', id: '1', matches: JSON.parse(JSON.stringify(entries)).map(event => ({ event, location: { kind: 'turn', turn: {} } })) })
+  assert.equal(node.location.kind, 'session', 'main gallery is independent of collapsed tool/turn views')
+  const props = gallery.spec.inject('colleague-session')
+  const show = () => fx.render({ type: gallery.component, props: { ...props, node } })
+  show()
+  await new Promise(resolve => setImmediate(resolve))
+  const visible = show()
+  assert.equal(visible.filter(part => part.type === 'img').length, 1, 'image is visible with no detail component mounted')
+  assert.equal(visible.find(part => part.type === 'img').props.src, fx.preview)
+  assert.equal(fx.reads[0].sessionId, 'colleague-session')
+  assert.equal(fx.reads[0].attachment.attachmentId, attachment.attachmentId)
+  const button = visible.find(part => part.type === 'button')
+  assert.equal(button.props.disabled, false)
+  button.props.onClick({ currentTarget: 'opener' })
+  assert.equal(fx.opened[0].items[0].src, fx.preview)
+  assert.equal(fx.opened[0].items[0].id, attachment.attachmentId)
+  const detailProps = details.spec.inject('colleague-session')
+  const detail = { type: details.component, props: { ...detailProps, block: node.data.blocks[0] } }
+  fx.render(detail, 'detail')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(fx.render(detail, 'detail').find(part => part.type === 'img').props.src, fx.preview)
+  assert.ok(fx.reads.every(read => read.sessionId === 'colleague-session'))
+})

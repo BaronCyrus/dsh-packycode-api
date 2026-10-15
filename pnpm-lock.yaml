@@ -292,10 +292,20 @@ packages:
     peerDependencies:
       '@deepseek-ai/cordis': 4.0.2
 
+  '@deepseek-ai/dsh-client-ui-chat@0.2.0-rc.2':
+    resolution: {integrity: sha512-1rsCHGvWNLaO6B6t1fJa8Qsov0OvJC6bnhpyK2NmDCaLu9uzb4dC4DxCH3OzmJwJkEByHrb3j3l9kbpaV+dTCw==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.4
+
   '@deepseek-ai/dsh-client-ui-conversation@0.1.5-rc.3':
     resolution: {integrity: sha512-XXqq+wvSZT35PFlLLz1QI/vblTsYLkAI2ddq5l3xJDytm26LZoh/rGupZWQFtLHiqLmKGODeUqgX/ZejUNuepw==}
     peerDependencies:
       '@deepseek-ai/cordis': 4.0.2
+
+  '@deepseek-ai/dsh-client-ui-conversation@0.2.0-rc.2':
+    resolution: {integrity: sha512-Y1eWKVeh84cbB0fcV0MFOMUHBeptlzBCzsw6xslZS7p1a8l9PeFcjx5ZVTkKFuFMCfwEHWTeV9HcYqWLYH0bhw==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.4
 
   '@deepseek-ai/dsh-client-ui-model-selection@0.1.5-rc.3':
     resolution: {integrity: sha512-sir1s9X6oQFFCK4mkoe1ax5DBOmC4nm0IFWIGLdbk3S89kiOsVY+AuiPIALkF/CXWzh73IyWVimUHoEXeSQ9ag==}
@@ -1370,10 +1380,20 @@ snapshots:
       '@deepseek-ai/cordis': 4.0.2
       '@deepseek-ai/schemastery': 3.18.2
 
+  '@deepseek-ai/dsh-client-ui-chat@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.4
+      '@deepseek-ai/schemastery': 3.18.4
+
   '@deepseek-ai/dsh-client-ui-conversation@0.1.5-rc.3(@deepseek-ai/cordis@4.0.2)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.2
       '@deepseek-ai/schemastery': 3.18.2
+
+  '@deepseek-ai/dsh-client-ui-conversation@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.4
+      '@deepseek-ai/schemastery': 3.18.4
 
   '@deepseek-ai/dsh-client-ui-model-selection@0.1.5-rc.3(@deepseek-ai/cordis@4.0.2)':
     dependencies:
@@ -1959,6 +1979,8 @@ snapshots:
       '@deepseek-ai/cordis': 4.0.4
       '@deepseek-ai/dsh-brand': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@deepseek-ai/dsh-client-connection': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)))
+      '@deepseek-ai/dsh-client-ui-chat': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-client-ui-conversation': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@deepseek-ai/dsh-invariants': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@deepseek-ai/dsh-scope': 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))
     transitivePeerDependencies:

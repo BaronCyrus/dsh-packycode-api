@@ -51,7 +51,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.2.0`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.2.1`.
 
 A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
 
@@ -70,7 +70,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.0`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.1`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -146,7 +146,11 @@ Add the dedicated key under **Settings → PackyCode → Image generation and ed
 
 The image card shows each image key's remaining/used quota, limits when supplied, reset period, usage bar and separate totals. It refreshes every minute or with **Refresh**, preserving a dated last-good reading when a refresh fails. Image key changes and successful generation invalidate the independent balance cache. Only image key quotas are queried; account-wide billing and conversation key totals are kept separate.
 
-Choose the image model and quality, then click **Create image** in a PackyCode conversation or explicitly request `packycode_image_generate`. Attach references and describe changes to use `/v1/images/edits`; new images use `/v1/images/generations`. The image model is independent of the conversation model and other image plugins can coexist. CLI-backed Claude main turns currently bridge web search only; use an API conversation model supporting DSH tool calls for images.
+Choose the image model and quality, then click **Create image** in a PackyCode conversation or explicitly request `packycode_image_generate`. Attach references and describe changes to use `/v1/images/edits`; new images use `/v1/images/generations`. The image model is independent of the conversation model and other image plugins can coexist.
+
+All three CLI-backed Claude models and the `claude_code` delegation tool also support generation and editing through a temporary MCP image tool: `Claude Code CLI → local MCP → host image service → PackyCode Images API`. It shares the image preferences, dedicated image key and balance cache; the image key never reaches the CLI. References use host-scoped session handles (`referenceIds` / optional `maskId`), including images generated earlier in the same run. Successful images are persisted in DSH messages for chat replay, with original PNG files saved separately. Each run allows at most four image attempts, one at a time; cancellation aborts image work. Plan mode and session titles do not expose the paid image tool. **Create image** remains available in Claude conversations.
+
+**Image visible in tool details but unavailable in the final answer:** a standalone main-chat gallery remains visible when reasoning/tool details are collapsed, including PTC child calls. Reopening an existing conversation restores the gallery from its saved attachments without regenerating or spending image quota. An old invalid Markdown image link to a host path does not affect this gallery.
 
 Tool callers can set `model` and `quality` to `settings` to follow the saved preferences; `auto` is an explicit API quality. New images may omit `referenceImages` or pass an empty array. Explicit `operation: edit` requires valid references, and invalid real references are never discarded in favor of new-image generation.
 
@@ -263,6 +267,8 @@ pnpm run check
 `node scripts/live-check.mjs` checks the live gateway through the same route the plugin registers: balance and groups, one answer per HTTP model, a rotation rehearsal, and the failure classification, printing only the key's last four characters. `--with-cli` also runs the three Claude models through the local Claude Code CLI, and `--with-search` runs one search per backend; the default run spends a small amount of quota.
 
 `node scripts/cli-search-check.mjs` runs the real CLI against a local test gateway and MCP bridge; Claude responses and search data are mocked by default, with no quota consumed. It checks all three permission modes, native-search exclusion and temporary-resource cleanup. `--live --backend deepseek` or `--live --backend gpt` sends the read-only mode's one search to the real backend (edit/full remain mocked). This does not verify actual Claude upstream turns or a running DSH integration.
+
+`node scripts/cli-image-check.mjs` checks the real official CLI generating an image, editing its result, and persisting both through DSH's message assembler. Default model/image responses are local fixtures, covering read-only/edit/full/plan/title modes and temporary-config cleanup. `--live` makes one real Sunburst low-quality generation and one edit using the stored image key, while Claude replies remain local fixtures. `--with-claude` additionally uses a real Claude upstream turn (Haiku by default), consuming conversation quota too. Outputs go under `.artifacts/`; neither option starts DSH or claims a running desktop conversation was tested.
 
 `node scripts/cli-plan-check.mjs` checks plan mode with the real CLI and a local fake gateway: stdio handoff, concurrent plan ownership, invocation-only file fallback, stale-plan exclusion, actual denial limits and cleanup. It reads no real credentials, spends no quota and starts no DSH instance.
 

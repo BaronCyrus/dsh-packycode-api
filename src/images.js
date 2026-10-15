@@ -20,7 +20,7 @@ const EDIT_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 const SIGNATURE = '89504e470d0a1a0a'
 const ATTACHMENT_ID = /^sha256:[0-9a-f]{64}$/u
 
-class ImageRequestError extends Error {}
+export class ImageRequestError extends Error {}
 
 const nonempty = value => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 
@@ -232,15 +232,25 @@ function attachmentProjection(ref) {
     .filter(key => ref[key] !== undefined).map(key => [key, ref[key]]))
 }
 
-const renderImage = value => [
+export const renderImage = value => [
   { type: 'text', text: `PackyCode · ${value.requestedModel} · ${value.width} × ${value.height} · ${value.requestedQuality}\nOriginal PNG on the DSH host: ${value.localPath}` },
   { type: 'image', attachment: value.image },
 ]
 
+export const imageResultSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    image: { ...referenceSchema, required: true }, localPath: { type: 'string', required: true },
+    width: { type: 'integer', required: true }, height: { type: 'integer', required: true },
+    requestedModel: { type: 'string', required: true }, requestedQuality: { type: 'string', required: true }, requestedSize: { type: 'string', required: true },
+    reportedModel: { type: 'string' }, quality: { type: 'string' },
+  },
+}
+
 export function createPackyCodeImageTool({ client, attachments, getPreference, getSessionMessages, imageDirectory, onGenerated }) {
   return defineTool({
     name: IMAGE_TOOL_NAME,
-    description: 'Generate or edit images through PackyCode using the separately configured image API key. Use only when the user requests image output. This is independent of the conversation model and Codex subscription. For a new image omit referenceImages; for edits include only the intended images from this session or read_image. Never replace an edit with text-only generation, silently change models or downgrade quality. Return the resulting image to the user. Rendering may take several minutes.',
+    description: 'Generate or edit images through PackyCode using the separately configured image API key. Use only when the user requests image output. This is independent of the conversation model and Codex subscription. For a new image omit referenceImages; for edits include only the intended images from this session or read_image. Never replace an edit with text-only generation, silently change models or downgrade quality. DSH displays successful image results automatically in the main chat; briefly describe the result. Do not create Markdown image links from localPath, attachmentId, sha256 references or invented URLs: these are not browser image addresses. Rendering may take several minutes.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Complete image description or precise editing instructions.' },
       operation: { type: 'string', enum: ['generate', 'edit'], description: 'Use generate for a new image; edit requires 1-16 real referenceImages. If omitted, nonempty references select editing, while an omitted or empty array selects generation.' },
@@ -252,15 +262,7 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       maskImage: { ...referenceSchema, description: 'Omit for new images and edits without a mask. Never invent a reference. Optional PNG mask from this session, matching the first reference and under 4 MB; alpha=0 marks the area to edit.' },
     },
     output: {
-      schema: {
-        type: 'object', additionalProperties: false,
-        properties: {
-          image: { ...referenceSchema, required: true }, localPath: { type: 'string', required: true },
-          width: { type: 'integer', required: true }, height: { type: 'integer', required: true },
-          requestedModel: { type: 'string', required: true }, requestedQuality: { type: 'string', required: true }, requestedSize: { type: 'string', required: true },
-          reportedModel: { type: 'string' }, quality: { type: 'string' },
-        },
-      },
+      schema: imageResultSchema,
       render: (_args, value) => renderImage(value),
       presentationMeta: (_args, value) => ({
         kind: 'packycode-image', requestedModel: value.requestedModel,

@@ -513,6 +513,12 @@ function createBlockWriter() {
       yield { type: 'tool-call-delta', index, id, name, argumentsDelta: args }
       yield { type: 'block-end', index, block }
     },
+    *image(attachment) {
+      yield* close()
+      index += 1
+      yield { type: 'block-start', index, blockType: 'image' }
+      yield { type: 'block-end', index, block: { type: 'image', attachment } }
+    },
     close,
   }
 }
@@ -600,6 +606,7 @@ async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imag
     model: options.model,
     mode,
     cwd,
+    imageContext: { messages: options.messages },
   }
 }
 
@@ -710,6 +717,16 @@ export function createClaudeCliAdapter({
             break
           case 'search-bridge':
             if (!quiet) yield* blocks.note(`▸ 网页搜索：PackyCode ${event.backend === 'gpt' ? 'GPT' : 'DeepSeek'}（MCP，原生 WebSearch 已禁用）\n`)
+            break
+          case 'image-bridge':
+            if (!quiet) yield* blocks.note('▸ 图片生成与编辑：PackyCode（MCP，使用独立图片 Key）\n')
+            break
+          case 'image':
+            if (!quiet) {
+              const image = event.result
+              yield* blocks.note(`▸ 图片已保存：${image.requestedModel} · ${image.requestedQuality} · ${image.width} × ${image.height}\n原图：${image.localPath}\n`)
+              yield* blocks.image(image.image)
+            }
             break
           case 'started':
             if (!quiet) {

@@ -114,6 +114,31 @@ function persistReview(messages, turn, result) {
 const contentText = call => call.content.filter(block => block.type === 'text').map(block => block.text).join('')
 
 for (const mode of ['native', 'ptc']) {
+  test(`real ${mode} ToolRuntime validates CLI image output and preserves each image once`, async () => {
+    const harness = host(mode)
+    harness.state.active = false
+    const image = { attachmentId: `sha256:${'b'.repeat(64)}`, mediaType: 'image/png', bytes: 100, width: 1024, height: 1024 }
+    const imageResult = { image, localPath: '/private/images/example.png', requestedModel: 'gpt-image-2.5-sunburst', requestedQuality: 'max', requestedSize: '1024x1024', quality: 'max', width: 1024, height: 1024 }
+    harness.tools.register(createClaudeCodeTool({
+      modeCeiling: () => 'read-only', planActive: () => false,
+      runner: { run: async () => ({ result: 'Image ready', model: 'claude-haiku-5-5', mode: 'read-only', costUsd: 0.01, durationMs: 1, inputTokens: 2, outputTokens: 3, images: [imageResult] }) },
+    }))
+    const call = mode === 'native'
+      ? { id: 'image-delegation', name: 'claude_code', arguments: JSON.stringify({ prompt: 'create image' }) }
+      : { id: 'image-delegation', name: 'run_code', arguments: JSON.stringify({ description: 'Delegate image creation to Claude Code', code: 'return await tools.claude_code({ prompt: "create image" });' }) }
+    const result = await harness.execute(call)
+    assert.equal(result.isError, false, JSON.stringify(result))
+    if (mode === 'native') {
+      assert.deepEqual(result.content.filter(block => block.type === 'image'), [{ type: 'image', attachment: image }])
+      assert.equal(result.meta.kind, 'packycode-image')
+    } else {
+      assert.equal(result.additionalContexts.length, 1, 'PTC itself defers rendered images; the plugin must not duplicate them')
+      assert.deepEqual(result.additionalContexts[0].content.filter(block => block.type === 'image'), [{ type: 'image', attachment: image }])
+    }
+  })
+}
+
+for (const mode of ['native', 'ptc']) {
   test(`real ${mode} ToolRuntime reviews a plan and a fresh CLI receives all approved constraints`, async () => {
     const harness = host(mode)
     const plan = '# Approved plan\n\n' + 'detail '.repeat(1_300) + '\nNever publish, never expose keys, preserve unrelated changes.'

@@ -5,7 +5,27 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { apply } from '../src/index.js'
+import { createClaudeCodeTool } from '../src/claude-tool.js'
 import { fakeCredentials, singleKeyRecord } from './helpers.mjs'
+
+test('claude_code renders generated images with trusted session context; plan calls carry no image context', async () => {
+  const calls = []
+  const image = { image: { attachmentId: `sha256:${'d'.repeat(64)}` }, requestedModel: 'gpt-image-2', requestedQuality: 'low', localPath: '/private/image.png', width: 1, height: 1 }
+  const result = { result: 'image ready', mode: 'read-only', model: 'claude-opus-5-5', durationMs: 1, costUsd: 0, images: [image] }
+  const runner = { run: async options => { calls.push(options); return result } }
+  const messages = [{ content: [{ type: 'image', attachment: image.image }] }]
+  const session = { id: 'trusted-session', header: { cwd: '/work' }, deriveMessages: () => messages }
+  const exec = { agent: { id: 'agent', session } }
+  const tool = createClaudeCodeTool({ runner, modeCeiling: () => 'read-only', planActive: () => false })
+  assert.deepEqual(await tool.execute({ prompt: 'edit the session image' }, exec), result)
+  assert.deepEqual(calls[0].imageContext, { sessionId: 'trusted-session', messages })
+  assert.deepEqual(tool.output.render({}, result).filter(part => part.type === 'image'), [{ type: 'image', attachment: image.image }])
+  assert.deepEqual(tool.output.presentationMeta({}, result), { kind: 'packycode-image' })
+  const plan = createClaudeCodeTool({ runner, modeCeiling: () => 'full', planActive: () => true })
+  await plan.execute({ prompt: 'plan' }, { agent: { session } })
+  assert.equal(calls[1].imageContext, undefined)
+  assert.equal(calls[1].mode, 'plan')
+})
 
 /**
  * A stand-in for the `claude` binary: it records the argv and the environment

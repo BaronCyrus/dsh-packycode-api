@@ -204,14 +204,18 @@ export function buildClaudeArgs({ mode = DEFAULT_CLAUDE_MODE, model, stream = fa
   if (searchBridge !== undefined && (!/^mcp__packycode_search_[a-f0-9]+__web_search$/u.test(searchBridge.toolName ?? '') || typeof searchBridge.configPath !== 'string')) {
     throw new Error('PackyCode CLI search bridge configuration is invalid')
   }
+  if (searchBridge?.imageToolName !== undefined && (mode === 'plan'
+    || searchBridge.imageToolName !== searchBridge.toolName.replace(/__web_search$/u, '__packycode_image_generate'))) {
+    throw new Error('PackyCode CLI image bridge configuration is invalid')
+  }
+  const bridgeTools = searchBridge === undefined ? [] : [searchBridge.toolName, ...(searchBridge.imageToolName === undefined ? [] : [searchBridge.imageToolName])]
   args.push('--append-system-prompt', searchBridge === undefined ? instructions : `${instructions}\n\n${searchBridge.instructions}`)
   if (spec.skipPermissions === true) args.push('--dangerously-skip-permissions')
   else if (typeof spec.permissionMode === 'string') {
     args.push('--permission-mode', spec.permissionMode)
-    // Reads are already allowed in plan mode. Only the read-only search tool
-    // is added, so a web search does not stop to ask.
-    if (searchBridge !== undefined) args.push('--allowedTools', searchBridge.toolName)
-  } else args.push('--allowedTools', ...spec.allowedTools, ...(searchBridge === undefined ? [] : [searchBridge.toolName]))
+    // Only this run's exact host tools are granted. Plan mode has search only.
+    if (bridgeTools.length > 0) args.push('--allowedTools', ...bridgeTools)
+  } else args.push('--allowedTools', ...spec.allowedTools, ...bridgeTools)
   if (mode === 'plan') {
     // Print mode otherwise omits ExitPlanMode and hard-denies without ever
     // sending can_use_tool to the host. Keep the real CLI's stdio gate active.
@@ -702,14 +706,14 @@ export function createClaudeRunner({
    * setup onward. Cancelling setup never spawns a child; stopping a running
    * invocation immediately revokes MCP access, then terminates the CLI.
    */
-  const start = async ({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout, enableSearch }) => {
+  const start = async ({ prompt, content, mode, model, appendSystemPrompt, cwd, signal, stream, onStdout, enableSearch, imageContext }) => {
     // Validate caller input before resolving credentials or opening a server.
     buildClaudeArgs({ mode, model, stream, appendSystemPrompt })
     const input = buildClaudeInput({ prompt, content, stream })
     if (disposed || signal?.aborted) throw new Error('claude_code was aborted')
     const cancellation = new AbortController()
     const runSignal = signal === undefined ? cancellation.signal : AbortSignal.any([signal, cancellation.signal])
-    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0 }
+    const state = { stdout: '', stderr: '', timedOut: false, silent: false, sawOutput: false, settled: false, denies: 0, images: [] }
     let child
     let plans
     let bridge
@@ -808,7 +812,11 @@ export function createClaudeRunner({
       if (typeof createSearchBridge === 'function' && enableSearch !== false) {
         pendingBridge = Promise.resolve().then(() => {
           checkAborted()
-          return createSearchBridge({ model, signal: runSignal })
+          return createSearchBridge({ model, mode, signal: runSignal, imageContext,
+            onImage: result => {
+              if (mode !== 'plan' && !runSignal.aborted && !state.settled) state.images.push(JSON.parse(scrub(JSON.stringify(result))))
+            },
+          })
         })
         bridge = await setup(pendingBridge)
         if (bridge === undefined || typeof bridge.close !== 'function') throw new Error('PackyCode CLI search bridge could not start')
@@ -1009,7 +1017,7 @@ export function createClaudeRunner({
       if (mode === 'plan') writeStdin(input)
       else child.stdin?.end?.(input)
       if (runSignal.aborted) kill()
-      return { child, state, closed, kill, closeBridge, scrub, deltaRedactor: createDeltaRedactor([token, ...(bridge?.redactionValues?.() ?? [])]), key: describeRunKey(credential), searchBackend: bridge?.backend }
+      return { child, state, closed, kill, closeBridge, scrub, deltaRedactor: createDeltaRedactor([token, ...(bridge?.redactionValues?.() ?? [])]), key: describeRunKey(credential), searchBackend: bridge?.backend, hasImages: bridge?.imageToolName !== undefined }
     } catch (error) {
       kill()
       if (closed !== undefined) await closed.catch(() => undefined)
@@ -1024,7 +1032,7 @@ export function createClaudeRunner({
      * @param options - prompt, mode, model, working directory, and cancellation.
      * @returns the CLI's answer plus its own accounting.
      */
-    async run({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch } = {}) {
+    async run({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch, imageContext } = {}) {
       // Plan mode speaks the streaming control protocol even for a one-shot
       // result: that is the only stdin on which a permission prompt can be
       // answered. The returned shape stays the non-streaming one.
@@ -1045,20 +1053,30 @@ export function createClaudeRunner({
         }
       }
       const startedAt = Date.now()
-      const { state, closed } = await start({ prompt, mode, model, appendSystemPrompt, cwd, signal, enableSearch, stream: false })
-      const { code, killSignal } = await closed
-      const parsed = parseClaudeResult(state.stdout)
-      if (parsed === undefined) throw new Error(failureMessage(undefined, code ?? killSignal, state.stderr))
-      if (parsed.is_error === true || code !== 0) throw new Error(failureMessage(parsed, code, state.stderr))
-      const usage = parsed.usage ?? {}
+      const { state, closed } = await start({ prompt, mode, model, appendSystemPrompt, cwd, signal, enableSearch, imageContext, stream: false })
+      let parsed
+      let partialFailure
+      try {
+        const { code, killSignal } = await closed
+        parsed = parseClaudeResult(state.stdout)
+        if (parsed === undefined) throw new Error(failureMessage(undefined, code ?? killSignal, state.stderr))
+        if (parsed.is_error === true || code !== 0) throw new Error(failureMessage(parsed, code, state.stderr))
+      } catch (error) {
+        if (state.images.length === 0) throw error
+        // A paid success must survive a later CLI failure. Return its images
+        // with an explicit failure notice rather than inviting a paid retry.
+        partialFailure = `Claude Code CLI failed after saving the attached images: ${error.message}. Do not regenerate them automatically.`
+      }
+      const usage = parsed?.usage ?? {}
       return {
-        result: typeof parsed.result === 'string' ? parsed.result : '',
-        model: typeof parsed.model === 'string' ? parsed.model : (model ?? ''),
+        result: partialFailure ?? (typeof parsed.result === 'string' ? parsed.result : ''),
+        model: typeof parsed?.model === 'string' ? parsed.model : (model ?? ''),
         mode,
-        costUsd: typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : 0,
-        durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : Date.now() - startedAt,
+        costUsd: typeof parsed?.total_cost_usd === 'number' ? parsed.total_cost_usd : 0,
+        durationMs: typeof parsed?.duration_ms === 'number' ? parsed.duration_ms : Date.now() - startedAt,
         inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
         outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+        ...(state.images.length === 0 ? {} : { images: state.images }),
       }
     },
 
@@ -1071,12 +1089,12 @@ export function createClaudeRunner({
      * @returns an async generator of {@link readClaudeStreamEvents} events and
      *   one closing `result` event.
      */
-    async *stream({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch } = {}) {
+    async *stream({ prompt, content, mode = DEFAULT_CLAUDE_MODE, model, appendSystemPrompt, cwd, signal, enableSearch, imageContext } = {}) {
       const startedAt = Date.now()
       let buffer = ''
       let sawResult
       const lines = []
-      const { state, closed, kill, closeBridge, scrub, deltaRedactor, key, searchBackend } = await start({
+      const { state, closed, kill, closeBridge, scrub, deltaRedactor, key, searchBackend, hasImages } = await start({
         prompt,
         content,
         mode,
@@ -1085,6 +1103,7 @@ export function createClaudeRunner({
         cwd,
         signal,
         enableSearch,
+        imageContext,
         stream: true,
         onStdout: chunk => {
           buffer += chunk
@@ -1132,6 +1151,7 @@ export function createClaudeRunner({
         }
       }
       let finished = false
+      let deliveredImages = 0
       let exitStatus
       // A consumer that stops reading early must not leave the CLI running.
       const stopIfAbandoned = () => {
@@ -1150,7 +1170,11 @@ export function createClaudeRunner({
         // revoke the bridge and terminate the CLI.
         if (key !== undefined) yield { type: 'key', ...JSON.parse(scrub(JSON.stringify(key))) }
         if (searchBackend !== undefined) yield { type: 'search-bridge', backend: searchBackend }
-        while (!finished || lines.length > 0) {
+        if (hasImages) yield { type: 'image-bridge' }
+        while (!finished || lines.length > 0 || deliveredImages < state.images.length) {
+          while (deliveredImages < state.images.length) {
+            for (const safe of redactedEvents({ type: 'image', result: state.images[deliveredImages++] })) yield safe
+          }
           if (lines.length === 0) {
             if (finished) break
             await new Promise(resolve => setTimeout(resolve, 15))

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 
 import {
   buildDelegatedContent,
@@ -54,6 +55,29 @@ async function consume(iterable) {
   for await (const chunk of iterable) chunks.push(chunk)
   return chunks
 }
+
+test('CLI images become durable assistant image blocks without inventing DSH tool calls', async () => {
+  const image = { attachmentId: `sha256:${'c'.repeat(64)}`, mediaType: 'image/png', bytes: 100, width: 1024, height: 1024 }
+  const result = { image, localPath: '/private/dsh/images/example.png', width: 1024, height: 1024, requestedModel: 'gpt-image-2.5-sunburst', requestedQuality: 'max' }
+  const messages = [{ role: 'user', content: [{ type: 'text', text: 'create image' }] }]
+  for (const failing of [false, true]) {
+    const runner = stubRunner([{ type: 'image-bridge' }, { type: 'image', result }, { type: 'text', text: 'Done' }])
+    if (failing) {
+      const stream = runner.stream.bind(runner)
+      runner.stream = async function* (args) { yield* stream(args); throw new Error('later CLI failure') }
+    }
+    const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+    const assembler = new BlockAssembler()
+    for (const chunk of await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages }))) assembler.push(chunk)
+    assert.equal(runner.calls[0].imageContext.messages, messages)
+    assert.deepEqual(assembler.blocks().filter(block => block.type === 'image'), [{ type: 'image', attachment: image }])
+    assert.equal(assembler.blocks().some(block => block.type === 'tool-call'), false)
+    assert.equal(assembler.finish.kind, failing ? 'error' : 'stop')
+    const durable = JSON.parse(JSON.stringify(assembler.message({ kind: 'model', provider: 'packycode', model: 'claude-opus-5-5' })))
+    assert.deepEqual(durable.content.find(block => block.type === 'image').attachment, image)
+    assert.match(durable.content.filter(block => block.type === 'reasoning').map(block => block.text).join(''), /example\.png/u)
+  }
+})
 
 test('only the CLI-backed ids leave the pi-ai path', async () => {
   const inner = innerAdapter()

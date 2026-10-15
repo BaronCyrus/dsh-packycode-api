@@ -68,6 +68,89 @@ function stubSpawn({ stdout = `${JSON.stringify(PAYLOAD)}\n`, stderr = '', code 
   return { spawnImpl, calls }
 }
 
+const CLI_IMAGE = {
+  image: { attachmentId: `sha256:${'b'.repeat(64)}`, mediaType: 'image/png', bytes: 100, width: 1024, height: 1024 },
+  localPath: '/private/dsh/images/example.png', width: 1024, height: 1024,
+  requestedModel: 'gpt-image-2.5-sunburst', requestedQuality: 'max', requestedSize: '1024x1024',
+}
+
+function imageRunner({ failing = false } = {}) {
+  let deliver
+  let received
+  let closed = false
+  const runner = createClaudeRunner({
+    binary: '/fixture/claude', resolveCredential: async () => ({ baseUrl: 'https://example.invalid', token: 'sk-cli-image-fixture' }),
+    createSearchBridge: async options => {
+      received = options
+      deliver = options.onImage
+      return { toolName: 'mcp__packycode_search_abcdef__web_search', imageToolName: 'mcp__packycode_search_abcdef__packycode_image_generate',
+        configPath: '/private/fixture/mcp.json', instructions: 'image instructions', close: () => { closed = true } }
+    },
+    spawnImpl: () => {
+      const child = new EventEmitter()
+      child.stdin = { on() {}, end() {} }
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.exitCode = null
+      child.signalCode = null
+      child.kill = () => true
+      queueMicrotask(() => {
+        deliver(CLI_IMAGE)
+        child.stdout.emit('data', `${JSON.stringify({ ...PAYLOAD, is_error: failing, result: failing ? 'later CLI failure' : 'image ready' })}\n`)
+        child.exitCode = failing ? 1 : 0
+        child.emit('close', child.exitCode, null)
+      })
+      return child
+    },
+  })
+  return { runner, received: () => received, closed: () => closed }
+}
+
+test('MCP image grants are limited to the exact run server and unavailable in plan mode', () => {
+  const searchBridge = { toolName: 'mcp__packycode_search_abcdef__web_search', imageToolName: 'mcp__packycode_search_abcdef__packycode_image_generate', configPath: '/private/mcp.json', instructions: 'host image tool' }
+  for (const mode of ['read-only', 'edit', 'full']) {
+    const args = buildClaudeArgs({ mode, searchBridge })
+    assert.ok(args.includes(searchBridge.imageToolName) || mode === 'full')
+    assert.equal(args.includes('--strict-mcp-config'), false)
+    assert.equal(args.includes('mcp__*'), false)
+    assert.equal(args.includes('--dangerously-skip-permissions'), mode === 'full')
+  }
+  assert.throws(() => buildClaudeArgs({ mode: 'plan', searchBridge }), /image bridge/u)
+  for (const imageToolName of ['mcp__packycode_search_foreign__packycode_image_generate', 'mcp__*', 'Bash', 'mcp__packycode_search_abcdef__shell']) {
+    assert.throws(() => buildClaudeArgs({ searchBridge: { ...searchBridge, imageToolName } }), /image bridge/u)
+  }
+})
+
+test('one-shot CLI returns host image references, forwards trusted context and keeps completed images after later CLI failure', async () => {
+  for (const failing of [false, true]) {
+    const fx = imageRunner({ failing })
+    const imageContext = { sessionId: 'host-session', messages: [] }
+    const result = await fx.runner.run({ prompt: 'create an image', mode: 'read-only', imageContext })
+    assert.deepEqual(result.images, [CLI_IMAGE])
+    assert.equal(fx.received().imageContext, imageContext)
+    assert.equal(fx.received().mode, 'read-only')
+    assert.equal(fx.closed(), true)
+    assert.match(result.result, failing ? /failed after saving.*later CLI failure/su : /image ready/u)
+    await fx.runner.close()
+  }
+})
+
+test('streaming CLI delivers each completed image once, including before a later CLI failure', async () => {
+  for (const failing of [false, true]) {
+    const fx = imageRunner({ failing })
+    const events = []
+    let error
+    try { for await (const event of fx.runner.stream({ prompt: 'create an image', mode: 'read-only' })) events.push(event) }
+    catch (failure) { error = failure }
+    assert.equal(events.filter(e => e.type === 'image-bridge').length, 1)
+    assert.deepEqual(events.filter(e => e.type === 'image').map(e => e.result), [CLI_IMAGE])
+    assert.equal(Boolean(error), failing)
+    assert.equal(fx.closed(), true)
+    assert.doesNotMatch(JSON.stringify(events), /sk-cli-image-fixture|b64_json|base64/u)
+    await fx.runner.close()
+  }
+})
+
 test('builds the argv the CLI documents, with the prompt kept off it', () => {
   assert.deepEqual(buildClaudeArgs({}), [
     '-p', '--output-format', 'json',

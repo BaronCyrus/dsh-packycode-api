@@ -51,7 +51,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.2.0`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.2.1`。
 
 首次安装后**无需重启 DSH**，可直接打开**设置 → PackyCode** 添加 Key。更新已加载的旧版时，按「插件版本」卡片的重启提示操作。
 
@@ -70,7 +70,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.0`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.1`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -146,7 +146,11 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 
 图片卡片会显示每个图片 Key 的剩余、已用、限额（接口有提供时）、重置周期和使用进度，并单独汇总图片额度。余额每分钟更新，也可点卡片右上角的「刷新」；读取失败时保留上次余额并标出时间。图片 Key 变更或生图成功后会清理图片余额缓存。仅查询专用图片 Key 的额度，不叠加账户级账单，也不混入对话 Key 的合计。
 
-选择请求型号与质量后，可在 PackyCode 对话里点 **创建图片** 补充描述，或明确要求使用 `packycode_image_generate`。上传参考图后描述修改要求会调用 `/v1/images/edits`；新图调用 `/v1/images/generations`。图片型号独立于对话型号，其他插件的图片工具仍可并存。CLI 执行的 Claude 主回合目前仅桥接网页搜索，生图请在支持 DSH 工具调用的 API 模型对话中使用。
+选择请求型号与质量后，可在 PackyCode 对话里点 **创建图片** 补充描述，或明确要求使用 `packycode_image_generate`。上传参考图后描述修改要求会调用 `/v1/images/edits`；新图调用 `/v1/images/generations`。图片型号独立于对话型号，其他插件的图片工具仍可并存。
+
+三个 Claude 模型走本机官方 CLI 时，以及 `claude_code` 委派时，均可通过临时 MCP 图片工具生图和编辑：`Claude Code CLI → 本机 MCP → 插件图片服务 → PackyCode Images API`。它复用同一份图片设置、独立图片 Key 和余额缓存；图片 Key 不会交给 CLI。CLI 只使用宿主提供的本会话图片句柄（`referenceIds` / 可选 `maskId`），可以继续编辑本轮刚生成的图片。成功结果作为图片保存进 DSH 会话，聊天重放也能展示，PNG 原图另存本机。每轮最多四次图片尝试、同一时间一张；请求取消时一并停止图片请求。计划模式和标题生成不开放生图工具。创建图片按钮在 Claude 对话中保留。
+
+**详情里有图、主聊天却显示「图片无法预览」：** 图片结果会在主聊天单独展示，收起思维链或工具详情时仍可见，包括 PTC 嵌套调用。修复版重新打开历史对话也会用已保存的附件补出图片卡片，无需再次生图；模型回复里遗留的无效本机路径图片链接不影响这张卡片。
 
 工具调用可将 `model` 和 `quality` 设为 `settings` 来跟随已保存的图片设置；`auto` 是一个明确的 API 质量档位。新图可省略 `referenceImages` 或传空数组；显式指定 `operation: edit` 时必须提供有效参考图，错误的真实参考图不会被丢弃后改生成新图。
 
@@ -263,6 +267,8 @@ pnpm run check
 真机网关用 `node scripts/live-check.mjs` 验证：它通过插件注册的同一条路由，读余额和分组、让每个 HTTP 模型回答一次、演练 Key 轮换和失败分类，只打印 Key 的末 4 位。加 `--with-cli` 会用本机 Claude Code CLI 跑三个 Claude 模型，加 `--with-search` 会每个搜索后端各搜一次；默认运行只消耗少量额度。
 
 Claude CLI 的 MCP 接口验证用 `node scripts/cli-search-check.mjs`：运行真实 CLI，普通 Claude 响应和搜索数据默认由本地测试服务模拟，不消费额度；会检查三种权限模式、原生搜索禁用和临时资源清理。加 `--live --backend deepseek` 或 `--live --backend gpt` 会让只读模式的那一次搜索走真实后端（其它两种模式仍模拟）。这不等于验证了真实 Claude 上游对话或运行中的 DSH 集成。
+
+图片 MCP 验证用 `node scripts/cli-image-check.mjs`：真实官方 CLI 依次生图、用生成结果编辑，并经 DSH 消息组装器验证持久化图片；默认 Claude 和图片网关响应均在本地模拟，同时检查只读/编辑/完全权限、计划模式、标题和临时配置清理。加 `--live` 会用已保存的独立图片 Key 向真实图片网关发出一次 Sunburst `low` 生图与一次编辑，结果写入 `.artifacts/`；Claude 回复仍由本地模拟网关提供。加 `--with-claude` 则连 Claude 也走真实网关，默认 Haiku，另消费对话额度；两者都不启动或重启 DSH，也不等于验证了运行中桌面会话。
 
 计划模式另用 `node scripts/cli-plan-check.mjs` 验证：真实 CLI 对接本地模拟网关，检查 stdio 计划提交、并发计划归属、本轮文件回退、旧计划隔离、实际拒绝次数上限和清理；不读取真实凭据、不消费额度、不启动 DSH。
 

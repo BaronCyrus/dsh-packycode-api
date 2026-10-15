@@ -12,6 +12,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import { DEFAULT_CLAUDE_MODE } from './claude-cli.js'
 import { capClaudeMode } from './permission.js'
+import { imageResultSchema, renderImage } from './images.js'
 
 /** Modes a caller of `claude_code` may ask for. Plan mode is not one of them. */
 const CLAUDE_TOOL_MODES = Object.freeze(['read-only', 'edit', 'full'])
@@ -31,7 +32,7 @@ export const CLAUDE_TOOL_PLAN_INSTRUCTIONS = 'This task was delegated to Claude 
 export function createClaudeCodeTool({ runner, modeCeiling, planActive }) {
   return defineTool({
     name: 'claude_code',
-    description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands); it defaults to, and is capped at, what this session\'s permission preset allows. While this session is in DSH plan mode the CLI plans instead, whatever `mode` says, and the returned result is the plan for you to submit with exit_plan_mode — do not treat it as permission to edit. It starts a fresh CLI session per call, takes tens of seconds, and bills through this plugin\'s stored PackyCode keys. Web searches use the selected DeepSeek/GPT backend through a read-only MCP tool rather than native WebSearch. Its internal tool calls are not part of this session\'s transcript — only the returned answer is.',
+    description: 'Delegate a task to the local Claude Code CLI (the official `claude` binary), which runs it with its own tools and returns its final answer. Use it when the user asks for Claude or when a task suits Claude Code. The child runs with this plugin\'s PackyCode endpoint and API key, in an isolated config home. `mode` bounds what it may do on its own: "read-only" (Read/Grep/Glob), "edit" (also Edit/Write), "full" (bypasses the CLI\'s permission checks, including shell commands); it defaults to, and is capped at, what this session\'s permission preset allows. While this session is in DSH plan mode the CLI plans instead, whatever `mode` says, and the returned result is the plan for you to submit with exit_plan_mode — do not treat it as permission to edit. It starts a fresh CLI session per call, takes tens of seconds, and bills through this plugin\'s stored PackyCode keys. Web searches use the selected DeepSeek/GPT backend through a read-only MCP tool rather than native WebSearch. Requested image generation and edits use a host MCP tool, the saved image settings and separate image key; image results are returned to DSH. Image generation is unavailable in plan mode. Its internal tool calls are not part of this session\'s transcript — only the returned answer and generated images are.',
     parameters: {
       prompt: {
         type: 'string',
@@ -62,12 +63,16 @@ export function createClaudeCodeTool({ runner, modeCeiling, planActive }) {
           mode: { type: 'string', required: true },
           costUsd: { type: 'number', required: true },
           durationMs: { type: 'number', required: true },
+          inputTokens: { type: 'number' },
+          outputTokens: { type: 'number' },
+          images: { type: 'array', items: imageResultSchema },
         },
       },
       render: (_args, value) => [{
         type: 'text',
         text: `${value.result}\n\n— Claude Code CLI · ${value.model || 'default model'} · ${value.mode} · ${Math.round(value.durationMs / 1000)}s · $${value.costUsd.toFixed(4)}`,
-      }],
+      }, ...(value.images ?? []).flatMap(renderImage)],
+      presentationMeta: (_args, value) => value.images?.length > 0 ? { kind: 'packycode-image' } : {},
     },
     async execute(args, exec) {
       const sessionCwd = exec?.agent?.session?.header?.cwd
@@ -84,6 +89,7 @@ export function createClaudeCodeTool({ runner, modeCeiling, planActive }) {
         appendSystemPrompt: planning ? CLAUDE_TOOL_PLAN_INSTRUCTIONS : CLAUDE_TOOL_INSTRUCTIONS,
         cwd,
         signal: exec?.signal,
+        ...(planning ? {} : { imageContext: { sessionId: session?.id ?? exec?.agent?.id, messages: session?.deriveMessages?.() ?? [] } }),
       })
     },
   })

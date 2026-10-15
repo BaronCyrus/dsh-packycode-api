@@ -24,6 +24,7 @@ import { createClaudeCliAdapter } from './claude-adapter.js'
 import { DEFAULT_CLAUDE_MODE, createClaudeRunner } from './claude-cli.js'
 import { createClaudeCliManager } from './claude-install.js'
 import { createClaudeSearchBridge } from './claude-search-mcp.js'
+import { createClaudeImageService } from './claude-images.js'
 import { createClaudeCodeTool } from './claude-tool.js'
 import {
   CHANNEL,
@@ -176,19 +177,30 @@ export function apply(ctx, config) {
       const { key, ...described } = choice
       return { ...described, baseUrl: hosts().apiHost, token: key }
     },
-    createSearchBridge: async ({ signal }) => {
+    createSearchBridge: async ({ signal, mode, imageContext, onImage }) => {
       // MCP HTTP callbacks do not inherit the originating agent's context.
       // Capture the trusted session now, never from model-supplied arguments.
-      const sessionId = currentSession()?.id ?? fallbackSessionId
-      const secrets = new Set((await ring.secrets()).map(entry => entry.key))
+      const session = currentSession()
+      const sessionId = imageContext?.sessionId ?? session?.id
+      const secrets = new Set((await Promise.all([ring.secrets(), imageRing.secrets()])).flat().map(entry => entry.key))
+      const store = attachments()
+      const image = mode === 'plan' ? undefined : createClaudeImageService({
+        sessionId,
+        messages: imageContext?.messages ?? session?.deriveMessages?.() ?? [],
+        client: imageClient, attachments: store, getPreference: images.preference,
+        imageDirectory: join(dshHome, 'packycode-api', 'images'),
+        onGenerated: () => imageBalance.invalidate(),
+        onImage,
+      })
       const bridge = await createClaudeSearchBridge({
         signal,
+        image,
         backend: () => search.status().searchBackend,
         // Direct provider only: DSH routing/off does not change CLI searches
         // or silently send them to another provider's credentials.
-        search: (request, searchSignal) => search.packycode.search({ ...request, sessionId }, searchSignal),
+        search: (request, searchSignal) => search.packycode.search({ ...request, sessionId: sessionId ?? fallbackSessionId }, searchSignal),
         sanitize: async text => {
-          for (const entry of await ring.secrets()) secrets.add(entry.key)
+          for (const entry of (await Promise.all([ring.secrets(), imageRing.secrets()])).flat()) secrets.add(entry.key)
           return redactSecrets(text, [...secrets])
         },
       })
@@ -426,6 +438,7 @@ export {
 } from './claude-adapter.js'
 export { CLAUDE_TOOL_INSTRUCTIONS, createClaudeCodeTool } from './claude-tool.js'
 export { createClaudeSearchBridge, cliSearchInstructions } from './claude-search-mcp.js'
+export { createClaudeImageService, MCP_IMAGE_SCHEMA, MAX_CLI_IMAGE_CALLS } from './claude-images.js'
 export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession, planModeForSession, planModeForToolExecution } from './permission.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { accountHostOrder, normalizeHost, statusHostOrder } from './hosts.js'
