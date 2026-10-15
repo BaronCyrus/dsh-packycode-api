@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 
 import { apply, Config } from '../src/index.js'
@@ -119,6 +120,18 @@ async function makeContext({ settings: generation = '0.2' } = {}) {
 /** Let the reconcile chain started by a registration settle. */
 const settle = () => new Promise(resolve => { setTimeout(resolve, 20) })
 
+/** Observe the externally written patch, rather than racing a fixed 20 ms delay on CI. */
+async function waitForPatch(path, expected) {
+  const deadline = Date.now() + 2_000
+  let value
+  do {
+    value = await readFile(path, 'utf8')
+    if (expected.test(value)) return value
+    await delay(5)
+  } while (Date.now() < deadline)
+  assert.match(value, expected)
+}
+
 test('the search preference fields are part of the plugin Config', () => {
   const resolved = new Config({})
   assert.equal(fieldValue(resolved.searchProvider), 'default')
@@ -176,8 +189,7 @@ test('DSH 0.2: a volatile change made elsewhere is followed without a restart', 
   await settle()
   env.values.searchProvider = 'packycode'
   env.seen.listeners.get('loader/volatile-update')([['searchProvider']])
-  await settle()
-  assert.match(await readFile(env.patchPath, 'utf8'), /searchProvider: packycode-api\n/u)
+  await waitForPatch(env.patchPath, /searchProvider: packycode-api\n/u)
 })
 
 test('DSH 0.1.5: the preference lives in the installed section and its change hook reconciles', async t => {
