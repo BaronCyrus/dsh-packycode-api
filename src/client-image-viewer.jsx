@@ -59,7 +59,9 @@ function ImageDialog({ image, viewer, t }) {
       if (!controller.signal.aborted) { download.current = undefined; setBusy(false) }
     }
   }
-  return <div className="pkc-image-backdrop" onClick={event => { if (event.target === event.currentTarget) viewer.close() }}>
+  return <div className="pkc-image-backdrop" onClick={event => {
+    if (event.target.closest('img, button, [role="alert"]') === null) viewer.close()
+  }}>
     <div className="pkc-image-viewer" role="dialog" aria-modal="true" aria-label={t('imagesViewerTitle')} ref={dialog}>
       <div className="pkc-image-viewer-toolbar">
         <span className="pkc-image-viewer-name">{image.attachment.name ?? t('imagesTitle')}</span>

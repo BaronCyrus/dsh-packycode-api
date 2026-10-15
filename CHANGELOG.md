@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.6
+
+- Clicking black space around a large image now closes the preview, including the canvas inside the full-size dialog. The image hit area fits its actual displayed dimensions instead of covering letterboxing; image clicks, download controls and error notices keep the viewer open.
+- Added a regression for canvas/dialog whitespace and nested button icons. Browser verification reproduced the old no-op on the black image margin, then confirmed the same click dismisses the updated viewer and restores focus, while clicking the image keeps it open.
+- Validation, 2026-10-15: 412 tests, both rebuilt bundles and the versioned tarball. No paid image request or DSH restart was needed.
+
 ## 1.2.5
 
 - Fixed generated-image clicks doing nothing in DSH desktop. The optional `nativeImageViewer` service is absent in the current desktop build, and its popup policy denies the previous `window.open(blob:...)` fallback. PackyCode now owns an in-app large-image overlay shared by main-chat and tool-detail results, with Escape/close, focus restoration and viewport fitting.

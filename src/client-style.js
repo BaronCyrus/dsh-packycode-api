@@ -55,7 +55,7 @@ export const STYLE = `
 .pkc-image-viewer-button:disabled{opacity:.55;cursor:wait}
 .pkc-image-viewer-close{width:36px;padding:0;border-color:transparent;background:transparent}
 .pkc-image-viewer-canvas{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:hidden}
-.pkc-image-viewer-canvas img{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
+.pkc-image-viewer-canvas img{display:block;flex:none;width:auto;height:auto;max-width:100%;max-height:100%;min-width:0;min-height:0;object-fit:contain}
 .pkc-image-viewer-error{align-self:center;flex:none;margin:12px 0 0;padding:8px 12px;border-radius:8px;background:#4d2222;color:#ffd3d3;text-align:center}
 .pkc-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 

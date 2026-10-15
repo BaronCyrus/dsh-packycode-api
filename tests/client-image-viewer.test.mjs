@@ -76,6 +76,11 @@ function fixture(nativeViewer, options = {}) {
     async save() { await act(async () => root.root.findByProps({ className: 'pkc-image-viewer-button' }).props.onClick()) },
     async dismiss() { await act(async () => root.root.findByProps({ 'aria-label': zh.imagesClosePreview }).props.onClick()) },
     async escape() { await act(async () => listeners.get('keydown')?.({ key: 'Escape', preventDefault() {}, stopPropagation() {} })) },
+    async backdropClick(tag = 'div', ancestor) {
+      const backdrop = root.root.findByProps({ className: 'pkc-image-backdrop' })
+      const target = { closest: selector => selector.split(',').map(value => value.trim()).includes(ancestor ?? tag) ? target : null }
+      await act(async () => backdrop.props.onClick({ target, currentTarget: backdrop }))
+    },
   }
 }
 
@@ -156,6 +161,20 @@ test('closing the large preview aborts an in-flight original read and cannot tri
   await act(async () => { resolve(info()); await saving })
   assert.equal(fx.downloads.length, 0)
   assert.equal(fx.root().findAllByProps({ role: 'dialog' }).length, 0)
+})
+
+test('clicking black canvas or dialog whitespace closes the preview while image and download-button clicks keep it open', async t => {
+  const fx = fixture(); t.after(() => fx.close()); await fx.mount(); await fx.open()
+  for (const [tag, ancestor] of [['img'], ['button'], ['path', 'button']]) {
+    await fx.backdropClick(tag, ancestor)
+    assert.equal(fx.root().findAllByProps({ role: 'dialog' }).length, 1)
+  }
+  await fx.backdropClick('div')
+  assert.equal(fx.root().findAllByProps({ role: 'dialog' }).length, 0, 'black canvas inside the full-size dialog must also dismiss the preview')
+  await fx.open()
+  await fx.backdropClick('span')
+  assert.equal(fx.root().findAllByProps({ role: 'dialog' }).length, 0, 'non-interactive toolbar whitespace should dismiss too')
+  assert.equal(fx.calls.length, 0)
 })
 
 for (const [label, native] of [['absent', undefined], ['declines', { open: () => false }]]) {
