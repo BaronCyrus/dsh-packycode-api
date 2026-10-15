@@ -288,7 +288,7 @@ pnpm run check
 
 `node scripts/install-check.mjs` diagnoses an installed plugin that never appears: it reads one profile, lists any host package shadowed by a leftover `node_modules` inside an installed package (with versions) plus the recovery steps, and exits 1 when it finds one. `--profile <name>`, `--home <dir>`, and `--json` are available.
 
-Read [AGENTS.md](AGENTS.md) before agent-assisted changes or a release. Publishing is the [Publish workflow](.github/workflows/publish.yml), triggered by pushing a `v*` tag. Do not run `npm publish` locally.
+Read [AGENTS.md](AGENTS.md) before agent-assisted changes or a release. Publishing is the [Publish workflow](.github/workflows/publish.yml), triggered by pushing a `v*` tag: it publishes to npm, then creates the GitHub Release from `docs/releases/v<version>.md` with the same tarball. Do not run `npm publish` locally.
 
 ## License
 

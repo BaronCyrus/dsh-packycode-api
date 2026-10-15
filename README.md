@@ -288,7 +288,7 @@ Claude CLI 的 MCP 接口验证用 `node scripts/cli-search-check.mjs`：运行�
 
 排查「装了却看不到插件」用 `node scripts/install-check.mjs`：它只读当前 profile，列出被包内残留 `node_modules` 挡住的宿主包（含版本）和对应的修复步骤，发现问题时以退出码 1 结束；`--profile <name>`、`--home <dir>` 可指定其它 profile，`--json` 输出结构化结果。
 
-使用 Agent 修改或发布时，先读 [AGENTS.md](AGENTS.md)。发布由推送 `v*` 标签触发 [Publish workflow](.github/workflows/publish.yml)，不要在本机执行 `npm publish`。
+使用 Agent 修改或发布时，先读 [AGENTS.md](AGENTS.md)。发布由推送 `v*` 标签触发 [Publish workflow](.github/workflows/publish.yml)：先发布到 npm，再用 `docs/releases/v<版本>.md` 和同一个包创建 GitHub Release。不要在本机执行 `npm publish`。
 
 ## License
 

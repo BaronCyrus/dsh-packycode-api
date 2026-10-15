@@ -56,6 +56,11 @@ jobs:
             process.exit(1)
           }
           EOF
+      # Checked before npm publishes, so a version never reaches npm without
+      # the notes its GitHub Release is created from.
+      - name: Refuse a tag without its GitHub Release notes
+        if: github.event_name != 'workflow_dispatch'
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > /dev/null
       - name: Test
         if: github.event_name != 'workflow_dispatch'
         run: pnpm run test
@@ -118,3 +123,54 @@ jobs:
             exit 1
           fi
           npm publish "${artifact:?}" --access public
+      - name: Hand the published tarball to the release job
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-tarball
+          path: .artifacts/dsh-packycode-api-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create the GitHub Release
+    needs: publish
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only job that may write to the repository. It runs no dependency
+    # code: checkout, Node's built-ins, the published tarball and the
+    # runner's gh.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: published-tarball
+          path: .artifacts
+      - name: Create the release with the tarball npm published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          artifact=".artifacts/dsh-packycode-api-${version:?}.tgz"
+          if [ ! -f "$artifact" ]; then
+            echo "The published tarball is missing"
+            exit 1
+          fi
+          echo "integrity sha512-$(openssl dgst -sha512 -binary "$artifact" | base64 -w0)"
+          # A release made by hand is left as it is; a re-run must not fail on it.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; leaving it unchanged"
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          title="$(node scripts/release-notes.mjs "$version" --body-file "$notes")"
+          gh release create "$GITHUB_REF_NAME" "$artifact" --verify-tag --title "$title" --notes-file "$notes"

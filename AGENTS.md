@@ -31,6 +31,7 @@ This file governs the entire `dsh-packycode-api` repository.
 - Edit `src/`; never hand-edit generated `lib/index.js` or `lib/client.js`.
 - `lib/` is tracked and must be regenerated with `pnpm run build` after source changes.
 - `.artifacts/` and `node_modules/` are ignored and must never be committed.
+- `docs/releases/v<version>.md` holds each version's GitHub Release notes. It is tracked and not packaged.
 - Add or update tests under `tests/` for behavior changes.
 
 ## Required validation
@@ -71,7 +72,13 @@ Never reuse, move, delete, or overwrite a published npm version or Git tag. If a
 
    For an unused npm version, `npm view` normally returns `E404`. An existing npm version or Git tag requires choosing a new version.
 
-3. Update all release metadata together: `package.json` version, `CHANGELOG.md`, and any version pinned in `README.md` / `README.en.md`.
+3. Update all release metadata together: `package.json` version, `CHANGELOG.md`, any version pinned in `README.md` / `README.en.md`, and the GitHub Release notes in `docs/releases/v<version>.md`. The notes are in Chinese, like every earlier release:
+   - The first line is `# v<version>：<短标题>`, which becomes the release title.
+   - Then a one-sentence summary and bullets with bold labels.
+   - Then a `验证：…` paragraph.
+   - They close with `在 DSH 插件管理中更新至 **<version>**，然后重新打开 DSH 加载新版。`
+
+   `node scripts/release-notes.mjs <version>` checks the file, and `pnpm run check` fails while the current `package.json` version has no valid notes.
 
 4. Validate and inspect the exact release artifact:
 
@@ -85,7 +92,7 @@ Never reuse, move, delete, or overwrite a published npm version or Git tag. If a
 
 6. Confirm the package has a GitHub Actions trusted publisher before pushing the tag: repository `BaronCyrus/dsh-packycode-api`, workflow filename `publish.yml`, environment empty. Never request that a token, password, or one-time code be pasted into chat.
 
-7. Create the annotated tag and push it. That push publishes with GitHub OIDC. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
+7. Create the annotated tag and push it. That push publishes with GitHub OIDC. The workflow's `release` job then creates the GitHub Release from `docs/releases/v<version>.md` and attaches the tarball npm published. It is the only job with `contents: write`, and it runs no dependency code. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
 
    ```sh
    git tag -a v<version> -m "dsh-packycode-api v<version>"
@@ -94,4 +101,6 @@ Never reuse, move, delete, or overwrite a published npm version or Git tag. If a
 
    `workflow_dispatch` on the same workflow only prints the OIDC identity npm will match. It does not publish.
 
-8. Confirm the publish workflow succeeded for that tag before declaring the release public. On an OIDC `package not found` error, fix the trusted publisher and re-run the same workflow. Do not move the tag. If the tagged tree itself must change, publish a new patch version.
+8. Confirm that both jobs of the publish workflow succeeded for that tag before declaring the release public. Then check that npm serves the version and that `gh release view v<version>` shows the notes, the `dsh-packycode-api-<version>.tgz` asset and, for the newest version, the Latest mark. On an OIDC `package not found` error, fix the trusted publisher and re-run the same workflow. Do not move the tag. If the tagged tree itself must change, publish a new patch version.
+
+   If npm published but the release job failed, re-run only that failed job. If the Release must be made by hand, attach the tarball npm serves, not a local `.artifacts` build: CI packs its own, so the local bytes differ. Fetch it with `npm pack dsh-packycode-api@<version>`, and compare its SHA-512 with the registry's `dist.integrity`. Then run `gh release create v<version> <tarball> --verify-tag --title "<the notes' title>" --notes-file <the notes' body>`. The release job leaves an existing Release unchanged.

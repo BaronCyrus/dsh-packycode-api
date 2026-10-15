@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **A release also creates its GitHub Release.** A `v*` tag push publishes to npm and then, in a separate `release` job, creates the GitHub Release from `docs/releases/v<version>.md` with the tarball npm published attached. The publish job refuses a tag whose notes are missing or malformed before npm publishes it. Only the release job holds `contents: write`, and it runs no dependency code. `workflow_dispatch` still only checks the OIDC identity. The notes for 1.2.7–1.2.9, whose Releases were made by hand, are in `docs/releases/`. AGENTS.md's release checklist now covers writing the notes, checking the Release, and making one by hand.
+
 ## 1.2.9
 
 - **Remove all works again.** **Remove all** under **Accounts and keys** answered "读取 PackyCode 状态失败: PackyCode request failed" and kept every key. Emptying the ring wrote `activeId: undefined`, and DSH's credential store (`credentials-local`) accepts only plain JSON in a grant payload, so it refused the whole write. The same refusal hit removing the last conversation or image key on its own, and marking the only key unusable after its quota ran out or the gateway rejected it. That last case was only logged ("could not move past key …"), so a lone exhausted key was never shown as disabled. The ring now leaves out a field that has no value: an empty ring stores no `activeId`, and a disabled mark from a hand-edited record stores no empty reason.
