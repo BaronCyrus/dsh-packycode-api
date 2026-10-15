@@ -12,11 +12,20 @@
 
 const amount = value => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
+/** Displayed key quota is remaining plus used, independent of a period cap. */
+export function quotaTotalUsd(usage) {
+  if (usage?.unlimitedQuota === true) return undefined
+  const remaining = amount(usage?.availableUsd)
+  const used = amount(usage?.usedUsd)
+  if (remaining === undefined || used === undefined) return undefined
+  return amount(Number((remaining + used).toFixed(6)))
+}
+
 /**
  * Add up the balance rows the host returned.
  * @param rows - the `keys` array of a balance projection.
  * @returns summed amounts plus the conditions that make a sum incomplete:
- *   keys whose read failed, and keys with no quota limit at all.
+ *   keys whose read failed, and keys with unlimited quota.
  */
 export function sumBalances(rows) {
   const total = { keys: 0, counted: 0, unread: 0, unlimited: 0, remainingUsd: 0, usedUsd: 0, limitUsd: 0 }
@@ -34,10 +43,10 @@ export function sumBalances(rows) {
     }
     const remaining = amount(usage.availableUsd)
     const used = amount(usage.usedUsd)
-    const limit = amount(usage.limitUsd)
     if (remaining !== undefined) total.remainingUsd += remaining
     if (used !== undefined) total.usedUsd += used
-    if (limit !== undefined) total.limitUsd += limit
   }
+  // This is the displayed total, not the API's optional periodic cap.
+  total.limitUsd = Number((total.remainingUsd + total.usedUsd).toFixed(6))
   return total
 }

@@ -2,6 +2,7 @@ import * as react from 'react'
 
 import { IMAGE_CHAT_KIND, imageConversationNode } from './image-conversation.js'
 import { BalanceTotals, KeyBalance } from './client-balance.jsx'
+import { ImageShortcutBalance } from './client-image-balance.jsx'
 
 const imageModelLabel = id => id.replace('gpt-image-', 'GPT Image ').replace('-flare', ' Flare').replace('-sunburst', ' Sunburst')
 
@@ -61,7 +62,6 @@ export function PackyCodeImagesCard({ call, t }) {
   const rows = (state?.keys ?? []).map(entry => balance?.keys?.find(row => row.id === entry.id) ?? { id: entry.id })
   return <section className="pkc-card">
     <header className="pkc-head"><h3 className="pkc-title">{t('imagesTitle')}</h3><span className="pkc-actions">
-      <span className="pkc-chip" data-tone="neutral">{t('imagesSeparateKey')}</span>
       <button className="pkc-btn" type="button" disabled={busy || balanceLoading} onClick={() => { void readBalance(true) }}>{balanceLoading ? t('refreshing') : t('refresh')}</button>
     </span></header>
     <p className="pkc-note">{t('imagesIntro')}</p>
@@ -130,9 +130,14 @@ export function PackyCodeImageShortcut({ call, t, directory, prepare }) {
   const [error, setError] = react.useState()
   react.useEffect(() => {
     let live = true
-    const refresh = () => { if (active) void call('images/status').then(value => {
-      if (live) setReady(value.imageEnabled && value.available && value.keys.some(key => !key.disabled))
-    }).catch(() => { if (live) setReady(false) }) }
+    let generation = 0
+    const refresh = () => {
+      if (!active) return
+      const current = ++generation
+      void call('images/status').then(value => {
+        if (live && current === generation) setReady(value.imageEnabled && value.available && value.keys.some(key => !key.disabled))
+      }).catch(() => { if (live && current === generation) setReady(false) })
+    }
     setReady(false)
     refresh()
     window.addEventListener('packycode-images-updated', refresh)
@@ -141,7 +146,7 @@ export function PackyCodeImageShortcut({ call, t, directory, prepare }) {
   if (!active || !ready) return null
   return <span className="pkc-image-shortcut"><button className="pkc-btn" type="button" title={t('imagesShortcutHint')} onClick={() => {
     try { prepare(t('imagesDraft')); setError(undefined) } catch { setError(t('imagesDraftBusy')) }
-  }}>{t('imagesCreate')}</button>{error && <span className="pkc-error" role="alert">{error}</span>}</span>
+  }}>{t('imagesCreate')}</button><ImageShortcutBalance call={call} t={t} />{error && <span className="pkc-error" role="alert">{error}</span>}</span>
 }
 
 function GeneratedImage({ attachment, loadImage, openImage, t }) {

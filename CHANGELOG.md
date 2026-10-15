@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.4
+
+- Added the current image key's remaining quota immediately after the Create image shortcut. Hovering or focusing it shows the key label, account name, remaining/used/total quota and update time. It shares the shortcut's visibility, refreshes every minute while mounted and after image-setting/key changes, and marks stale or failed reads without confusing them with zero credit. Real React lifecycle regressions cover provider switches, image availability, disabled/missing keys and late responses.
+- Removed the redundant "Separate image key" badge from the image settings header.
+- Image/account quota totals now use total remaining plus total used, as requested, rather than depending on the optional periodic `quota_limit` field. Non-resetting image keys therefore show their total even when no period cap is set. Per-key quota figures and progress bars use the same calculation. Missing balance components remain unknown, and unlimited keys retain their unlimited display.
+- Validation, 2026-10-15: 397 tests, both rebuilt bundles and the versioned tarball. Browser verification with real React and DSH 0.2.0-rc.2 composer CSS confirmed the balance sits to the right of Create image, the hover/focus details show the current key's quota, and provider switches, the image setting and the host's hidden toolbar hide both controls together. A read-only live image-key quota projection also confirmed the no-period-cap shape; no image generation was needed for these UI changes.
+
 ## 1.2.3
 
 - Fixed ordinary reference-only image edits failing with `PackyCode image mask must be a PNG smaller than 4 MB` when a model also fills the optional mask field with the same JPEG/WebP reference. Native `maskImage` and CLI `maskId` now explicitly accept `null`; the field descriptions distinguish sketch refinement from using an actual mask. Only an identical reference already resolved by the host as non-PNG is treated as a redundant non-mask. Reference bytes, edit endpoint, model and quality stay intact; real PNG masks and all distinct mask references still undergo format, size and dimension checks. Invalid mask-format errors now explain how to request editing without a mask. Added native and authenticated MCP regressions without paid calls.

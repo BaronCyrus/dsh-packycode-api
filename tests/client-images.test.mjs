@@ -24,7 +24,9 @@ test('built image settings persist quality choices, constrain menus by model and
         return { fetchedAt: 1000, keys: (await ring.list()).keys.map(({ id, label }) => ({
           id, label,
           ...(balanceMode === 'error' ? { error: 'balance fixture unavailable' } : {
-            usage: { name: 'Image fixture', availableUsd: 9.5, usedUsd: 0.5, ...(balanceMode === 'no-limit' ? {} : { limitUsd: 10 }), resetPeriod: balanceMode === 'no-limit' ? 'never' : 'monthly', unlimitedQuota: balanceMode === 'unlimited' },
+            usage: { name: 'Image fixture', availableUsd: 9.5, ...(balanceMode === 'partial-usage' ? {} : { usedUsd: 0.5 }),
+              ...(balanceMode === 'no-limit' ? { grantedUsd: 10 } : balanceMode === 'unknown-total' ? {} : { limitUsd: 10 }),
+              resetPeriod: ['no-limit', 'unknown-total'].includes(balanceMode) ? 'never' : 'monthly', unlimitedQuota: balanceMode === 'unlimited' },
             ...(balanceMode === 'stale' ? { stale: { fetchedAt: 1000, error: 'balance fixture offline' } } : {}),
           }),
         })) }
@@ -110,6 +112,13 @@ test('built image settings persist quality choices, constrain menus by model and
   balanceMode = 'no-limit'
   refresh().props.onClick(); await tick()
   assert.match(text(), /不重置/u)
+  assert.equal(rendered().filter(node => node.props?.className === 'pkc-stat-value').at(-1).props.children, '$10.00')
+  assert.equal(rendered().some(node => node.props?.className === 'pkc-bar'), true)
+  balanceMode = 'unknown-total'
+  refresh().props.onClick(); await tick()
+  assert.equal(rendered().filter(node => node.props?.className === 'pkc-stat-value').at(-1).props.children, '$10.00')
+  balanceMode = 'partial-usage'
+  refresh().props.onClick(); await tick()
   assert.equal(rendered().filter(node => node.props?.className === 'pkc-stat-value').at(-1).props.children, '—')
   assert.equal(rendered().some(node => node.props?.className === 'pkc-bar'), false)
   balanceMode = 'stale'

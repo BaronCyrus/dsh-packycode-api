@@ -1,6 +1,6 @@
 import * as react from 'react'
 
-import { sumBalances } from './totals.js'
+import { quotaTotalUsd, sumBalances } from './totals.js'
 
 export const fill = (text, values) => text.replace(/\{(\w+)\}/gu, (match, name) => values[name] === undefined ? match : String(values[name]))
 
@@ -21,19 +21,20 @@ const RESET_KEYS = { monthly: 'resetMonthly', weekly: 'resetWeekly', daily: 'res
 /** The same quota presentation for conversation and image credential records. */
 export function KeyBalance({ row, t }) {
   const usage = row?.usage
+  const totalUsd = quotaTotalUsd(usage)
   const figures = [
     usage?.unlimitedQuota === true
       ? [t('keyRemaining'), t('keyUnlimited')]
       : usage?.availableUsd === undefined ? undefined : [t('keyRemaining'), formatUsd(usage.availableUsd)],
     usage?.usedUsd === undefined ? undefined : [t('keyUsed'), formatUsd(usage.usedUsd)],
-    usage?.limitUsd === undefined ? undefined : [t('accountLimit'), formatUsd(usage.limitUsd)],
+    totalUsd === undefined ? undefined : [t('accountLimit'), formatUsd(totalUsd)],
   ].filter(Boolean)
   const meta = [
     usage?.name === undefined ? t('keyNameUnknown') : `${t('keyName')} ${usage.name}`,
     RESET_KEYS[usage?.resetPeriod] === undefined ? undefined : t(RESET_KEYS[usage.resetPeriod]),
   ].filter(Boolean).join(' · ')
-  const share = usage?.unlimitedQuota !== true && typeof usage?.limitUsd === 'number' && usage.limitUsd > 0 && typeof usage.availableUsd === 'number'
-    ? Math.max(0, Math.min(1, usage.availableUsd / usage.limitUsd)) : undefined
+  const share = usage?.unlimitedQuota !== true && totalUsd > 0 && typeof usage.availableUsd === 'number'
+    ? Math.max(0, Math.min(1, usage.availableUsd / totalUsd)) : undefined
   return <>
     <span className="pkc-meta">{meta}</span>
     {figures.length > 0 ? <div className="pkc-figures">
@@ -57,7 +58,7 @@ export function BalanceTotals({ rows, t }) {
         {known('availableUsd') ? formatUsd(totals.remainingUsd) : totals.unlimited > 0 ? t('keyUnlimited') : '—'}{known('availableUsd') && totals.unlimited > 0 && ` + ${t('keyUnlimited')}`}
       </span></div>
       <div className="pkc-stat"><span className="pkc-stat-label">{t('totalUsed')}</span><span className="pkc-stat-value">{known('usedUsd') ? formatUsd(totals.usedUsd) : '—'}</span></div>
-      <div className="pkc-stat"><span className="pkc-stat-label">{t('totalLimit')}</span><span className="pkc-stat-value">{totals.unlimited > 0 ? t('keyUnlimited') : known('limitUsd') ? formatUsd(totals.limitUsd) : '—'}</span></div>
+      <div className="pkc-stat"><span className="pkc-stat-label">{t('totalLimit')}</span><span className="pkc-stat-value">{totals.unlimited > 0 ? t('keyUnlimited') : known('availableUsd') && known('usedUsd') ? formatUsd(totals.limitUsd) : '—'}</span></div>
     </div>
     {(totals.unread > 0 || stale > 0) && <p className="pkc-note">{[
       totals.unread > 0 ? fill(t('totalPartial'), { count: totals.unread }) : undefined,
