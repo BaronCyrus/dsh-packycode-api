@@ -1,8 +1,8 @@
 {
   "name": "dsh-packycode-api",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "packageManager": "pnpm@10.32.1",
-  "description": "Use a PackyCode (PackyAPI) API key in DeepSeek Harness through a built-in multi-protocol model route with key rotation and balance display",
+  "description": "Use PackyCode API keys in DeepSeek Harness with multi-protocol models, image generation and editing, separate key rings, and balance display",
   "type": "module",
   "main": "./lib/index.js",
   "icon": "./icon-subscription.webp",
@@ -19,6 +19,7 @@
     "README.md",
     "README.en.md",
     "docs/assets/dsh-packycode-mascot.png",
+    "docs/research/image-api.md",
     "AGENTS.md",
     "CHANGELOG.md",
     "SECURITY.md",
@@ -35,7 +36,8 @@
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-model-selection",
-        "@deepseek-ai/dsh-client-ui-settings"
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-tool"
       ],
       "platform": "web"
     }
@@ -52,7 +54,9 @@
     "packyapi",
     "api-key",
     "balance",
-    "llm"
+    "llm",
+    "image-generation",
+    "image-editing"
   ],
   "author": "BaronCyrus",
   "license": "MIT",

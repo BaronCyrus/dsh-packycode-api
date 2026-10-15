@@ -22,10 +22,6 @@ const LEGAL_KEY = /^[\x21-\x7E]+$/u
 const RECORD_VERSION = 1
 const MAX_KEYS = 32
 
-const RECORD_KEY = typeof credentialKey === 'function'
-  ? credentialKey(PLUGIN_ID, KEY_RECORD_ID)
-  : undefined
-
 const text = value => (typeof value === 'string' ? value : '')
 
 /** Validate a pasted key before it is stored; the gateway never sees a bad one from us. */
@@ -97,9 +93,10 @@ function projection(state) {
 
 export class PackyCodeKeyRing {
   #credentials
+  #recordKey
 
-  constructor(credentials) {
-    if (RECORD_KEY === undefined) {
+  constructor(credentials, { recordId = KEY_RECORD_ID } = {}) {
+    if (typeof credentialKey !== 'function') {
       throw new Error('dsh-packycode-api requires @deepseek-ai/dsh-credentials with credentialKey()')
     }
     if (credentials === null || typeof credentials !== 'object'
@@ -107,14 +104,15 @@ export class PackyCodeKeyRing {
       throw new Error('dsh-packycode-api requires the DSH credential record API')
     }
     this.#credentials = credentials
+    this.#recordKey = credentialKey(PLUGIN_ID, recordId)
   }
 
   async #read() {
-    return normalizeState(await this.#credentials.readRecord(RECORD_KEY))
+    return normalizeState(await this.#credentials.readRecord(this.#recordKey))
   }
 
   async #write(mutate) {
-    const next = await this.#credentials.modifyRecord(RECORD_KEY, async (current) => {
+    const next = await this.#credentials.modifyRecord(this.#recordKey, async (current) => {
       const state = normalizeState(current)
       const updated = await mutate(state)
       if (updated === undefined) return current

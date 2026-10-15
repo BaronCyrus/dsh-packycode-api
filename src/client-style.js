@@ -35,6 +35,11 @@ export const STYLE = `
 .pkc-input:focus{border-color:var(--dsw-alias-state-business-primary)}
 .pkc-input::placeholder{color:var(--dsw-alias-label-caption)}
 .pkc-input:disabled{opacity:.5}
+.pkc-image-choice{flex:none;width:100%;max-width:300px;cursor:pointer}
+.pkc-image-shortcut{display:inline-flex;align-items:center;gap:8px}
+.pkc-image-result,.pkc-image-chat{display:flex;flex-direction:column;gap:10px;padding:8px 0}
+.pkc-generated-image{display:grid;place-items:center;align-self:flex-start;max-width:100%;width:320px;min-height:80px;padding:0;overflow:hidden;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:zoom-in}
+.pkc-generated-image img{display:block;max-width:100%;max-height:480px;object-fit:contain}
 .pkc-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 
 .pkc-chip{flex:none;padding:0 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:18px;white-space:nowrap}

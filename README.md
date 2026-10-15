@@ -31,6 +31,7 @@
 | **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条，并给出这些 Key 的合计；输入框右侧显示当前 Key 的剩余额度 |
 | **Claude 走本机 CLI** | `claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5` 由本机官方 Claude Code CLI 执行；设置页可以检测并一键安装 |
 | **网页搜索可走 PackyCode** | 可选：DSH 的 `web_search` 改用 PackyCode 搜索，后端在 DeepSeek 与 GPT 之间切换；可只对 PackyCode 模型生效 |
+| **图片生成与编辑** | 独立图片 Key，支持 GPT Image 2 / 2.5 Flare / 2.5 Sunburst、型号与质量设置、参考图编辑和 PNG 原图保存；已通过网关生图与编辑实测 |
 | **凭据不离开本机** | Key 只存在 DSH 凭据文件里。浏览器只能看到备注、状态和余额，拿不到 Key |
 
 <img width="774" height="455" alt="截屏2026-10-15 10 34 28" src="https://github.com/user-attachments/assets/060c4192-00ea-40e6-9b85-bbec605b5c31" />
@@ -50,7 +51,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.9`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.2.0`。
 
 首次安装后**无需重启 DSH**，可直接打开**设置 → PackyCode** 添加 Key。更新已加载的旧版时，按「插件版本」卡片的重启提示操作。
 
@@ -69,7 +70,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.9`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.0`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -138,6 +139,20 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 - 全部 Key 都停用时，请求失败并说明没有可用 Key，不会回退到别的凭据。
 
 </details>
+
+### 图片生成与编辑
+
+在 **设置 → PackyCode → 图片生成与编辑 → 添加图片 Key** 填入专用 Key。它与「账户与 Key」里的对话 Key 分开保存；图片请求只用此处选择的 Key。添加 Key 不会自动发起付费测试。
+
+图片卡片会显示每个图片 Key 的剩余、已用、限额（接口有提供时）、重置周期和使用进度，并单独汇总图片额度。余额每分钟更新，也可点卡片右上角的「刷新」；读取失败时保留上次余额并标出时间。图片 Key 变更或生图成功后会清理图片余额缓存。仅查询专用图片 Key 的额度，不叠加账户级账单，也不混入对话 Key 的合计。
+
+选择请求型号与质量后，可在 PackyCode 对话里点 **创建图片** 补充描述，或明确要求使用 `packycode_image_generate`。上传参考图后描述修改要求会调用 `/v1/images/edits`；新图调用 `/v1/images/generations`。图片型号独立于对话型号，其他插件的图片工具仍可并存。CLI 执行的 Claude 主回合目前仅桥接网页搜索，生图请在支持 DSH 工具调用的 API 模型对话中使用。
+
+`gpt-image-2` 的质量为 `auto / low / medium / high`；两款 2.5 另支持 `xhigh / max`。质量按 Images API 的 `quality` 原样发送，不作为文字推理强度；不会自动换型号、降档或重试付费请求。输出先采用 PNG，每次一张，聊天预览之外的原图保存在 `~/.dsh/packycode-api/images/`（设置了 `DSH_HOME` 时跟随该目录）。参考图与可选 PNG mask 必须来自当前会话；不能用路径替代附件引用。
+
+用户填入图片 Key 后，可运行 `node scripts/image-check.mjs --all --edit` 验证三个型号与一次编辑；用 `--model <型号> --edit` 单独验证某个型号的生图和编辑，搭配 `--quality xhigh` 或 `--quality max` 验证质量。测试会消耗图片额度，输出写入 `.artifacts/`，日志只显示 Key 的掩码尾号，并记录网关回报的型号/质量。
+
+2026-10-15 实测：三个型号均通过 `low` 生图与编辑；Sunburst 额外通过 `xhigh`、`max` 生图与编辑，两档响应的 quality 均与请求一致。合计 10 次成功请求，无重试，全部返回 1024×1024 PNG；编辑正确改色并保留构图。xhigh 生成/编辑约 43/48 秒，max 约 84/91 秒。这是已构建图片 client 的网关验证；本轮未新建 DSH 对话验证完整聊天流程。完整范围和记录见[协议核查与网关实测](docs/research/image-api.md)。
 
 ## 模型与分组
 

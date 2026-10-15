@@ -16,6 +16,8 @@ export const CHANNEL = '/packycode-api'
 export const SETTINGS_NAMESPACE = 'packycode-api'
 /** Credential record id inside the plugin's own scope. */
 export const KEY_RECORD_ID = 'keys'
+/** Image credentials never participate in the conversation key ring. */
+export const IMAGE_KEY_RECORD_ID = 'image-keys'
 
 /**
  * Model-traffic host. Each model declares the protocol its gateway route

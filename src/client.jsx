@@ -12,7 +12,8 @@ import * as react from 'react'
 
 import { en, zh } from './client-copy.js'
 import { STYLE } from './client-style.js'
-import { sumBalances } from './totals.js'
+import { installImagePresentation, PackyCodeImagesCard, PackyCodeImageShortcut } from './client-images.jsx'
+import { BalanceTotals, fill, formatUsd, KeyBalance, readTime } from './client-balance.jsx'
 
 const NS = 'settings.packyCodeApi'
 const PROVIDER = 'packycode'
@@ -48,47 +49,15 @@ function channelCaller(rpc) {
 
 const useCaller = rpc => react.useMemo(() => channelCaller(rpc), [rpc])
 
-/** Substitute `{name}` placeholders in a copy string. */
-const fill = (text, values) => text.replace(/\{(\w+)\}/gu, (match, name) => (values[name] === undefined ? match : String(values[name])))
-
-function formatUsd(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
-  try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value)
-  } catch {
-    return `$${value.toFixed(2)}`
-  }
-}
-
-/** The clock time of an epoch-millisecond reading, for a "last read at" note. */
-function readTime(ms) {
-  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '—'
-  try {
-    return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return new Date(ms).toISOString().slice(11, 16)
-  }
-}
-
 function clearMessage(error) {
   const text = typeof error?.message === 'string' && error.message.length > 0 ? error.message : String(error)
   return text.length > 200 ? text.slice(0, 200) : text
 }
 
-const RESET_KEYS = { monthly: 'resetMonthly', weekly: 'resetWeekly', daily: 'resetDaily' }
-const resetLabel = (period, t) => (RESET_KEYS[period] === undefined ? undefined : t(RESET_KEYS[period]))
-
 /** Active key's usage row, preferring the key the ring currently points at. */
 function activeUsage(balance) {
   if (balance === undefined) return undefined
   return balance.keys?.find(entry => entry.id === balance.activeId) ?? balance.keys?.[0]
-}
-
-/** How much of a key's limit is left, for its bar; undefined without a limit. */
-function remainingShare(usage) {
-  if (usage?.unlimitedQuota === true || typeof usage?.limitUsd !== 'number' || usage.limitUsd <= 0) return undefined
-  if (typeof usage.availableUsd !== 'number') return undefined
-  return Math.max(0, Math.min(1, usage.availableUsd / usage.limitUsd))
 }
 
 /** Which catalog families a key reaches, from its per-model coverage. */
@@ -177,19 +146,6 @@ function KeyGroups({ group, descriptions, loading, t }) {
 }
 
 function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, renaming, onRename, onAction, t }) {
-  const usage = row?.usage
-  const share = remainingShare(usage)
-  const figures = [
-    usage?.unlimitedQuota === true
-      ? [t('keyRemaining'), t('keyUnlimited')]
-      : usage?.availableUsd === undefined ? undefined : [t('keyRemaining'), formatUsd(usage.availableUsd)],
-    usage?.usedUsd === undefined ? undefined : [t('keyUsed'), formatUsd(usage.usedUsd)],
-    usage?.limitUsd === undefined ? undefined : [t('accountLimit'), formatUsd(usage.limitUsd)],
-  ].filter(Boolean)
-  const meta = [
-    usage?.name === undefined ? t('keyNameUnknown') : `${t('keyName')} ${usage.name}`,
-    resetLabel(usage?.resetPeriod, t),
-  ].filter(Boolean).join(' · ')
   const editing = renaming?.id === entry.id
 
   return (
@@ -226,22 +182,7 @@ function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, renaming
           </span>
         )}
       </div>
-      <span className="pkc-meta">{meta}</span>
-      {figures.length > 0
-        ? (
-          <div className="pkc-figures">
-            {figures.map(([label, value]) => <span key={label}>{label}<b>{value}</b></span>)}
-          </div>
-        )
-        : <span className="pkc-meta">{row?.error === undefined ? t('keyNoBalance') : `${t('loadFailed')}: ${row.error}`}</span>}
-      {share !== undefined && (
-        <div className="pkc-bar" data-level={share < 0.1 ? 'low' : share < 0.3 ? 'warn' : 'ok'} role="presentation">
-          <span style={{ width: `${Math.round(share * 100)}%` }} />
-        </div>
-      )}
-      {row?.stale !== undefined && (
-        <span className="pkc-warn">{fill(t('staleNote'), { time: readTime(row.stale.fetchedAt), error: row.stale.error ?? '' })}</span>
-      )}
+      <KeyBalance row={row} t={t} />
       <KeyGroups group={group} descriptions={descriptions} loading={groupsLoading} t={t} />
     </div>
   )
@@ -324,12 +265,6 @@ function AccountsCard({ call, t }) {
 
   const keys = status?.keys ?? []
   const rows = balance?.keys ?? []
-  // The headline figures are what these keys can spend together, not
-  // PackyCode's account-level billing, which counts every token on the
-  // account and is not shown.
-  const totals = sumBalances(rows)
-  const staleCount = rows.filter(row => row.stale !== undefined).length
-
   return (
     <Card
       title={t('accountsTitle')}
@@ -344,33 +279,7 @@ function AccountsCard({ call, t }) {
         ? <p className="pkc-note">{t('empty')}</p>
         : (
           <>
-            <div className="pkc-stats">
-              <div className="pkc-stat">
-                <span className="pkc-stat-label">{t('totalRemaining')}</span>
-                <span className="pkc-stat-value">
-                  {totals.counted === 0 ? '—' : formatUsd(totals.remainingUsd) ?? '—'}
-                  {totals.unlimited > 0 && ` + ${t('keyUnlimited')}`}
-                </span>
-              </div>
-              <div className="pkc-stat">
-                <span className="pkc-stat-label">{t('totalUsed')}</span>
-                <span className="pkc-stat-value">{totals.counted === 0 ? '—' : formatUsd(totals.usedUsd) ?? '—'}</span>
-              </div>
-              <div className="pkc-stat">
-                <span className="pkc-stat-label">{t('totalLimit')}</span>
-                <span className="pkc-stat-value">
-                  {totals.counted === 0 ? '—' : totals.unlimited > 0 ? t('keyUnlimited') : formatUsd(totals.limitUsd) ?? '—'}
-                </span>
-              </div>
-            </div>
-            {(totals.unread > 0 || staleCount > 0) && (
-              <p className="pkc-note">
-                {[
-                  totals.unread > 0 ? fill(t('totalPartial'), { count: totals.unread }) : undefined,
-                  staleCount > 0 ? fill(t('totalStale'), { count: staleCount }) : undefined,
-                ].filter(Boolean).join(' ')}
-              </p>
-            )}
+            <BalanceTotals rows={rows} t={t} />
             <div className="pkc-list">
               {keys.map(entry => (
                 <KeyRow
@@ -821,6 +730,7 @@ function PackyCodeSection({ rpc, t }) {
     <div className="pkc">
       <p className="pkc-intro">{t('intro')}</p>
       <AccountsCard call={call} t={t} />
+      <PackyCodeImagesCard call={call} t={t} />
       <ModelsCard call={call} t={t} />
       <SearchCard call={call} t={t} />
       <ClaudeCliCard call={call} t={t} />
@@ -892,6 +802,8 @@ export function apply(ctx) {
   }, 'packycode-api: style')
   const connection = ctx.get('connection')
   const t = ctx.locale.bind(NS)
+  installImagePresentation(ctx, t)
+  const call = channelCaller(connection.rpc)
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'packycode-api',
@@ -911,4 +823,23 @@ export function apply(ctx) {
       directory: ctx.modelDirectories.directoryFor(sessionId).store,
     }),
   }, PackyCodeComposerQuota))
+  ctx.inject(['sessions', 'conversation'], scope => {
+    const sessions = scope.get('sessions')
+    const conversation = scope.get('conversation')
+    if (typeof sessions?.scope !== 'function' || typeof conversation?.input?.for !== 'function') return
+    scope.slots.inject('conversation.input.left', () => scope.slots.register({
+      name: 'conversation.input.left', id: 'packycode-image-create', order: 31,
+      inject: sessionId => ({
+        call, t, directory: ctx.modelDirectories.directoryFor(sessionId).store,
+        prepare: text => {
+          const session = sessions.scope(sessionId)
+          if (session === undefined) throw new Error('Composer unavailable')
+          const input = conversation.input.for(session)
+          const draft = input.state.getSnapshot()
+          if (draft.phase !== 'plain' || draft.occurrences?.length) throw new Error('Composer busy')
+          input.setDraft([draft.draft, text].filter(Boolean).join('\n\n'))
+        },
+      }),
+    }, PackyCodeImageShortcut))
+  })
 }

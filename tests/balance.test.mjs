@@ -79,6 +79,64 @@ function routedFetch(routes) {
 const KEYS = [{ id: 'a', label: 'primary', key: 'sk-aaaaaaaaaaaaaaaa', disabled: false }]
 const HOSTS = { apiHost: 'https://cf.api.fan', statusHost: 'https://www.packyapi.ai' }
 
+test('quota-only readers make no account-wide billing requests', async () => {
+  const requests = []
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, includeAccount: false,
+    fetchImpl: async (url, init) => {
+      requests.push(url)
+      assert.equal(new URL(url).pathname, '/api/usage/token/')
+      assert.equal(init.redirect, 'error')
+      assert.ok(init.signal instanceof AbortSignal)
+      return jsonResponse(TOKEN_USAGE)
+    },
+  })
+  const value = await reader.read()
+  assert.equal(value.keys[0].usage.availableUsd, 499.252884)
+  assert.equal(Object.hasOwn(value, 'account'), false)
+  assert.equal(requests.length, 1)
+  await reader.read()
+  assert.equal(requests.length, 1)
+  await reader.read({ force: true })
+  assert.equal(requests.length, 2)
+})
+
+test('quota-only readers with no image keys make no authenticated request', async () => {
+  const reader = createBalanceReader({ listKeys: async () => [], getHosts: () => HOSTS, includeAccount: false,
+    fetchImpl: async () => { assert.fail('must not fall back to another credential') },
+  })
+  const value = await reader.read()
+  assert.deepEqual(value.keys, [])
+  assert.equal(Object.hasOwn(value, 'account'), false)
+})
+
+test('quota projections redact credentials echoed in names, reset periods and transport diagnostics', async () => {
+  let failing = false
+  const key = KEYS[0].key
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, includeAccount: false,
+    fetchImpl: async () => {
+      if (failing) throw new Error(`connection failed with Bearer ${key}`)
+      return jsonResponse({ data: { name: `image account ${key}`, total_available: 500000, quota_reset_period: key } })
+    },
+  })
+  const first = await reader.read()
+  assert.equal(JSON.stringify(first).includes(key), false)
+  assert.match(first.keys[0].usage.name, /\[redacted\]/u)
+  failing = true
+  const stale = await reader.read({ force: true })
+  assert.equal(stale.keys[0].usage.availableUsd, 1)
+  assert.ok(stale.keys[0].stale)
+  assert.equal(JSON.stringify(stale).includes(key), false)
+})
+
+test('an invalid JSON balance response never exposes a secret from its parse error', async () => {
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, includeAccount: false,
+    fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError(`invalid JSON near ${KEYS[0].key}`) } }),
+  })
+  const value = await reader.read()
+  assert.match(value.keys[0].error, /unreadable balance data/u)
+  assert.equal(JSON.stringify(value).includes(KEYS[0].key), false)
+})
+
 test('reads per-key quota from the status host and the account from the model host', async () => {
   const { fetchImpl, calls } = routedFetch([
     { prefix: 'https://www.packyapi.ai/api/usage/token/', reply: TOKEN_USAGE },

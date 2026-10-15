@@ -24,6 +24,7 @@ import {
 } from './constants.js'
 import { accountHostOrder, statusHostOrder } from './hosts.js'
 import { ambientFetch, boundedFetch } from './request.js'
+import { redactSecrets } from './secret-redactor.js'
 
 export { accountHostOrder, statusHostOrder } from './hosts.js'
 
@@ -111,7 +112,8 @@ async function getJson(url, key, { fetchImpl, timeoutMs, signal }) {
     throw new Error(error.message, { cause: error })
   }
   if (!response.ok) throw new Error(statusMessage(response.status))
-  return response.json()
+  try { return await response.json() }
+  catch { throw new Error('the gateway returned unreadable balance data') }
 }
 
 async function withFallback(hosts, path, key, options) {
@@ -144,6 +146,8 @@ export function createBalanceReader({
   now = Date.now,
   ttlMs = DEFAULT_BALANCE_TTL_MS,
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  /** Image keys need only their own quota, not account-wide billing. */
+  includeAccount = true,
 } = {}) {
   if (typeof listKeys !== 'function') throw new Error('PackyCode balance reader requires listKeys')
   if (typeof getHosts !== 'function') throw new Error('PackyCode balance reader requires getHosts')
@@ -193,6 +197,8 @@ export function createBalanceReader({
     signal?.throwIfAborted()
     const hosts = getHosts()
     const keys = await listKeys()
+    const secrets = keys.map(entry => entry.key)
+    const safe = value => redactSecrets(value, secrets)
     // A removed key's last balance must not resurface under a later key.
     for (const id of lastGood.keys()) {
       if (!keys.some(entry => entry.id === id)) lastGood.delete(id)
@@ -200,15 +206,17 @@ export function createBalanceReader({
     const entries = []
     const usableIds = []
     for (const entry of keys) {
-      const base = { id: entry.id, label: entry.label, disabled: entry.disabled === true }
+      const base = { id: entry.id, label: safe(entry.label), disabled: entry.disabled === true }
       try {
         const usage = await loadKey(entry, hosts, signal)
+        if (usage.name !== undefined) usage.name = safe(usage.name)
+        if (usage.resetPeriod !== undefined) usage.resetPeriod = safe(usage.resetPeriod)
         lastGood.set(entry.id, { usage, fetchedAt: now() })
         entries.push({ ...base, usage })
         usableIds.push(entry.id)
       } catch (error) {
         signal?.throwIfAborted()
-        const message = error instanceof Error ? error.message : String(error)
+        const message = safe(error instanceof Error ? error.message : String(error))
         const previous = lastGood.get(entry.id)
         entries.push(previous === undefined
           ? { ...base, error: message }
@@ -216,17 +224,19 @@ export function createBalanceReader({
       }
     }
     let account
-    try {
-      account = await loadAccount(keys, hosts, signal, usableIds)
-      lastAccount = { account, fetchedAt: now() }
-    } catch (error) {
-      signal?.throwIfAborted()
-      const message = error instanceof Error ? error.message : String(error)
-      account = lastAccount === undefined || !keys.some(entry => entry.id === lastAccount.account.keyId)
-        ? { error: message }
-        : { ...lastAccount.account, stale: { fetchedAt: lastAccount.fetchedAt, error: message } }
+    if (includeAccount) {
+      try {
+        account = await loadAccount(keys, hosts, signal, usableIds)
+        lastAccount = { account, fetchedAt: now() }
+      } catch (error) {
+        signal?.throwIfAborted()
+        const message = safe(error instanceof Error ? error.message : String(error))
+        account = lastAccount === undefined || !keys.some(entry => entry.id === lastAccount.account.keyId)
+          ? { error: message }
+          : { ...lastAccount.account, stale: { fetchedAt: lastAccount.fetchedAt, error: message } }
+      }
     }
-    return { keys: entries, account, hosts, fetchedAt: now() }
+    return { keys: entries, ...(includeAccount ? { account } : {}), hosts, fetchedAt: now() }
   }
 
   const cache = createCachedRead(load, { ttlMs, now })

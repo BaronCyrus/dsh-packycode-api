@@ -57,7 +57,7 @@ export function unwritable(message) {
  *   current source and how to replace it, what to do when the section changes,
  *   and the preference targets this fills in (host overrides, search, models).
  */
-export function connectSettings(settingsCtx, { ctx, Config, namespace, source, setSource, onChange, hostPreference, searchPreference, modelPreference }) {
+export function connectSettings(settingsCtx, { ctx, Config, namespace, source, setSource, onChange, hostPreference, searchPreference, modelPreference, imagePreference }) {
   const settings = settingsCtx.settings
   if (typeof settings?.installSection === 'function') {
     try {
@@ -73,6 +73,7 @@ export function connectSettings(settingsCtx, { ctx, Config, namespace, source, s
         Object.assign(hostPreference, target)
         Object.assign(searchPreference, target)
         Object.assign(modelPreference, target)
+        if (imagePreference !== undefined) Object.assign(imagePreference, target)
       }
     } catch (error) {
       ctx.logger?.warn?.('packycode-api: host overrides unavailable, defaults stand: %s', error.message)
@@ -84,6 +85,7 @@ export function connectSettings(settingsCtx, { ctx, Config, namespace, source, s
   const target = { writable: settings.writable !== false, set: patch => settings.update(rowId, patch) }
   Object.assign(searchPreference, target)
   Object.assign(modelPreference, target)
+  if (imagePreference !== undefined) Object.assign(imagePreference, target)
   if (typeof settings.configure === 'function') {
     // The PackyCode panel is the editor; no generated duplicate page.
     const scope = typeof settingsCtx.effect === 'function' ? settingsCtx : ctx

@@ -79,7 +79,7 @@ test('registers one route and one directory entry, and defers the browser surfac
   // `webServer` rides with `connection`: channel registration writes through
   // `owner.webServer`, so a scope holding only `connection` cannot register.
   // `web` carries the search providers; a profile without it still boots.
-  assert.deepEqual(ctx.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools']])
+  assert.deepEqual(ctx.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools'], ['tools', 'attachments']])
   assert.equal(registered.rpc.length, 1)
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))

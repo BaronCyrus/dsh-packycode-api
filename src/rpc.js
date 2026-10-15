@@ -30,7 +30,7 @@ const keyId = payload => String(payload?.id ?? '')
  *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search, modelSelection }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search, modelSelection, images }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
@@ -40,6 +40,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
   const webSearch = () => need(search, 'PackyCode web search is unavailable in this runtime')
   const groupReader = () => need(groups, 'PackyCode key groups are unavailable in this runtime')
   const models = () => need(modelSelection, 'PackyCode model selection is unavailable in this runtime')
+  const imageSupport = () => need(images, 'PackyCode images are unavailable in this runtime')
 
   const status = async () => ({
     ...(await ring.list()),
@@ -76,6 +77,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       })
       balance.invalidate()
       groups?.invalidate()
+      images?.invalidateBalance?.()
       return status()
     },
     'claude-cli/status': payload => cli().status({ force: payload?.force === true }),
@@ -94,6 +96,13 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     }),
     'models/status': () => models().status(),
     'models/update': payload => models().update({ selectedIds: payload?.selectedIds }),
+    'images/status': () => imageSupport().status(),
+    'images/balance': (payload, signal) => imageSupport().readBalance({ force: payload?.force === true, signal }),
+    'images/update': payload => imageSupport().update(payload),
+    'images/keys/add': payload => imageSupport().mutate('add', { key: payload?.key, label: payload?.label }),
+    'images/keys/remove': payload => imageSupport().mutate('remove', { id: payload?.id }),
+    'images/keys/select': payload => imageSupport().mutate('select', { id: payload?.id }),
+    'images/keys/enable': payload => imageSupport().mutate('enable', { id: payload?.id }),
   }
 
   return async (endpoint, payload, signal) => {

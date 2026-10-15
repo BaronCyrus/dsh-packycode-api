@@ -31,6 +31,7 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | **Visible balance** | Settings lists each key's remaining, used, limit, reset period, and a usage bar, plus a total of those keys. The composer shows the active key's remaining balance |
 | **Claude through the local CLI** | `claude-opus-5-5`, `claude-sonnet-5-5`, and `claude-haiku-5-5` run the official Claude Code CLI on this device. Settings can detect it and install it |
 | **Web search through PackyCode** | Optional: DSH's `web_search` searches through PackyCode, with a DeepSeek or GPT backend, for every request or for PackyCode models only |
+| **Image generation and editing** | Separate image keys, GPT Image 2 / 2.5 Flare / 2.5 Sunburst, model and quality settings, reference edits and original PNG storage; generation and editing verified against the gateway |
 | **Credentials stay on the machine** | Keys live in the DSH credential file. The browser receives labels, state, and balances only |
 
 <img width="774" height="455" alt="截屏2026-10-15 10 34 28" src="https://github.com/user-attachments/assets/c5eaa535-dd1e-4e2f-be9f-c181404d4dd6" />
@@ -50,7 +51,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.9`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.2.0`.
 
 A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
 
@@ -69,7 +70,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.9`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.0`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -138,6 +139,20 @@ Claude Code CLI → temporary local MCP web_search → selected PackyCode DeepSe
 - When every stored key is disabled, the request fails and says so. There is no fallback credential.
 
 </details>
+
+### Image generation and editing
+
+Add the dedicated key under **Settings → PackyCode → Image generation and editing → Add an image key**. This credential record is separate from conversation keys. Image calls use only the selected image key. Adding one does not start a paid test.
+
+The image card shows each image key's remaining/used quota, limits when supplied, reset period, usage bar and separate totals. It refreshes every minute or with **Refresh**, preserving a dated last-good reading when a refresh fails. Image key changes and successful generation invalidate the independent balance cache. Only image key quotas are queried; account-wide billing and conversation key totals are kept separate.
+
+Choose the image model and quality, then click **Create image** in a PackyCode conversation or explicitly request `packycode_image_generate`. Attach references and describe changes to use `/v1/images/edits`; new images use `/v1/images/generations`. The image model is independent of the conversation model and other image plugins can coexist. CLI-backed Claude main turns currently bridge web search only; use an API conversation model supporting DSH tool calls for images.
+
+Image 2 accepts `auto / low / medium / high`; both 2.5 models also accept `xhigh / max`. These are Images API `quality` values, separate from text reasoning effort. There is no automatic model substitution, quality downgrade or paid retry. Each call returns one PNG; original bytes are saved under `~/.dsh/packycode-api/images/` (following `DSH_HOME` when set), alongside the chat preview. References and optional PNG masks must belong to the current session; file paths cannot replace attachment references.
+
+After adding the image key, `node scripts/image-check.mjs --all --edit` checks all three engines and one edit. Use `--model <id> --edit` for generation and editing on a specific engine, adding `--quality xhigh` or `--quality max` to check a quality. This consumes image quota, saves outputs under `.artifacts/`, and prints only a masked key tail plus the gateway-reported model/quality.
+
+Live checks on 2026-10-15 passed generation and editing at `low` on all three engines. Sunburst also passed both operations at `xhigh` and `max`, with matching quality values in the responses. All 10 requests succeeded without retries and returned 1024×1024 PNGs; visual inspection confirmed the requested color edits with composition preserved. Generate/edit times were about 43/48 seconds at xhigh and 84/91 seconds at max. These are built-client gateway checks; no desktop conversation was created to verify the full chat flow in this run. See the [protocol research and gateway results](docs/research/image-api.md) for scope and evidence.
 
 ## Models and groups
 

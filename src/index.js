@@ -30,11 +30,15 @@ import {
   DEFAULT_API_HOST,
   DEFAULT_STATUS_HOST,
   DISPLAY_NAME,
+  IMAGE_KEY_RECORD_ID,
   PLUGIN_ID,
   PROVIDER,
   SETTINGS_NAMESPACE,
 } from './constants.js'
 import { createGroupReader } from './groups.js'
+import { DEFAULT_IMAGE_MODEL, IMAGE_MODEL_IDS, IMAGE_QUALITIES } from './image-models.js'
+import { createImageController } from './image-settings.js'
+import { createPackyCodeImageClient, createPackyCodeImageTool } from './images.js'
 import { normalizeHost } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
 import { PackyCodeKeyRing } from './key-ring.js'
@@ -84,10 +88,14 @@ export const Config = z.object({
   searchBackend: live(z.union([...SEARCH_BACKENDS]).default(DEFAULT_SEARCH_BACKEND)),
   /** Only the picker is filtered; an existing session can keep its model. */
   hiddenModels: live(z.array(z.string()).default([])),
+  imageEnabled: live(z.boolean().default(true)),
+  imageModel: live(z.union([...IMAGE_MODEL_IDS]).default(DEFAULT_IMAGE_MODEL)),
+  imageQuality: live(z.union([...IMAGE_QUALITIES]).default('auto')),
 })
 
 export function apply(ctx, config) {
   const ring = new PackyCodeKeyRing(ctx.credentials)
+  const imageRing = new PackyCodeKeyRing(ctx.credentials, { recordId: IMAGE_KEY_RECORD_ID })
 
   // Read through on every call: on DSH 0.2 the preferences are volatile
   // references that change without restarting the plugin, and on 0.1.5 the
@@ -98,6 +106,9 @@ export function apply(ctx, config) {
     searchProvider: fieldValue(config?.searchProvider),
     searchBackend: fieldValue(config?.searchBackend),
     hiddenModels: fieldValue(config?.hiddenModels),
+    imageEnabled: fieldValue(config?.imageEnabled),
+    imageModel: fieldValue(config?.imageModel),
+    imageQuality: fieldValue(config?.imageQuality),
   })
   const hosts = () => {
     const current = source() ?? {}
@@ -108,6 +119,7 @@ export function apply(ctx, config) {
   }
 
   const balance = createBalanceReader({ listKeys: () => ring.secrets(), getHosts: hosts })
+  const imageBalance = createBalanceReader({ listKeys: () => imageRing.secrets(), getHosts: hosts, includeAccount: false })
   /**
    * Which token groups each key is in, and so which models it can reach.
    * Nothing reads it at boot: the settings panel asks for it, and a request
@@ -241,9 +253,18 @@ export function apply(ctx, config) {
 
   const hostPreference = unwritable('PackyCode host overrides are not writable in this profile')
   const searchPreference = { writable: false, set: undefined }
+  const imagePreference = { writable: false, set: undefined }
   const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== ''
     ? process.env.DSH_HOME
     : join(homedir(), '.dsh')
+  const images = createImageController({
+    ring: imageRing,
+    balance: imageBalance,
+    readPreference: () => source() ?? {},
+    writePreference: patch => imagePreference.set(patch),
+    isWritable: () => imagePreference.writable === true && typeof imagePreference.set === 'function',
+  })
+  const imageClient = createPackyCodeImageClient({ resolveKey: () => imageRing.activeKey(), getHost: () => hosts().apiHost })
   const search = createSearchController({
     ring,
     hosts,
@@ -281,18 +302,22 @@ export function apply(ctx, config) {
     setSource: next => { source = next },
     onChange: () => {
       balance.invalidate()
+      imageBalance.invalidate()
       groups.invalidate()
       modelSelection.reconcile()
+      void images.reconcile().catch(() => undefined)
       void search.reconcile()
     },
     hostPreference,
     searchPreference,
     modelPreference,
+    imagePreference,
   }))
   // A volatile field changed (the PackyCode panel, or a hand edit of the
   // profile patch): follow it without restarting the route.
   ctx.on?.('loader/volatile-update', () => {
     modelSelection.reconcile()
+    void images.reconcile().catch(() => undefined)
     void search.reconcile()
   })
 
@@ -321,6 +346,7 @@ export function apply(ctx, config) {
     pluginManager: createPackyCodePluginManager(),
     search,
     modelSelection,
+    images,
   })
   /**
    * The shipped Connection getter retains its own service context, whose row
@@ -351,6 +377,19 @@ export function apply(ctx, config) {
       })),
       'packycode-api: claude_code tool',
     )
+  })
+  ctx.inject(['tools', 'attachments'], imageCtx => {
+    const store = imageCtx.attachments
+    if (typeof store?.saveImage !== 'function' || typeof store?.readImage !== 'function') return
+    const scope = typeof imageCtx.effect === 'function' ? imageCtx : ctx
+    scope.effect(() => images.mount(() => imageCtx.tools.register(createPackyCodeImageTool({
+      client: imageClient,
+      attachments: store,
+      getPreference: images.preference,
+      onGenerated: () => imageBalance.invalidate(),
+      getSessionMessages: id => ctx.get?.('sessions')?.get?.(id)?.deriveMessages?.() ?? [],
+      imageDirectory: join(dshHome, 'packycode-api', 'images'),
+    }))), 'packycode-api: image tool availability')
   })
 }
 
@@ -412,6 +451,9 @@ export {
 export { catalogCoverage, createGroupReader, parsePricing, parseSelectedGroups, pickKeyForModel } from './groups.js'
 export { createKeyChooser } from './key-chooser.js'
 export { createModelSelectionController, readHiddenModels } from './model-selection.js'
+export { DEFAULT_IMAGE_MODEL, IMAGE_MODELS, IMAGE_MODEL_IDS, IMAGE_QUALITIES, validateImageOptions } from './image-models.js'
+export { createImageController, readImagePreference } from './image-settings.js'
+export { createPackyCodeImageClient, createPackyCodeImageTool, decodeImagePng, IMAGE_TOOL_NAME, IMAGE_TIMEOUT_MS, MAX_IMAGE_BYTES, pngDimensions } from './images.js'
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'
 export { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 export { createPackyCodeProfile, createRouteAdapter } from './route.js'
