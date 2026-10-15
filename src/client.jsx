@@ -15,6 +15,7 @@ import { STYLE } from './client-style.js'
 import { installImagePresentation, PackyCodeImagesCard, PackyCodeImageShortcut } from './client-images.jsx'
 import { BalanceTotals, fill, KeyBalance, QuotaHover } from './client-balance.jsx'
 import { KeyRenameForm, useKeyRename } from './client-key-rename.jsx'
+import { DiagnosticsCard } from './client-diagnostics.jsx'
 
 const NS = 'settings.packyCodeApi'
 const PROVIDER = 'packycode'
@@ -733,6 +734,7 @@ function PackyCodeSection({ rpc, t }) {
       <SearchCard call={call} t={t} />
       <ClaudeCliCard call={call} t={t} />
       <VersionCard call={call} t={t} />
+      <DiagnosticsCard call={call} t={t} />
     </div>
   )
 }

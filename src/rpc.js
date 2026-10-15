@@ -4,8 +4,9 @@
  * Every reply carries only what this plugin owns: key labels and state, the
  * balance and group projections the host built, host overrides, whether this
  * device has the Claude Code CLI, the plugin version, and the web search
- * preference and model visibility, or bounded session-authorized original PNG
- * chunks. Key material never crosses this boundary.
+ * preference and model visibility, bounded session-authorized original PNG
+ * chunks, or a numbers-only session diagnosis. Key material never crosses this
+ * boundary.
  *
  * @module dsh-packycode-api/rpc
  */
@@ -31,7 +32,7 @@ const keyId = payload => String(payload?.id ?? '')
  *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search, modelSelection, images, imageOriginals }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search, modelSelection, images, imageOriginals, diagnostics }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
@@ -43,6 +44,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
   const models = () => need(modelSelection, 'PackyCode model selection is unavailable in this runtime')
   const imageSupport = () => need(images, 'PackyCode images are unavailable in this runtime')
   const originals = () => need(imageOriginals, 'PackyCode original images are unavailable in this runtime')
+  const diagnosis = () => need(diagnostics, 'PackyCode diagnostics are unavailable in this runtime')
 
   const status = async () => ({
     ...(await ring.list()),
@@ -108,6 +110,8 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     'images/keys/remove': payload => imageSupport().mutate('remove', { id: payload?.id }),
     'images/keys/select': payload => imageSupport().mutate('select', { id: payload?.id }),
     'images/keys/enable': payload => imageSupport().mutate('enable', { id: payload?.id }),
+    'diagnostics/sessions': (_payload, signal) => diagnosis().list(signal),
+    'diagnostics/session': (payload, signal) => diagnosis().read(payload, signal),
   }
 
   return async (endpoint, payload, signal) => {

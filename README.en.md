@@ -48,10 +48,10 @@ You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH se
 Open the desktop application's **Plugins** page, click **Add plugin**, and enter the package name **with a version** as the **package name or address**:
 
 ```text
-dsh-packycode-api@1.2.7
+dsh-packycode-api@1.2.8
 ```
 
-Choose the **official** install source, then click **Install**. `1.2.7` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
+Choose the **official** install source, then click **Install**. `1.2.8` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
 
 > **Always include the version.** With a bare `dsh-packycode-api`, the install prompt shows the newest version on npm, but DSH's bundled pnpm by default installs only versions published at least 24 hours ago, so you can end up several releases behind with no sign of it in the prompt. With an exact version, pnpm installs that version and adds it to the profile's `minimumReleaseAgeExclude` itself. Afterwards, check **Current version** under **Settings → PackyCode → Plugin version**.
 
@@ -72,7 +72,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.7`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.8`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -204,7 +204,7 @@ Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit
 - The reasoning block opens with `▸ 启动 Claude Code CLI…` and then shows the CLI's version and model once it is up. When the gateway throttles or is busy (429, 503 `账号并发排队已满` / per-account wait queue full, and similar), the CLI retries up to 10 times on its own; each retry now shows as `↻ 网关返回 HTTP 503，CLI 自动重试 n/10` instead of looking hung. When the retries run out, the turn says PackyCode's Claude upstream is busy, not that the key is bad. A CLI that prints nothing for 2 minutes after starting is stopped and reported.
 - The conversation and its images reach the CLI over stdin (`--input-format stream-json`), not argv: a Windows command line is length-limited and cannot carry an image. Images in the conversation are sent to Claude as images, at the HTTP route's request size (at most 2048×2048, about 1 MiB each; at most 20 images and 20 MiB per turn, dropping the oldest first). An image left out is named with its read-only local copy, which the CLI can open with Read.
 - Every run carries `--append-system-prompt` (the delegation note). In `-p` mode the official CLI introduces itself as "You are Claude Code, Anthropic's official CLI for Claude …" when it has appended instructions and as "You are a Claude agent, built on Anthropic's Claude Agent SDK." when it has none; the latter was refused upstream as not coming from the official CLI (403 `only accepts requests from the official Claude Code CLI`). That is the official CLI's own behavior; the plugin does not rewrite its system prompt.
-- While the session model is a Claude model, titles are generated with `claude-haiku-5-5`, read-only, in a temporary directory, instead of a full Opus turn.
+- While the session model is a Claude model, titles are generated with `claude-haiku-5-5`, read-only, in a temporary directory, instead of a full Opus turn. Inside the CLI, DSH's title rules are only an appendix to the CLI's own system prompt, and a very short message such as 在吗 used to come back as English JSON (`{"title": "Casual greeting check-in"}`). The prompt therefore ends by restating them: the bare title as plain text, in the language of the messages (Chinese, Japanese and Korean are named by their script). A reply that still arrives in JSON, a code fence, quotes or after a "Title:" label is unwrapped before DSH reads it. A reply of several lines (the model wrote out its thinking or an explanation, so the title line cannot be told) or a bare placeholder such as "Session title" yields no title, and DSH keeps its default title from the first message.
 - While the session model is `gpt-6-astra`, titles are generated with `gpt-6.1-sol` (same Codex group); the turns themselves stay on Astra. Other models title their own sessions.
 - The `claude_code` tool can delegate one task to the local CLI while the session model is `gpt-6.1-sol`, `gpt-6-astra`, or `deepseek-flash`. The requested `mode` cannot exceed what the session preset allows. While the session is in plan mode the delegation plans too, and returns the plan text to the parent model.
 - An effort level the model does not support is rejected before the request is sent. Do not edit a model's effort map casually.
@@ -213,7 +213,7 @@ Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit
 
 ## Update and uninstall
 
-**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.2.7`); without it you may get a version that is merely the newest one published at least 24 hours ago.
+**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.2.8`); without it you may get a version that is merely the newest one published at least 24 hours ago.
 
 **Coming back from a local-path install, uninstall first.** An update is a `pnpm add`: it rewrites the files inside the package directory and leaves a `node_modules` that an earlier local-path install left there. That older tree keeps shadowing the packages the DSH installation provides, so the plugin row fails to load with no visible reason. **Uninstall** runs `pnpm remove`, which deletes the package directory outright — only a reinstall after that is clean. `node scripts/install-check.mjs` reports whether a profile is in that state.
 
@@ -229,7 +229,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 Output means a leftover tree: a registry install ships no `node_modules`, so this one usually comes from an earlier local-path install (`file:`, or a bare path instead of `link:`). It sits inside the profile directory, and DSH resolves a plugin's imports from inside the profile first, so the plugin gets those old copies — for example `@deepseek-ai/schemastery` 3.18.2, which has no `Schema.volatile()`, so the module throws while it is imported. When an import fails the Loader creates no fiber for that row and no client bundle is composed either, so the model route, the RPC channel, and the settings panel all stay absent.
 
-Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.2.7`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.2.8`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
 
 **Right after a first install, every card in Settings shows `transport failure for /packycode-api/…: HTTP 405`?** The installed version is 1.1.6 or earlier, usually because only the bare package name was entered: the install prompt shows the newest version, but pnpm installs the newest one published at least 24 hours ago (see **Install the plugin**). Those older versions can register their settings channel only after DSH restarts and rebuilds its `connection` service. So right after a first install `/packycode-api` does not exist yet, requests fall through to the static page, and it answers 405; the model route and the settings panel itself load normally. From 1.1.7 on, a first install needs no restart. Check which version was installed:
 
@@ -257,13 +257,15 @@ Recovery: quit and reopen the desktop application, and the old version works. Th
 
 **The CLI is installed, but Claude still fails?** A host launched from Finder or the Start menu usually has a shorter `PATH` than a terminal. The plugin also checks the official install location, common package-manager directories, and `npm prefix -g`. If it still cannot find the binary, set `claudeCliPath` or click **Check again**. After a Host change or a reinstall, quit and reopen the desktop application.
 
+**Replies stop at the output token limit (已达到输出 token 上限), or requests keep failing — how do I report it?** Open **Settings → PackyCode → Diagnostics**, pick the session (the 20 most recent, newest first, labelled with their folder name), click **Generate diagnostics** and then **Copy**, and paste the text into an [Issue](https://github.com/BaronCyrus/dsh-packycode-api/issues) or send it to the plugin author. It holds settings and numbers only: the plugin version, the session id and start time, each key's position and groups (no labels, no keys), each request's model, reasoning effort and output limit, the latest steps' token usage and finish reasons, and retry and failure codes (messages redacted and shortened). It contains no conversation text, file paths or keys. Where copying is unavailable, the text is selected instead; press ⌘C or Ctrl+C.
+
 ## Security and scope
 
 This is a community plugin, not affiliated with or endorsed by DeepSeek or PackyCode. Model requests go to the PackyCode host you configured. Keeping credentials out of browser responses does not mean inference is local. Claude models also start the official CLI on this device.
 
 Keys stay in the local DSH credential file (`~/.dsh/.credentials.yaml`, owner-only as enforced by DSH). They are not written into settings, logs, or the transcript. Balance requests run only on the host, with a timeout and redirects refused.
 
-Use [Issues](https://github.com/BaronCyrus/dsh-packycode-api/issues) for ordinary bugs. Never include a key, token, or credential-file contents. See [SECURITY.md](SECURITY.md).
+Use [Issues](https://github.com/BaronCyrus/dsh-packycode-api/issues) for ordinary bugs; for a failing request, attach the text from the **Diagnostics** card. Never include a key, token, or credential-file contents. See [SECURITY.md](SECURITY.md).
 
 ## Local development
 

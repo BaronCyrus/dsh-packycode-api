@@ -18,7 +18,9 @@
  *
  * A session-title request is not a delegation: it runs on the small model,
  * read-only and outside the workspace, with the title instructions appended,
- * so naming a session does not cost an Opus agent turn.
+ * so naming a session does not cost an Opus agent turn. Under the CLI's own
+ * system prompt those instructions are easily outweighed, so the prompt ends
+ * by restating them and the answer is unwrapped before DSH reads it.
  *
  * @module dsh-packycode-api/claude-adapter
  */
@@ -464,6 +466,83 @@ export function renderAuxiliaryPrompt(options) {
 }
 
 /**
+ * Languages named by their script. The caller frames a title request in
+ * English, so text in one of these scripts is the user's own.
+ */
+const TITLE_SCRIPTS = Object.freeze([
+  ['Korean', /\p{Script=Hangul}/u],
+  ['Japanese', /[\p{Script=Hiragana}\p{Script=Katakana}]/u],
+  ['Chinese', /\p{Script=Han}/u],
+])
+
+/**
+ * The prompt of a CLI title request: the caller's framed input, verbatim,
+ * then the two rules the small model breaks under the CLI's own system
+ * prompt. There the caller's title instructions are only an appendix and its
+ * input is English framing around a JSON array, so a short message came back
+ * as JSON or in English (`{"title": "Session greeting check"}` for 在吗).
+ * @param options - the assembled title request.
+ * @returns the prompt text.
+ */
+export function renderTitlePrompt(options) {
+  const framed = renderAuxiliaryPrompt(options)
+  const language = TITLE_SCRIPTS.find(([, script]) => script.test(framed))?.[0]
+  return [
+    framed,
+    '',
+    'Reply with the title alone, as plain text on one line: not JSON, not quoted, with no label such as "Title:".',
+    language === undefined
+      ? 'Write it in the language of the messages\' text, not in the language of these instructions.'
+      : `Write it in ${language}, the language of the messages' text, not in the language of these instructions.`,
+  ].join('\n')
+}
+
+/** Pairs a reply wraps a whole title in. Book-title marks belong to a title. */
+const TITLE_WRAPPERS = Object.freeze([['"', '"'], ["'", "'"], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』'], ['```', '```'], ['`', '`'], ['**', '**'], ['«', '»']])
+const TITLE_LABEL = /^[*"'`]*(?:(?:session\s+)?title|(?:会话)?标题)[*"'`]*\s*[:：]\**\s*/iu
+/** A reply that names the field instead of filling it. */
+const TITLE_PLACEHOLDER = /^(?:(?:(?:session|conversation|chat)\s+)?title|(?:会话|对话|聊天)?标题)$/iu
+
+/** The title inside a JSON reply: a string, or an object's `title` string. */
+function jsonTitle(text) {
+  if (!/^[{"]/u.test(text)) return undefined
+  let value
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof value === 'string') return value.trim()
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const field = Object.keys(value).find(key => key.toLowerCase() === 'title')
+  return field !== undefined && typeof value[field] === 'string' ? value[field].trim() : undefined
+}
+
+/**
+ * Recover the bare title from a reply that wrapped it: in a code fence, as a
+ * JSON object's `title` or a JSON string, after a "Title:" label, or in
+ * quotes. Anything else comes back trimmed.
+ *
+ * Some replies hold no usable title: several lines (the model wrote out its
+ * thinking or an explanation, and which line is the title cannot be told), a
+ * placeholder such as "Session title", or an empty wrapper. Those yield no
+ * text, so DSH keeps its own fallback title, the first message's words.
+ * @param text - a title request's whole text answer.
+ * @returns the title text, or '' when the reply holds none.
+ */
+export function unwrapTitle(text) {
+  const raw = typeof text === 'string' ? text.trim() : ''
+  const body = /^```[^\n]*\n([\s\S]*?)\n?```$/u.exec(raw)?.[1].trim() ?? raw
+  const lines = body.split('\n').map(line => line.trim()).filter(line => line !== '')
+  const json = jsonTitle(body) ?? jsonTitle(lines[0] ?? '')
+  if (json === undefined && lines.length > 1) return ''
+  let title = (json ?? lines[0] ?? '').replace(TITLE_LABEL, '')
+  const wrapper = TITLE_WRAPPERS.find(([open, close]) => title.length > open.length + close.length && title.startsWith(open) && title.endsWith(close))
+  if (wrapper !== undefined) title = title.slice(wrapper[0].length, title.length - wrapper[1].length).trim()
+  return TITLE_PLACEHOLDER.test(title) ? '' : title
+}
+
+/**
  * Emit text and reasoning as well-formed harness blocks.
  *
  * The harness's stream grammar requires every delta to address an open block
@@ -580,7 +659,8 @@ function retryNote(event) {
 
 /**
  * How one request runs on the CLI: a title request on the small model with
- * the caller's instructions appended, anything else as a delegated turn.
+ * the caller's instructions appended and restated, anything else as a
+ * delegated turn.
  *
  * The CLI's own system prompt and tool set stay in place even for a title:
  * they are part of what the gateway sees from the official client.
@@ -588,7 +668,7 @@ function retryNote(event) {
 async function cliCall(options, { titleModel, cwdOf, modeOf, attachmentsOf, imageLimits }) {
   if (options?.purpose === 'session-title') {
     return {
-      prompt: renderAuxiliaryPrompt(options),
+      prompt: renderTitlePrompt(options),
       model: titleModel,
       mode: 'read-only',
       enableSearch: false,
@@ -681,7 +761,11 @@ export function createClaudeCliAdapter({
 
   async function* cliStream(options) {
     // A title is read back as text; progress notes belong to delegated turns.
+    // Its text is held until the end, so the title can be unwrapped whole,
+    // and only the CLI's last text block counts: earlier ones are narration
+    // around tool use.
     const quiet = options?.purpose === 'session-title'
+    let titleText = ''
     const blocks = createBlockWriter()
     // Shown at once, so a turn that waits on the CLI never looks idle.
     if (!quiet) yield* blocks.note('▸ 启动 Claude Code CLI…\n')
@@ -739,10 +823,12 @@ export function createClaudeCliAdapter({
             if (!quiet) yield* blocks.note(`  ↻ ${retryNote(event)}\n`)
             break
           case 'block':
+            if (quiet && event.kind === 'text') titleText = ''
             blocks.boundary(event.kind)
             break
           case 'text':
-            yield* blocks.write('text', event.text)
+            if (quiet) titleText += event.text
+            else yield* blocks.write('text', event.text)
             break
           case 'reasoning':
             yield* blocks.write('reasoning', event.text)
@@ -775,6 +861,7 @@ export function createClaudeCliAdapter({
         yield { type: 'finish', reason: { kind: 'tool-calls' } }
         return
       }
+      if (quiet) yield* blocks.write('text', unwrapTitle(titleText))
       yield* blocks.close()
       yield { type: 'usage', usage: turnUsage(lastRequest, finished) }
       yield { type: 'finish', reason: { kind: 'stop' } }

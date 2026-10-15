@@ -48,10 +48,10 @@
 打开桌面应用的**插件**页，点击**添加插件**，在**包名或地址**中填入**带版本号**的包名：
 
 ```text
-dsh-packycode-api@1.2.7
+dsh-packycode-api@1.2.8
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。`1.2.7` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
+在**安装源**中选择**官方源**，然后点击**安装**。`1.2.8` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
 
 > **一定要带版本号。** 只填 `dsh-packycode-api` 时，安装前的提示显示的是 npm 上的最新版，但 DSH 自带的 pnpm 默认只安装发布满 24 小时的版本，实际装上的可能是好几个版本之前的旧版，而安装提示里看不出这一点。填写精确版本时，pnpm 会直接安装这个版本，并自动把它加入 profile 的 `minimumReleaseAgeExclude`。装好后可以在 **设置 → PackyCode → 插件版本** 核对「当前版本」。
 
@@ -72,7 +72,7 @@ dsh-packycode-api@1.2.7
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.7`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.8`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -204,7 +204,7 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 - 思考区第一行是「▸ 启动 Claude Code CLI…」，CLI 起来后显示版本和模型。网关限流或繁忙（429、503 `账号并发排队已满` 等）时，CLI 会自己重试最多 10 次，每次重试都会显示成 `↻ 网关返回 HTTP 503，CLI 自动重试 n/10`，不再像卡住。重试用完仍失败时，会说明是 PackyCode 的 Claude 上游繁忙，不是 Key 的问题。CLI 启动后 2 分钟内没有任何输出会被停止并报告原因。
 - 对话记录和图片通过 stdin 交给 CLI（`--input-format stream-json`），不走命令行参数：Windows 命令行长度有上限，而且命令行带不了图片。对话里的图片会以图片形式发给 Claude（与 HTTP 路由相同的压缩规格：每张不超过 2048×2048、约 1 MiB；一回合最多 20 张、合计 20 MiB，超出时先舍弃最早的）。没随消息发出的图片会写明本机只读副本的路径，CLI 需要时可以用 Read 读取。
 - 每次运行都带 `--append-system-prompt`（委派说明）。在 `-p` 模式下，官方 CLI 有追加说明时会以 "You are Claude Code, Anthropic's official CLI for Claude …" 自我介绍，没有时是 "You are a Claude agent, built on Anthropic's Claude Agent SDK."；后者曾被上游当成非官方 CLI 拒绝（403 `only accepts requests from the official Claude Code CLI`）。这是官方 CLI 自己的行为，插件没有改写它的系统提示词。
-- 会话跑在 Claude 模型上时，生成标题改用 `claude-haiku-5-5`，只读、临时目录，避免为起标题跑一整轮 Opus。
+- 会话跑在 Claude 模型上时，生成标题改用 `claude-haiku-5-5`，只读、临时目录，避免为起标题跑一整轮 Opus。DSH 的标题要求在 CLI 里只是追加在它自己系统提示词后面的一段，「在吗」这类很短的消息曾被起成 `{"title": "Casual greeting check-in"}` 这样的英文 JSON。所以插件会在提示词末尾再强调一次：只回标题纯文本，用消息原文的语言（中文、日文、韩文按文字直接点名）。回复里仍带 JSON、代码块、引号或「Title:」前缀时，插件会先剥掉再交给 DSH。如果回复有好几行（模型把思考或解释也写了出来，分不清哪行是标题），或者只是「对话标题」这类占位词，就不给标题，DSH 会保留按首条消息生成的默认标题。
 - 会话跑在 `gpt-6-astra` 上时，标题改由 `gpt-6.1-sol` 生成（同一个 Codex 分组）；对话本身仍然用 Astra。其它模型的标题由会话模型自己生成。
 - 另有 `claude_code` 工具：当前模型是 `gpt-6.1-sol`、`gpt-6-astra` 或 `deepseek-flash` 时，可以把一个任务委派给本机 Claude Code。请求的 `mode` 不会超过会话权限允许的上限；会话处于计划模式时，这个委派也只规划，并把计划正文交回父模型。
 - 声明了模型不支持的推理档位会被 harness 在发请求前拒绝，不要随手改档位映射。
@@ -213,7 +213,7 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 
 ## 更新与卸载
 
-**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.2.7`），否则装上的可能是发布满 24 小时的旧版。
+**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.2.8`），否则装上的可能是发布满 24 小时的旧版。
 
 **从本地路径安装切回官方源时，必须先卸载。** 「更新」是 `pnpm add`，它只重写包目录里的文件，不会删除更早一次本地路径安装留在包目录内的 `node_modules`；那份旧依赖会继续挡住 DSH 自带的包，插件行加载失败且看不出原因。「卸载」执行的是 `pnpm remove`，会删掉整个包目录，重装才是干净的。用 `node scripts/install-check.mjs` 可以确认当前 profile 是否处于这个状态。
 
@@ -229,7 +229,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 有输出就是残留：从 npm 安装的包不会自带 `node_modules`，这一份通常来自更早一次「本地路径」安装（`file:` 或直接写路径，而不是 `link:`）。它位于 profile 目录内部，而 DSH 解析插件导入时优先使用 profile 内的副本，所以插件拿到的仍是那份旧依赖 —— 例如 `@deepseek-ai/schemastery` 3.18.2 没有 `Schema.volatile()`，模块在导入阶段就抛错。导入失败时 Loader 不会为这一行创建 fiber，客户端 bundle 也不会被组合，于是模型路由、RPC 通道和设置页全都不会出现。
 
-修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.2.7`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
+修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.2.8`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
 
 **首次安装后，设置页每张卡片都显示 `transport failure for /packycode-api/…: HTTP 405`？** 实际装上的是 1.1.6 或更早的版本，通常是因为安装时只填了包名：安装提示显示的是最新版，pnpm 实际装的却是发布满 24 小时的旧版（见「安装插件」）。这些旧版要等 DSH 重启、重建它的 `connection` 服务之后，才能注册设置通道。所以首次安装后 `/packycode-api` 通道还不存在，请求落到静态页面，返回 405；模型路由和设置页本身照常加载。1.1.7 起首次安装不需要重启。先确认装上的版本：
 
@@ -257,13 +257,15 @@ grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.
 
 **装了 CLI 还是不能用 Claude？** 从 Finder 或开始菜单启动时，`PATH` 往往比终端短。插件会再查官方安装位置、常见包管理器目录和 `npm prefix -g`。仍找不到就在设置里填 `claudeCliPath`，或点「重新检测」。改的是 Host 或重新安装了插件时，要完全退出并重启桌面应用。
 
+**回答被截断（「已达到输出 token 上限」）、请求反复失败，怎么反馈？** 打开 **设置 → PackyCode → 诊断信息**，选出问题的会话（最近 20 个，按时间倒序，标着所在文件夹名），点「生成诊断信息」再点「复制」，把内容贴到 [Issue](https://github.com/BaronCyrus/dsh-packycode-api/issues) 或发给插件作者。内容只有设置和数字：插件版本、会话 id 与创建时间、每个 Key 的序号与分组（不含备注名和 Key 本身）、每次请求用的模型、推理档位和输出上限、最近若干步的 token 用量与结束原因，以及重试和失败的错误码（错误信息已脱敏并截短）。不含对话内容、文件路径和 Key。复制不可用时，文本会被全选，按 ⌘C 或 Ctrl+C 即可。
+
 ## 安全边界
 
 本项目是社区插件，与 DeepSeek、PackyCode 无隶属或背书关系。模型请求会发到你配置的 PackyCode 接口；凭据不返回浏览器，不代表推理在本地完成。Claude 模型还会在本机启动官方 CLI。
 
 Key 存在本机 DSH 凭据文件（`~/.dsh/.credentials.yaml`，权限由 DSH 设为仅所有者可读），不进设置文档、日志或对话记录。余额请求只在宿主侧发出，带超时并禁止重定向。
 
-普通问题请提交 [Issue](https://github.com/BaronCyrus/dsh-packycode-api/issues)。不要附带 Key、令牌或凭据文件内容。更多说明见 [SECURITY.md](SECURITY.md)。
+普通问题请提交 [Issue](https://github.com/BaronCyrus/dsh-packycode-api/issues)，请求出错时可附上「诊断信息」卡片生成的内容。不要附带 Key、令牌或凭据文件内容。更多说明见 [SECURITY.md](SECURITY.md)。
 
 ## 本地开发
 

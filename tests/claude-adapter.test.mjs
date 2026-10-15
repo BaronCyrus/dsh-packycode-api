@@ -8,9 +8,12 @@ import {
   CLI_IMAGE_LIMITS,
   createClaudeCliAdapter,
   delegationInstructions,
+  renderAuxiliaryPrompt,
   renderDelegatedPrompt,
+  renderTitlePrompt,
   TITLE_MODEL_ID,
   TITLE_MODEL_ROUTES,
+  unwrapTitle,
 } from '../src/claude-adapter.js'
 
 /** The reasoning note every delegated turn opens with, before the CLI is up. */
@@ -323,7 +326,101 @@ test('a session title runs on the small model, read-only, outside the workspace'
   assert.equal(call.enableSearch, false, 'titles allocate no MCP server or search approval')
   assert.notEqual(call.cwd, '/work')
   assert.equal(call.appendSystemPrompt, 'Return only the title.')
-  assert.equal(call.prompt, '登录页报错了')
+  // The caller's input comes first, verbatim; the reminder only follows it.
+  assert.ok(call.prompt.startsWith('登录页报错了\n\n'), call.prompt)
+  assert.match(call.prompt, /not JSON, not quoted/u)
+  assert.match(call.prompt, /Write it in Chinese, the language of the messages' text/u)
+})
+
+test('a title prompt names the language of the messages by their script', () => {
+  const framed = text => ({ messages: [{ role: 'user', content: [{ type: 'text', text: `Generate the session title from this JSON array of human messages:\n${JSON.stringify([{ seq: 10, text }])}` }] }] })
+  const cases = [['在吗', 'Chinese'], ['今日の天気は？', 'Japanese'], ['안녕하세요', 'Korean'], ['帮我修一下 auth.spec.ts 的 login 测试', 'Chinese']]
+  for (const [text, language] of cases) {
+    const prompt = renderTitlePrompt(framed(text))
+    assert.ok(prompt.startsWith(renderAuxiliaryPrompt(framed(text))), 'the framed input is kept verbatim')
+    assert.match(prompt, new RegExp(`Write it in ${language}, `, 'u'), text)
+  }
+  const english = renderTitlePrompt(framed('Fix the flaky login test'))
+  assert.match(english, /Write it in the language of the messages' text, not in the language of these instructions\./u)
+  assert.doesNotMatch(english, /Chinese|Japanese|Korean/u)
+})
+
+test('a CLI title wrapped in JSON reaches DSH as the bare title', async () => {
+  const runner = stubRunner([
+    { type: 'text', text: '{"title": "Casual ' },
+    { type: 'text', text: 'greeting check-in"}' },
+    { type: 'result', result: { result: '{"title": "Casual greeting check-in"}', inputTokens: 1, outputTokens: 2 } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const assembler = new BlockAssembler()
+  for (const chunk of await consume(adapter.stream({
+    provider: 'packycode',
+    model: 'claude-opus-5-5',
+    purpose: 'session-title',
+    system: 'Return only the title.',
+    messages: [{ role: 'user', content: [{ type: 'text', text: '在吗' }] }],
+  }))) assembler.push(chunk)
+  assert.equal(assembler.finish.kind, 'stop')
+  assert.deepEqual(assembler.blocks(), [{ type: 'text', text: 'Casual greeting check-in' }])
+})
+
+test('a CLI title is its last text block, not the narration before a tool call', async () => {
+  const runner = stubRunner([
+    { type: 'block', kind: 'text' },
+    { type: 'text', text: 'Let me look at the repository first.' },
+    { type: 'tool', id: 'read-1', summary: 'Read README.md' },
+    { type: 'block', kind: 'text' },
+    { type: 'text', text: '检查仓库是否最新' },
+    { type: 'result', result: { result: '检查仓库是否最新', inputTokens: 1, outputTokens: 2 } },
+  ])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const assembler = new BlockAssembler()
+  for (const chunk of await consume(adapter.stream({
+    provider: 'packycode',
+    model: 'claude-opus-5-5',
+    purpose: 'session-title',
+    messages: [{ role: 'user', content: [{ type: 'text', text: '帮我看看当前仓库是不是最新的' }] }],
+  }))) assembler.push(chunk)
+  assert.deepEqual(assembler.blocks().filter(block => block.type === 'text'), [{ type: 'text', text: '检查仓库是否最新' }])
+})
+
+test('a delegated answer is never unwrapped', async () => {
+  const runner = stubRunner([{ type: 'text', text: '{"title": "kept"}' }, { type: 'result', result: { result: '', inputTokens: 1, outputTokens: 1 } }])
+  const adapter = createClaudeCliAdapter({ inner: innerAdapter(), runner })
+  const assembler = new BlockAssembler()
+  for (const chunk of await consume(adapter.stream({ provider: 'packycode', model: 'claude-opus-5-5', messages: [] }))) assembler.push(chunk)
+  assert.equal(assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join(''), '{"title": "kept"}')
+})
+
+test('title replies lose their wrappers and nothing else', () => {
+  const cases = [
+    ['{"title": "Casual greeting check-in"}', 'Casual greeting check-in'],
+    ['```json\n{"Title": "检查仓库是否最新"}\n```', '检查仓库是否最新'],
+    ['"确认助手在线"', '确认助手在线'],
+    ['「确认助手在线」', '确认助手在线'],
+    ['**确认助手在线**', '确认助手在线'],
+    ['Title: Fix flaky login test', 'Fix flaky login test'],
+    ['**标题：** 修复登录页报错', '修复登录页报错'],
+    ['会话标题：你好问候', '你好问候'],
+    ['"title": "修复登录页报错"', '修复登录页报错'],
+    ['{"title": "确认在线"}\n(as requested)', '确认在线'],
+    ['  询问助手是否在线  ', '询问助手是否在线'],
+    // Titles that only look wrapped keep their own marks.
+    ['《三体》读后感', '《三体》读后感'],
+    ['Fix "flaky" login test', 'Fix "flaky" login test'],
+    ['{"name": "not a title"}', '{"name": "not a title"}'],
+    ['Title fix for the login page', 'Title fix for the login page'],
+    // No usable title, so DSH keeps its first-message fallback: thinking or an
+    // explanation around the title (seen live from claude-haiku-5-5), a
+    // placeholder, or an empty wrapper.
+    ['你饿吗 is a casual "are you hungry?" check-in, so the title should describe it as that.\n\n闲聊：问AI饿不饿', ''],
+    ['检查仓库是否最新\n\nThis title summarizes the request.', ''],
+    ['对话标题', ''],
+    ['Session title', ''],
+    ['{"title": ""}', ''],
+    ['', ''],
+  ]
+  for (const [reply, title] of cases) assert.equal(unwrapTitle(reply), title, reply)
 })
 
 test('a submitted plan becomes one exit_plan_mode call and not assistant text', async () => {

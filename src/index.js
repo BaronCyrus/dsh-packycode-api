@@ -36,6 +36,7 @@ import {
   PROVIDER,
   SETTINGS_NAMESPACE,
 } from './constants.js'
+import { createDiagnostics } from './diagnostics.js'
 import { createGroupReader } from './groups.js'
 import { DEFAULT_IMAGE_MODEL, IMAGE_MODEL_IDS, IMAGE_QUALITIES } from './image-models.js'
 import { createImageController } from './image-settings.js'
@@ -349,6 +350,17 @@ export function apply(ctx, config) {
 
   void keys.remember().catch(() => undefined)
 
+  /** One session's events from DSH's session query service, without projections. */
+  const readSessionEvents = async (sessionId, signal) => {
+    const query = ctx.get?.('sessionQuery')
+    if (typeof query?.observeSession === 'function') {
+      const observation = await query.observeSession(sessionId, { signal, projectionMode: 'none' })
+      try { return [...observation.events] } finally { observation[Symbol.dispose]() }
+    }
+    if (typeof query?.readSession === 'function') return (await query.readSession(sessionId)).events
+    return []
+  }
+
   const handler = createPackyCodeRpc({
     ring,
     balance,
@@ -362,15 +374,15 @@ export function apply(ctx, config) {
     images,
     imageOriginals: createImageOriginalReader({
       imageDirectory: join(dshHome, 'packycode-api', 'images'),
-      getSessionEvents: async (sessionId, signal) => {
-        const query = ctx.get?.('sessionQuery')
-        if (typeof query?.observeSession === 'function') {
-          const observation = await query.observeSession(sessionId, { signal, projectionMode: 'none' })
-          try { return [...observation.events] } finally { observation[Symbol.dispose]() }
-        }
-        if (typeof query?.readSession === 'function') return (await query.readSession(sessionId)).events
-        return []
-      },
+      getSessionEvents: readSessionEvents,
+    }),
+    diagnostics: createDiagnostics({
+      sessionQuery: () => ctx.get?.('sessionQuery'),
+      readEvents: readSessionEvents,
+      ring,
+      groups,
+      secrets: async () => (await Promise.all([ring.secrets(), imageRing.secrets()])).flat().map(entry => entry.key),
+      ownPackageJsonUrl: new URL('../package.json', import.meta.url),
     }),
   })
   /**
@@ -446,8 +458,10 @@ export {
   keyNote,
   renderAuxiliaryPrompt,
   renderDelegatedPrompt,
+  renderTitlePrompt,
   TITLE_MODEL_ID,
   TITLE_MODEL_ROUTES,
+  unwrapTitle,
 } from './claude-adapter.js'
 export { CLAUDE_TOOL_INSTRUCTIONS, createClaudeCodeTool } from './claude-tool.js'
 export { createClaudeSearchBridge, cliSearchInstructions } from './claude-search-mcp.js'
@@ -474,6 +488,7 @@ export {
   explainCliGroupFailure,
   normalizeFailureMessage,
 } from './failures.js'
+export { createDiagnostics, DIAGNOSTICS_FORMAT, DIAGNOSTICS_LIMITS, summarizeSessionEvents } from './diagnostics.js'
 export { catalogCoverage, createGroupReader, parsePricing, parseSelectedGroups, pickKeyForModel } from './groups.js'
 export { createKeyChooser } from './key-chooser.js'
 export { createModelSelectionController, readHiddenModels } from './model-selection.js'

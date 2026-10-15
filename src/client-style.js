@@ -37,6 +37,8 @@ export const STYLE = `
 .pkc-input:focus{border-color:var(--dsw-alias-state-business-primary)}
 .pkc-input::placeholder{color:var(--dsw-alias-label-caption)}
 .pkc-input:disabled{opacity:.5}
+.pkc-diag-session{flex:1 1 260px;max-width:480px;cursor:pointer}
+.pkc-diag-text{width:100%;height:auto;min-height:220px;padding:8px 10px;line-height:18px;resize:vertical;white-space:pre;overflow:auto}
 .pkc-image-choice{flex:none;width:100%;max-width:300px;cursor:pointer}
 .pkc-image-shortcut{display:inline-flex;align-items:center;gap:8px}
 .pkc-quota{position:relative;display:inline-flex;align-items:center}
