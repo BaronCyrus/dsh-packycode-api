@@ -33,7 +33,8 @@
 | **网页搜索可走 PackyCode** | 可选：DSH 的 `web_search` 改用 PackyCode 搜索，后端在 DeepSeek 与 GPT 之间切换；可只对 PackyCode 模型生效 |
 | **凭据不离开本机** | Key 只存在 DSH 凭据文件里。浏览器只能看到备注、状态和余额，拿不到 Key |
 
-<img width="790" height="332" alt="截屏2026-10-13 10 08 27" src="https://github.com/user-attachments/assets/2faa7667-300c-4f12-bb94-aecc35c5cb7f" />
+<img width="774" height="455" alt="截屏2026-10-15 10 34 28" src="https://github.com/user-attachments/assets/060c4192-00ea-40e6-9b85-bbec605b5c31" />
+<img width="575" height="522" alt="截屏2026-10-15 10 34 49" src="https://github.com/user-attachments/assets/89cf89ca-fce3-427d-95cb-94fa2b05d6aa" />
 <img width="272" height="425" alt="截屏2026-10-13 10 07 46" src="https://github.com/user-attachments/assets/040fc57a-2dd2-4195-9bbc-5fa3357d1eb1" />
 
 
