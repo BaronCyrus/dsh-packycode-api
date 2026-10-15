@@ -41,23 +41,25 @@
 
 ## 安装
 
-先准备好 **DeepSeek Harness** 和 **PackyCode（PackyAPI）的 API Key**。尚未安装 DSH，可查看 [DSH 官方说明](https://github.com/deepseek-ai/deepseek-harness#run)。
+先准备好 **DeepSeek Harness** 和 **PackyCode（PackyAPI）的 API Key**。尚未安装 DSH，可查看 [DSH 官方说明](https://github.com/deepseek-ai/deepseek-harness#run)。还没有 API Key 的，可以通过[这个邀请链接](https://www.packyapi.ai/register?aff=Im3l)注册 PackyCode 申请。
 
 ### 1. 安装插件
 
-打开桌面应用的**插件**页，点击**添加插件**，在**包名或地址**中填入：
+打开桌面应用的**插件**页，点击**添加插件**，在**包名或地址**中填入**带版本号**的包名：
 
 ```text
-dsh-packycode-api
+dsh-packycode-api@1.2.7
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.2.6`。
+在**安装源**中选择**官方源**，然后点击**安装**。`1.2.7` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
 
-首次安装后**无需重启 DSH**，可直接打开**设置 → PackyCode** 添加 Key。更新已加载的旧版时，按「插件版本」卡片的重启提示操作。
+> **一定要带版本号。** 只填 `dsh-packycode-api` 时，安装前的提示显示的是 npm 上的最新版，但 DSH 自带的 pnpm 默认只安装发布满 24 小时的版本，实际装上的可能是好几个版本之前的旧版，而安装提示里看不出这一点。填写精确版本时，pnpm 会直接安装这个版本，并自动把它加入 profile 的 `minimumReleaseAgeExclude`。装好后可以在 **设置 → PackyCode → 插件版本** 核对「当前版本」。
+
+首次安装后**无需重启 DSH**，可直接打开**设置 → PackyCode** 添加 Key。这适用于 1.1.7 及以后的版本；更早的版本首次安装后要重启一次，见「常见问题」。更新已加载的旧版时，按「插件版本」卡片的重启提示操作。
 
 ### 2. 添加 Key
 
-打开 **设置 → PackyCode**，在「添加 Key」里粘贴 API Key。备注可选，用来区分多个 Key。点「添加」。
+打开 **设置 → PackyCode**，在「添加 Key」里粘贴 API Key。备注可选，用来区分多个 Key。点「添加」。还没有添加过 Key 时，「账户与 Key」里会显示同一个注册邀请链接，点击后在系统浏览器中打开；添加 Key 之后就不再显示。
 
 > 不要把 Key 粘贴到公开 Issue、聊天记录或截图里。插件不会读取环境变量 `PACKY_CODE_API_KEY`，也不会在失败时偷偷改用别的 provider。
 
@@ -70,7 +72,7 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.6`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.2.7`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -211,7 +213,7 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 
 ## 更新与卸载
 
-**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装 `dsh-packycode-api`。
+**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.2.7`），否则装上的可能是发布满 24 小时的旧版。
 
 **从本地路径安装切回官方源时，必须先卸载。** 「更新」是 `pnpm add`，它只重写包目录里的文件，不会删除更早一次本地路径安装留在包目录内的 `node_modules`；那份旧依赖会继续挡住 DSH 自带的包，插件行加载失败且看不出原因。「卸载」执行的是 `pnpm remove`，会删掉整个包目录，重装才是干净的。用 `node scripts/install-check.mjs` 可以确认当前 profile 是否处于这个状态。
 
@@ -227,7 +229,15 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 有输出就是残留：从 npm 安装的包不会自带 `node_modules`，这一份通常来自更早一次「本地路径」安装（`file:` 或直接写路径，而不是 `link:`）。它位于 profile 目录内部，而 DSH 解析插件导入时优先使用 profile 内的副本，所以插件拿到的仍是那份旧依赖 —— 例如 `@deepseek-ai/schemastery` 3.18.2 没有 `Schema.volatile()`，模块在导入阶段就抛错。导入失败时 Loader 不会为这一行创建 fiber，客户端 bundle 也不会被组合，于是模型路由、RPC 通道和设置页全都不会出现。
 
-修复：到**插件**页**卸载**本插件，再重新**安装** `dsh-packycode-api`，然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
+修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.2.7`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
+
+**首次安装后，设置页每张卡片都显示 `transport failure for /packycode-api/…: HTTP 405`？** 实际装上的是 1.1.6 或更早的版本，通常是因为安装时只填了包名：安装提示显示的是最新版，pnpm 实际装的却是发布满 24 小时的旧版（见「安装插件」）。这些旧版要等 DSH 重启、重建它的 `connection` 服务之后，才能注册设置通道。所以首次安装后 `/packycode-api` 通道还不存在，请求落到静态页面，返回 405；模型路由和设置页本身照常加载。1.1.7 起首次安装不需要重启。先确认装上的版本：
+
+```sh
+grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.json
+```
+
+处理：完全退出并重新打开桌面应用，旧版即可正常使用。然后在 **设置 → PackyCode → 插件版本** 点「检查更新」→「更新插件」（它会固定安装最新版，不受 24 小时规则限制），再重启一次。
 
 **某个模型不可用，但 Key 是有效的？** 看「账户与 Key」里这个 Key 的分组和 ✓ / ✕：分组不覆盖这个模型时，换一个分组合适的 Key，或在 PackyCode 控制台给 Key 加上对应分组。存了分组合适的 Key 时，插件会自动用它跑这个模型。分组拒绝不会停用 Key。
 
@@ -241,7 +251,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 **限速之后 Key 被停用了？** 不该发生。429 不会切换 Key。额度用尽或 401 才会停用；充值后点「重新启用」。
 
-**插件页安装报 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`？** pnpm 默认拒绝发布不满 24 小时的包，并且会检查 profile 里的整个 lockfile。报错里点名的往往是另一个刚更新过的插件，不是本插件。等它发布满 24 小时再重试，或把报错里的 `包名@版本` 加到 profile 目录 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 下。已安装本插件后，设置页的「更新插件」不受这个限制。
+**插件页安装报 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`？** pnpm 默认只接受发布满 24 小时的版本，并且会检查 profile 里的整个 lockfile。（只填本插件的包名不会报这个错，而是悄悄装上满 24 小时的旧版，见「安装插件」。）报错里点名的往往是另一个刚更新过的插件，不是本插件。等它发布满 24 小时再重试，或把报错里的 `包名@版本` 加到 profile 目录 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 下。已安装本插件后，设置页的「更新插件」不受这个限制。
 
 **网页搜索报「no stored API key's group covers …」？** 所选搜索后端的模型不在你的令牌分组里（或网关暂时把它路由到了别的供应商）。在 **设置 → PackyCode → 网页搜索** 换一个后端，或添加分组覆盖它的 Key。
 

@@ -41,23 +41,25 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 
 ## Install
 
-You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH setup, see the [official instructions](https://github.com/deepseek-ai/deepseek-harness#run).
+You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH setup, see the [official instructions](https://github.com/deepseek-ai/deepseek-harness#run). No API key yet? You can register with PackyCode and apply for one through [this invite link](https://www.packyapi.ai/register?aff=Im3l).
 
 ### 1. Install the plugin
 
-Open the desktop application's **Plugins** page, click **Add plugin**, and enter this as the **package name or address**:
+Open the desktop application's **Plugins** page, click **Add plugin**, and enter the package name **with a version** as the **package name or address**:
 
 ```text
-dsh-packycode-api
+dsh-packycode-api@1.2.7
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.2.6`.
+Choose the **official** install source, then click **Install**. `1.2.7` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
 
-A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
+> **Always include the version.** With a bare `dsh-packycode-api`, the install prompt shows the newest version on npm, but DSH's bundled pnpm by default installs only versions published at least 24 hours ago, so you can end up several releases behind with no sign of it in the prompt. With an exact version, pnpm installs that version and adds it to the profile's `minimumReleaseAgeExclude` itself. Afterwards, check **Current version** under **Settings → PackyCode → Plugin version**.
+
+A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. This holds from 1.1.7 on; earlier versions need one restart after a first install, see the FAQ. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
 
 ### 2. Add a key
 
-Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label is optional and only distinguishes keys. Click **Add**.
+Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label is optional and only distinguishes keys. Click **Add**. Until a key has been added, **Accounts and keys** shows the same registration invite link, which opens in the system browser; it disappears once a key is stored.
 
 > Do not paste a key into a public issue, chat, or screenshot. The plugin does not read `PACKY_CODE_API_KEY` from the environment, and it does not silently switch to another provider when a request fails.
 
@@ -70,7 +72,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.6`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.7`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -211,7 +213,7 @@ Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit
 
 ## Update and uninstall
 
-**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling `dsh-packycode-api` from the **Plugins** page does the same job.
+**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.2.7`); without it you may get a version that is merely the newest one published at least 24 hours ago.
 
 **Coming back from a local-path install, uninstall first.** An update is a `pnpm add`: it rewrites the files inside the package directory and leaves a `node_modules` that an earlier local-path install left there. That older tree keeps shadowing the packages the DSH installation provides, so the plugin row fails to load with no visible reason. **Uninstall** runs `pnpm remove`, which deletes the package directory outright — only a reinstall after that is clean. `node scripts/install-check.mjs` reports whether a profile is in that state.
 
@@ -227,7 +229,15 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 Output means a leftover tree: a registry install ships no `node_modules`, so this one usually comes from an earlier local-path install (`file:`, or a bare path instead of `link:`). It sits inside the profile directory, and DSH resolves a plugin's imports from inside the profile first, so the plugin gets those old copies — for example `@deepseek-ai/schemastery` 3.18.2, which has no `Schema.volatile()`, so the module throws while it is imported. When an import fails the Loader creates no fiber for that row and no client bundle is composed either, so the model route, the RPC channel, and the settings panel all stay absent.
 
-Recovery: **uninstall** the plugin on the **Plugins** page, **install** `dsh-packycode-api` again, then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.2.7`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+
+**Right after a first install, every card in Settings shows `transport failure for /packycode-api/…: HTTP 405`?** The installed version is 1.1.6 or earlier, usually because only the bare package name was entered: the install prompt shows the newest version, but pnpm installs the newest one published at least 24 hours ago (see **Install the plugin**). Those older versions can register their settings channel only after DSH restarts and rebuilds its `connection` service. So right after a first install `/packycode-api` does not exist yet, requests fall through to the static page, and it answers 405; the model route and the settings panel itself load normally. From 1.1.7 on, a first install needs no restart. Check which version was installed:
+
+```sh
+grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.json
+```
+
+Recovery: quit and reopen the desktop application, and the old version works. Then click **Check for updates** → **Update plugin** under **Settings → PackyCode → Plugin version** (it installs the exact latest version and is not subject to the 24-hour rule), and restart once more.
 
 **Web search says "no stored API key's group covers …"?** The search backend's model is not in your token groups (or the gateway currently routes it to another supplier). Pick the other backend under **Settings → PackyCode → Web search**, or add a key whose group covers it.
 
@@ -243,7 +253,7 @@ Recovery: **uninstall** the plugin on the **Plugins** page, **install** `dsh-pac
 
 **A rate limit disabled the key?** It should not. HTTP 429 does not rotate. Exhausted quota or HTTP 401 does; after a top-up, click **Re-enable**.
 
-**Installing from the Plugins page fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`?** pnpm refuses packages published less than 24 hours ago and checks the whole profile lockfile. The package it names is often another plugin that was just updated, not this one. Retry once it is 24 hours old, or add the reported `name@version` under `minimumReleaseAgeExclude` in the profile's `pnpm-workspace.yaml`. Once this plugin is installed, **Update plugin** in Settings is not subject to that check.
+**Installing from the Plugins page fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`?** By default pnpm accepts only versions published at least 24 hours ago and checks the whole profile lockfile. (Entering only this plugin's bare name does not raise this error; it silently installs an older version that has passed 24 hours instead, see **Install the plugin**.) The package it names is often another plugin that was just updated, not this one. Retry once it is 24 hours old, or add the reported `name@version` under `minimumReleaseAgeExclude` in the profile's `pnpm-workspace.yaml`. Once this plugin is installed, **Update plugin** in Settings is not subject to that check.
 
 **The CLI is installed, but Claude still fails?** A host launched from Finder or the Start menu usually has a shorter `PATH` than a terminal. The plugin also checks the official install location, common package-manager directories, and `npm prefix -g`. If it still cannot find the binary, set `claudeCliPath` or click **Check again**. After a Host change or a reinstall, quit and reopen the desktop application.
 

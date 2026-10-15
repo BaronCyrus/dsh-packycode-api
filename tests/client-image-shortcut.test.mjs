@@ -63,7 +63,7 @@ function fixture(options = {}) {
     async tick() { await act(async () => { for (const fn of [...timers.values()]) fn() }) },
     rendered: () => root.toJSON(),
     buttons: () => root.root.findAllByType('button'),
-    amount: () => root.root.findAll(node => node.props.className === 'pkc-composer pkc-image-balance-value'),
+    amount: () => root.root.findAll(node => node.props.className === 'pkc-composer pkc-quota-value'),
     tooltip: () => root.root.findAll(node => node.props.role === 'tooltip'),
   }
 }

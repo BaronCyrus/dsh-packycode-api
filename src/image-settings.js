@@ -83,6 +83,7 @@ export function createImageController({ ring, balance, readPreference, writePref
     async mutate(operation, payload = {}) {
       const operations = {
         add: () => ring.add(payload.key, payload.label),
+        rename: () => ring.rename(String(payload.id ?? ''), payload.label),
         remove: () => ring.remove(String(payload.id ?? '')),
         select: () => ring.select(String(payload.id ?? '')),
         enable: () => ring.enable(String(payload.id ?? '')),

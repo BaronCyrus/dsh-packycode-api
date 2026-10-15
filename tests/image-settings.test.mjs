@@ -170,6 +170,45 @@ test('image RPC replies contain only projections and do not invalidate conversat
   assert.equal(rejected.error.code, 'packycode/request-failed')
 })
 
+test('image keys rename through RPC with projection-only replies, a fresh balance label and the chat ring untouched', async () => {
+  const { store, ring, imageRing, images } = setup({ createImageBalance: imageRing => createBalanceReader({
+    listKeys: () => imageRing.secrets(), getHosts: () => ({ statusHost: 'https://status.invalid' }), includeAccount: false,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ data: { total_available: 4500000, total_used: 500000 } }) }),
+  }) })
+  await ring.add('sk-fixture-conversation', 'chat')
+  const conversation = structuredClone(store.records.get('packycode-api/keys'))
+  let invalidated = 0
+  const rpc = createPackyCodeRpc({ ring, images, balance: { invalidate: () => { invalidated += 1 } }, hosts: () => ({}), preference: {} })
+  await rpc('images/keys/add', { key: 'sk-fixture-image-one', label: 'image one' })
+  await rpc('images/keys/add', { key: 'sk-fixture-image-two' })
+  const [first, second] = (await images.status()).keys
+  assert.equal((await rpc('images/balance')).value.keys[1].label, 'Key 2')
+
+  const reply = await rpc('images/keys/rename', { id: second.id, label: '  海报 Key  ' })
+  assert.equal(reply.ok, true)
+  assert.deepEqual(reply.value.keys.map(entry => entry.label), ['image one', '海报 Key'])
+  assert.equal(reply.value.activeId, first.id)
+  assert.deepEqual(Object.keys(reply.value.keys[1]).sort(), ['active', 'addedAt', 'disabled', 'id', 'label'])
+  assert.equal(JSON.stringify(reply).includes('sk-fixture'), false)
+  assert.equal((await imageRing.secrets())[1].key, 'sk-fixture-image-two')
+  // The rename dropped the cached image balance, so the composer's next unforced read names the key anew.
+  const balance = await rpc('images/balance')
+  assert.equal(balance.value.keys[1].label, '海报 Key')
+  assert.equal(JSON.stringify(balance).includes('sk-fixture'), false)
+
+  const empty = await rpc('images/keys/rename', { id: second.id, label: '   ' })
+  assert.equal(empty.ok, false)
+  assert.equal(empty.error.message, 'That PackyCode key name cannot be empty')
+  const unknown = await rpc('images/keys/rename', { id: 'missing', label: 'x' })
+  assert.equal(unknown.error.message, 'Unknown PackyCode key')
+  // A conversation key id means nothing to the image ring.
+  const chat = (await rpc('status')).value.keys[0]
+  assert.equal((await rpc('images/keys/rename', { id: chat.id, label: 'hijack' })).ok, false)
+  assert.equal((await rpc('status')).value.keys[0].label, 'chat')
+  assert.deepEqual(store.records.get('packycode-api/keys'), conversation)
+  assert.equal(invalidated, 0)
+})
+
 test('paid image checks read only the image credential record and never fall back to a chat key', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'packycode-image-key-'))
   t.after(() => rm(dir, { recursive: true, force: true }))

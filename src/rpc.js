@@ -104,6 +104,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     'images/original/chunk': (payload, signal) => originals().chunk(payload, signal),
     'images/update': payload => imageSupport().update(payload),
     'images/keys/add': payload => imageSupport().mutate('add', { key: payload?.key, label: payload?.label }),
+    'images/keys/rename': payload => imageSupport().mutate('rename', { id: payload?.id, label: payload?.label }),
     'images/keys/remove': payload => imageSupport().mutate('remove', { id: payload?.id }),
     'images/keys/select': payload => imageSupport().mutate('select', { id: payload?.id }),
     'images/keys/enable': payload => imageSupport().mutate('enable', { id: payload?.id }),

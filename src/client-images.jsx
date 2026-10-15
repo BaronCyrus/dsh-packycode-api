@@ -5,6 +5,7 @@ import { BalanceTotals, KeyBalance } from './client-balance.jsx'
 import { ImageShortcutBalance } from './client-image-balance.jsx'
 import { readOriginalImage } from './client-image-download.js'
 import { createImageViewer, PackyCodeImageViewer } from './client-image-viewer.jsx'
+import { KeyRenameForm, useKeyRename } from './client-key-rename.jsx'
 
 const imageModelLabel = id => id.replace('gpt-image-', 'GPT Image ').replace('-flare', ' Flare').replace('-sunburst', ' Sunburst')
 
@@ -58,6 +59,7 @@ export function PackyCodeImagesCard({ call, t }) {
       return false
     } finally { if (mounted.current) setBusy(false) }
   }
+  const rename = useKeyRename(({ id, label }) => mutate('images/keys/rename', { id, label }))
   const disabled = busy || state?.writable !== true
   const models = state?.models ?? []
   const qualities = models.find(model => model.id === state?.imageModel)?.qualities ?? []
@@ -93,12 +95,14 @@ export function PackyCodeImagesCard({ call, t }) {
       </>}
       <div className="pkc-list">
         {(state.keys ?? []).map(entry => <div className="pkc-row" key={entry.id}>
-          <div className="pkc-row-top"><span className="pkc-row-name"><span className="pkc-name">{entry.label}</span>
+          <div className="pkc-row-top"><span className="pkc-row-name">
+            {rename.renaming?.id === entry.id ? <KeyRenameForm rename={rename} busy={busy} t={t} /> : <span className="pkc-name">{entry.label}</span>}
             {entry.active && <span className="pkc-chip" data-tone="success">{t('keyActive')}</span>}
-          </span><span className="pkc-actions">
+          </span>{rename.renaming?.id !== entry.id && <span className="pkc-actions">
             {!entry.active && <button className="pkc-btn" type="button" disabled={busy} onClick={() => { void mutate('images/keys/select', { id: entry.id }) }}>{t('keyUse')}</button>}
+            <button className="pkc-btn" data-variant="ghost" type="button" disabled={busy} onClick={() => rename.start(entry)}>{t('keyRename')}</button>
             <button className="pkc-btn" data-variant="danger" type="button" disabled={busy} onClick={() => { void mutate('images/keys/remove', { id: entry.id }) }}>{t('keyRemove')}</button>
-          </span></div>
+          </span>}</div>
           <KeyBalance row={rows.find(row => row.id === entry.id)} t={t} />
         </div>)}
       </div>

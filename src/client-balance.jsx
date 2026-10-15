@@ -47,6 +47,45 @@ export function KeyBalance({ row, t }) {
   </>
 }
 
+/**
+ * A composer quota figure with the same details for either key ring. The help
+ * cursor marks it; hovering or focusing it shows the key, its account, the
+ * remaining, used and total quota and when it was read, and asks the caller
+ * for an unforced read.
+ * @param props.copy - the ring's own lines: `title`, `key`, `failed`, `loading`.
+ * @param props.empty - what the figure shows while the remaining quota is unknown.
+ * @param props.align - `end` opens the details leftward, for the composer's right side.
+ */
+export function QuotaHover({ row, fetchedAt, loading = false, failed = false, empty, copy, align, onRefresh, t }) {
+  const tooltipId = react.useId()
+  const usage = row?.usage
+  const unlimited = usage?.unlimitedQuota === true
+  const remaining = unlimited ? t('keyUnlimited') : formatUsd(usage?.availableUsd)
+  const stale = usage !== undefined && (failed || row.stale !== undefined)
+  const display = remaining ?? empty
+  const details = [
+    copy.title,
+    row?.label ? `${copy.key}: ${row.label}` : undefined,
+    usage?.name ? `${t('keyName')}: ${usage.name}` : undefined,
+    `${t('keyRemaining')}: ${remaining ?? '—'}`,
+    `${t('keyUsed')}: ${formatUsd(usage?.usedUsd) ?? '—'}`,
+    `${t('accountLimit')}: ${unlimited ? t('keyUnlimited') : formatUsd(quotaTotalUsd(usage)) ?? '—'}`,
+    stale ? fill(t('composerStale'), { time: readTime(row.stale?.fetchedAt ?? fetchedAt) })
+      : failed || row?.error ? copy.failed
+        : loading ? copy.loading
+          : fetchedAt === undefined ? undefined : fill(t('quotaReadAt'), { time: readTime(fetchedAt) }),
+  ].filter(Boolean).join('\n')
+  const refresh = () => { onRefresh?.() }
+  return <span className="pkc-quota" data-align={align}>
+    <span className="pkc-composer pkc-quota-value" role="status" tabIndex={0}
+      aria-label={`${copy.title}: ${stale ? '≈' : ''}${display}`} aria-describedby={tooltipId}
+      onMouseEnter={refresh} onFocus={refresh}>
+      {stale ? `≈${display}` : display}
+    </span>
+    <span className="pkc-quota-tooltip" id={tooltipId} role="tooltip">{details}</span>
+  </span>
+}
+
 /** Only this card's keys contribute; account-wide billing is never added. */
 export function BalanceTotals({ rows, t }) {
   const totals = sumBalances(rows)

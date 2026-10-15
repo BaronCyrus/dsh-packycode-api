@@ -1,7 +1,6 @@
 import * as react from 'react'
 
-import { fill, formatUsd, readTime } from './client-balance.jsx'
-import { quotaTotalUsd } from './totals.js'
+import { QuotaHover } from './client-balance.jsx'
 
 /** Mirror the host's next-usable image key using only its public balance rows. */
 function currentImageKey(balance) {
@@ -18,7 +17,6 @@ function currentImageKey(balance) {
 export function ImageShortcutBalance({ call, t }) {
   const [view, setView] = react.useState({ loading: true })
   const refresh = react.useRef(() => {})
-  const tooltipId = react.useId()
   react.useEffect(() => {
     let live = true, generation = 0, pending = false
     const read = async (force = false, reset = false) => {
@@ -49,31 +47,9 @@ export function ImageShortcutBalance({ call, t }) {
     }
   }, [call])
 
-  const row = currentImageKey(view.balance)
-  const usage = row?.usage
-  const unlimited = usage?.unlimitedQuota === true
-  const remaining = unlimited ? t('keyUnlimited') : formatUsd(usage?.availableUsd)
-  const stale = usage !== undefined && (view.failed || row.stale !== undefined)
-  const display = remaining ?? (view.loading ? '…' : '—')
-  const details = [
-    t('imagesComposerLabel'),
-    row?.label ? `${t('imagesBalanceKey')}: ${row.label}` : undefined,
-    usage?.name ? `${t('keyName')}: ${usage.name}` : undefined,
-    `${t('keyRemaining')}: ${remaining ?? '—'}`,
-    `${t('keyUsed')}: ${formatUsd(usage?.usedUsd) ?? '—'}`,
-    `${t('accountLimit')}: ${unlimited ? t('keyUnlimited') : formatUsd(quotaTotalUsd(usage)) ?? '—'}`,
-    stale ? fill(t('composerStale'), { time: readTime(row.stale?.fetchedAt ?? view.balance?.fetchedAt) })
-      : view.failed || row?.error ? t('imagesBalanceFailed')
-        : view.loading ? t('imagesBalanceLoading')
-          : view.balance?.fetchedAt === undefined ? undefined : fill(t('imagesBalanceReadAt'), { time: readTime(view.balance.fetchedAt) }),
-  ].filter(Boolean).join('\n')
-
-  return <span className="pkc-image-balance">
-    <span className="pkc-composer pkc-image-balance-value" role="status" tabIndex={0}
-      aria-label={`${t('imagesComposerLabel')}: ${stale ? '≈' : ''}${display}`} aria-describedby={tooltipId}
-      onMouseEnter={() => { void refresh.current() }} onFocus={() => { void refresh.current() }}>
-      {stale ? `≈${display}` : display}
-    </span>
-    <span className="pkc-image-balance-tooltip" id={tooltipId} role="tooltip">{details}</span>
-  </span>
+  return <QuotaHover
+    row={currentImageKey(view.balance)} fetchedAt={view.balance?.fetchedAt}
+    loading={view.loading} failed={view.failed === true} empty={view.loading ? '…' : '—'}
+    copy={{ title: t('imagesComposerLabel'), key: t('imagesBalanceKey'), failed: t('imagesBalanceFailed'), loading: t('imagesBalanceLoading') }}
+    onRefresh={() => { void refresh.current() }} t={t} />
 }

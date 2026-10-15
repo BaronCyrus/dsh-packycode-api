@@ -13,12 +13,15 @@ import * as react from 'react'
 import { en, zh } from './client-copy.js'
 import { STYLE } from './client-style.js'
 import { installImagePresentation, PackyCodeImagesCard, PackyCodeImageShortcut } from './client-images.jsx'
-import { BalanceTotals, fill, formatUsd, KeyBalance, readTime } from './client-balance.jsx'
+import { BalanceTotals, fill, KeyBalance, QuotaHover } from './client-balance.jsx'
+import { KeyRenameForm, useKeyRename } from './client-key-rename.jsx'
 
 const NS = 'settings.packyCodeApi'
 const PROVIDER = 'packycode'
 const CHANNEL = '/packycode-api'
 const REFRESH_MS = 60_000
+/** PackyCode registration through the author's invite link, offered only until a key is stored. */
+const INVITE_URL = 'https://www.packyapi.ai/register?aff=Im3l'
 const INSTALL_POLL_MS = 2_000
 /** How long after a search change the panel re-reads what DSH applied (the patch hot-reloads). */
 const SEARCH_SETTLE_MS = 1_500
@@ -145,30 +148,15 @@ function KeyGroups({ group, descriptions, loading, t }) {
   )
 }
 
-function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, renaming, onRename, onAction, t }) {
-  const editing = renaming?.id === entry.id
+function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, rename, onAction, t }) {
+  const editing = rename.renaming?.id === entry.id
 
   return (
     <div className="pkc-row">
       <div className="pkc-row-top">
         <span className="pkc-row-name">
           {editing
-            ? (
-              <form className="pkc-form" onSubmit={event => { event.preventDefault(); onRename.submit() }}>
-                <input
-                  className="pkc-input"
-                  type="text"
-                  maxLength={60}
-                  autoFocus
-                  placeholder={t('keyRenamePlaceholder')}
-                  value={renaming.label}
-                  onChange={event => onRename.change(event.target.value)}
-                  onKeyDown={event => event.key === 'Escape' && onRename.cancel()}
-                />
-                <Button type="submit" variant="primary" disabled={busy || renaming.label.trim() === ''}>{t('keyRenameSave')}</Button>
-                <Button variant="ghost" onClick={onRename.cancel}>{t('keyRenameCancel')}</Button>
-              </form>
-            )
+            ? <KeyRenameForm rename={rename} busy={busy} t={t} />
             : <span className="pkc-name">{entry.label}</span>}
           {entry.active && <span className="pkc-chip" data-tone="success">{t('keyActive')}</span>}
           {entry.disabled && <span className="pkc-chip" data-tone="danger">{entry.disabledReason ? `${t('keyDisabled')} · ${entry.disabledReason}` : t('keyDisabled')}</span>}
@@ -177,7 +165,7 @@ function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, renaming
           <span className="pkc-actions">
             {!entry.active && !entry.disabled && <Button disabled={busy} onClick={() => onAction('keys/select', { id: entry.id })}>{t('keyUse')}</Button>}
             {entry.disabled && <Button disabled={busy} onClick={() => onAction('keys/enable', { id: entry.id })}>{t('keyEnable')}</Button>}
-            <Button variant="ghost" disabled={busy} onClick={() => onRename.start(entry)}>{t('keyRename')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => rename.start(entry)}>{t('keyRename')}</Button>
             <Button variant="danger" disabled={busy} onClick={() => onAction('keys/remove', { id: entry.id })}>{t('keyRemove')}</Button>
           </span>
         )}
@@ -185,6 +173,20 @@ function KeyRow({ entry, row, group, descriptions, groupsLoading, busy, renaming
       <KeyBalance row={row} t={t} />
       <KeyGroups group={group} descriptions={descriptions} loading={groupsLoading} t={t} />
     </div>
+  )
+}
+
+/**
+ * Where to get a key, for a profile that has none. A new-window link: the
+ * desktop shell hands http(s) window opens to the system browser, and a web
+ * profile opens a new tab.
+ */
+function RegisterInvite({ t }) {
+  return (
+    <p className="pkc-note">
+      {t('inviteLead')}{' '}
+      <a className="pkc-link" href={INVITE_URL} target="_blank" rel="noopener noreferrer">{t('inviteLink')}</a>
+    </p>
   )
 }
 
@@ -196,7 +198,6 @@ function AccountsCard({ call, t }) {
   const [busy, setBusy] = react.useState(false)
   const [error, setError] = react.useState()
   const [draft, setDraft] = react.useState({ key: '', label: '' })
-  const [renaming, setRenaming] = react.useState()
   const generation = react.useRef(0)
 
   const readGroups = react.useCallback((force = false) => {
@@ -253,15 +254,7 @@ function AccountsCard({ call, t }) {
     mutate('keys/add', { key: draft.key, label: draft.label }).then(() => setDraft({ key: '', label: '' }))
   }
 
-  const rename = {
-    start: entry => setRenaming({ id: entry.id, label: entry.label }),
-    change: label => setRenaming(current => ({ ...current, label })),
-    cancel: () => setRenaming(undefined),
-    submit: () => {
-      if (renaming === undefined || renaming.label.trim() === '') return
-      mutate('keys/rename', { id: renaming.id, label: renaming.label }).then(() => setRenaming(undefined))
-    },
-  }
+  const rename = useKeyRename(({ id, label }) => mutate('keys/rename', { id, label }))
 
   const keys = status?.keys ?? []
   const rows = balance?.keys ?? []
@@ -276,7 +269,13 @@ function AccountsCard({ call, t }) {
       )}
     >
       {keys.length === 0
-        ? <p className="pkc-note">{t('empty')}</p>
+        ? (
+          <>
+            <p className="pkc-note">{t('empty')}</p>
+            {/* Only once the host has answered: an unread or failed status says nothing about stored keys. */}
+            {status !== undefined && <RegisterInvite t={t} />}
+          </>
+        )
         : (
           <>
             <BalanceTotals rows={rows} t={t} />
@@ -290,8 +289,7 @@ function AccountsCard({ call, t }) {
                   descriptions={groups?.descriptions}
                   groupsLoading={groupsLoading}
                   busy={busy}
-                  renaming={renaming}
-                  onRename={rename}
+                  rename={rename}
                   onAction={mutate}
                   t={t}
                 />
@@ -747,6 +745,7 @@ function PackyCodeComposerQuota({ rpc, t, directory }) {
   )
   const enabled = snapshot?.current?.provider === PROVIDER
   const [balance, setBalance] = react.useState()
+  const refresh = react.useRef(() => {})
 
   react.useEffect(() => {
     if (!enabled) {
@@ -754,38 +753,43 @@ function PackyCodeComposerQuota({ rpc, t, directory }) {
       return undefined
     }
     let live = true
+    let pending = false
+    // Hovering the figure asks for the host's cached balance as well; one read at a time.
     const tick = () => {
+      if (pending) return
+      pending = true
       call('balance').then(value => {
         if (live) setBalance(value)
       }).catch(() => {
         if (live) setBalance(undefined)
+      }).finally(() => {
+        pending = false
       })
     }
+    refresh.current = tick
     tick()
     const timer = window.setInterval(tick, REFRESH_MS)
     return () => {
       live = false
+      refresh.current = () => {}
       window.clearInterval(timer)
     }
   }, [call, enabled])
 
   if (!enabled || balance === undefined) return null
   const row = activeUsage(balance)
-  const usage = row?.usage
   // A key whose balance read failed is still usable; say the read failed
   // instead of claiming there is no key.
-  const display = usage?.unlimitedQuota === true
-    ? t('keyUnlimited')
-    : formatUsd(usage?.availableUsd) ?? (row?.error === undefined ? t('composerNoKey') : t('composerUnread'))
-  // A balance carried over from an earlier read is marked as approximate.
-  const stale = row?.stale !== undefined && usage !== undefined
-  const label = stale
-    ? `${t('composerLabel')}: ${display}（${fill(t('composerStale'), { time: readTime(row.stale.fetchedAt) })}）`
-    : `${t('composerLabel')}: ${display}`
   return (
-    <span className="pkc-composer" role="status" aria-label={label} title={label}>
-      {stale ? `≈${display}` : display}
-    </span>
+    <QuotaHover
+      row={row}
+      fetchedAt={balance.fetchedAt}
+      empty={row?.error === undefined ? t('composerNoKey') : t('composerUnread')}
+      copy={{ title: t('composerLabel'), key: t('composerKey'), failed: t('composerUnread') }}
+      align="end"
+      onRefresh={() => refresh.current()}
+      t={t}
+    />
   )
 }
 
