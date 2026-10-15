@@ -7,6 +7,25 @@ import { imageConversationNode } from '../src/image-conversation.js'
 
 const host020 = createRequire(import.meta.resolve('packycode-host-v020-fixture'))
 
+/** Include the actual registries, bound event feed and image cache for lifecycle tests. */
+export function conversationServiceSource() {
+  const bundle = readFileSync(host020.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8')
+  const weakStart = bundle.indexOf('var WeakMapWithValues = class')
+  const weakEnd = bundle.indexOf('//#endregion', weakStart)
+  const start = bundle.indexOf('//#region lib/types/client/contract/conversation.js')
+  const end = bundle.indexOf('//#region lib/types/client/stores.js', start)
+  assert.ok(weakStart >= 0 && weakEnd > weakStart && start > weakEnd && end > start)
+  return `${bundle.slice(weakStart, weakEnd)}\n${bundle.slice(start, end)}`
+}
+
+export function slotRegistrySource() {
+  const bundle = readFileSync(host020.resolve('@deepseek-ai/dsh-client-ui-renderer/client'), 'utf8')
+  const start = bundle.indexOf('//#region lib/types/client/registry.js')
+  const end = bundle.indexOf('//#region lib/types/client/index.js', start)
+  assert.ok(start >= 0 && end > start)
+  return bundle.slice(start, end)
+}
+
 /** Use DSH's shipped assembler and location index, with only its snapshot sink replaced. */
 export function conversationSource(version = '0.2.0') {
   const bundle = readFileSync(version === '0.2.0' ? host020.resolve('@deepseek-ai/dsh-client-ui-conversation/client')

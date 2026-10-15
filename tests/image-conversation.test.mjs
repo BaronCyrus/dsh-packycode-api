@@ -4,8 +4,8 @@ import test from 'node:test'
 import { imageConversationNode, IMAGE_CHAT_KIND } from '../src/image-conversation.js'
 
 const image = { type: 'image', attachment: { attachmentId: `sha256:${'a'.repeat(64)}` } }
-const block = { type: 'tool-result', toolCallId: 'image-call', content: [image] }
-const result = (extra = {}) => ({ type: 'tool/result', seq: 4, data: { meta: { kind: 'packycode-image' }, message: { content: [block] } }, ...extra })
+const message = { role: 'tool', source: { kind: 'tool', callId: 'image-call' }, toolCallId: 'image-call', isError: false, content: [image] }
+const result = (extra = {}) => ({ type: 'tool/result', seq: 4, data: { meta: { kind: 'packycode-image' }, message }, ...extra })
 const end = { type: 'turn/end', seq: 10, data: { turn: 1 } }
 const match = event => ({ event, location: { kind: 'turn', turn: { turn: 1, end, steps: [{ data: new Map([['assistant-step', { finalNode: { seq: 8 } }]]) }] } } })
 const context = matches => ({ key: 'image-output', id: '1', matches: matches.map(match) })
@@ -13,8 +13,11 @@ const context = matches => ({ key: 'image-output', id: '1', matches: matches.map
 test('image chat projection recognizes only successful image results from this plugin', () => {
   assert.deepEqual(imageConversationNode.match(result()), { id: 'image-call', role: 'update' })
   assert.equal(imageConversationNode.match(end), null, 'boundaries update the engine Location rather than form another Context')
-  assert.equal(imageConversationNode.match(result({ data: { turn: 1, meta: { kind: 'codex-subscription-image' }, message: { content: [block] } } })), null)
-  assert.equal(imageConversationNode.match(result({ data: { turn: 1, meta: { kind: 'packycode-image' }, message: { content: [{ ...block, isError: true }] } } })), null)
+  assert.equal(imageConversationNode.match(result({ data: { meta: { kind: 'codex-subscription-image' }, message } })), null)
+  for (const patch of [{ isError: true }, { source: { kind: 'tool', callId: '' } }, { source: { kind: 'plugin', callId: 'image-call' } },
+    { content: [{ type: 'text', text: 'No image' }] }]) {
+    assert.equal(imageConversationNode.match(result({ data: { meta: { kind: 'packycode-image' }, message: { ...message, ...patch } } })), null)
+  }
   assert.equal(imageConversationNode.match({ type: 'assistant/message', data: {} }), null)
 })
 

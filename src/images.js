@@ -24,9 +24,10 @@ export class ImageRequestError extends Error {}
 
 const nonempty = value => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 
-/** Some model calls fill unused object fields with a zero-valued reference. */
+/** Explicit absence, including zero-valued placeholders filled by some models. */
 function emptyMaskReference(value) {
-  return value !== null && typeof value === 'object'
+  if (value === null) return true
+  return value !== undefined && typeof value === 'object'
     && (value.attachmentId === '' || value.attachmentId === `sha256:${'0'.repeat(64)}`)
     && value.bytes === 0 && value.width === 0 && value.height === 0
     && (value.name === undefined || value.name === '')
@@ -146,7 +147,10 @@ export function createPackyCodeImageClient({ resolveKey, getHost, fetchImpl = am
           body.append('image[]', new Blob([image.data], { type: image.mediaType }), `reference-${index + 1}.${extension}`)
         }
         if (mask !== undefined) {
-          if (mask.mediaType !== 'image/png' || !(mask.data instanceof Uint8Array) || mask.data.byteLength >= 4 * 1024 * 1024) {
+          if (mask.mediaType !== 'image/png') {
+            throw new ImageRequestError('PackyCode maskImage must be a separate PNG mask, not an ordinary reference image; omit maskImage or set it to null for edits without a mask')
+          }
+          if (!(mask.data instanceof Uint8Array) || mask.data.byteLength === 0 || mask.data.byteLength >= 4 * 1024 * 1024) {
             throw new ImageRequestError('PackyCode image mask must be a PNG smaller than 4 MB')
           }
           const dimensions = pngDimensions(mask.data)
@@ -259,7 +263,7 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       size: { type: 'string', description: 'auto or widthxheight, e.g. 1024x1024; both edges multiples of 16, each <=3840, ratio <=3:1, pixels 655360..8294400.' },
       background: { type: 'string', enum: ['auto', 'opaque', 'transparent'] },
       referenceImages: { type: 'array', items: referenceSchema, description: '1-16 complete attachment references for editing. Omit or use [] for a new image. Paths and unrelated images are not accepted; never drop real references after an edit fails.' },
-      maskImage: { ...referenceSchema, description: 'Omit for new images and edits without a mask. Never invent a reference. Optional PNG mask from this session, matching the first reference and under 4 MB; alpha=0 marks the area to edit.' },
+      maskImage: { oneOf: [{ type: 'null' }, referenceSchema], description: 'Omit or use null for new images and ordinary reference-image edits, including refining a sketch. Only supply an actual PNG mask provided for masking, matching the first reference and under 4 MB; alpha=0 marks the area to edit. Do not copy an ordinary reference into this field or invent a mask.' },
     },
     output: {
       schema: imageResultSchema,
@@ -285,7 +289,13 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       try { messages = editing ? await getSessionMessages(exec.agent.id) : undefined }
       catch { throw new ImageRequestError('PackyCode could not read the current session image references') }
       const images = editing ? await readReferences(args.referenceImages, attachments, messages, signal) : undefined
-      const masks = maskImage === undefined ? undefined : await readReferences([maskImage], attachments, messages, signal)
+      const repeatedIndex = maskImage === undefined ? -1 : args.referenceImages.findIndex(ref => ref.attachmentId === maskImage.attachmentId)
+      // Models sometimes fill the optional mask with the same ordinary edit
+      // reference. A repeated JPEG/WebP is not a separate PNG mask. Inspect the
+      // host-owned bytes/type already read above, never model-supplied metadata;
+      // real PNG masks and distinct mask references keep their validation.
+      const repeatedNonPng = repeatedIndex >= 0 && images[repeatedIndex].mediaType !== 'image/png'
+      const masks = maskImage === undefined || repeatedNonPng ? undefined : await readReferences([maskImage], attachments, messages, signal)
       if (!getPreference().imageEnabled) throw new ImageRequestError('PackyCode images are disabled in settings')
       const result = await client.request({ ...args,
         model: args.model === 'settings' ? preference.imageModel : args.model ?? preference.imageModel,

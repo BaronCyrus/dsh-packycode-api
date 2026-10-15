@@ -8,6 +8,7 @@ import test from 'node:test'
 import { createClaudeImageService, MAX_CLI_IMAGE_CALLS } from '../src/claude-images.js'
 import { createClaudeSearchBridge } from '../src/claude-search-mcp.js'
 import { createPackyCodeImageClient, IMAGE_TOOL_NAME } from '../src/images.js'
+import { JPEG } from './fixtures/images.mjs'
 
 const KEY = 'sk-fixture-image-key-never-given-to-cli'
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jpj8AAAAASUVORK5CYII=', 'base64')
@@ -23,10 +24,11 @@ async function fixture(t, options = {}) {
   const reads = []
   let invalidations = 0
   const preference = { imageEnabled: true, imageModel: 'gpt-image-2.5-sunburst', imageQuality: 'xhigh' }
-  const refs = new Map([[REF.attachmentId, REF]])
+  const reference = options.reference ?? { ref: REF, data: PNG }
+  const refs = new Map([[reference.ref.attachmentId, reference.ref]])
   const attachments = {
     imageLimits: { maxMessageImageBytes: 20 * 1024 * 1024 },
-    readImage: async ref => { assert.ok(refs.has(ref.attachmentId)); reads.push(ref); return { ref: refs.get(ref.attachmentId), data: PNG } },
+    readImage: async ref => { assert.ok(refs.has(ref.attachmentId)); reads.push(ref); return { ref: refs.get(ref.attachmentId), data: ref.attachmentId === reference.ref.attachmentId ? reference.data : PNG } },
     saveImage: async ({ data, name }) => {
       const ref = { ...REF, name, attachmentId: `sha256:${createHash('sha256').update(data).digest('hex')}` }
       refs.set(ref.attachmentId, ref)
@@ -37,7 +39,7 @@ async function fixture(t, options = {}) {
     fetchImpl: async (url, init) => { calls.push({ url, ...init }); return options.fetchImpl ? options.fetchImpl(url, init) : response() },
   })
   const service = createClaudeImageService({
-    sessionId: 'trusted-dsh-session', messages: [{ content: [{ type: 'image', attachment: REF }] }],
+    sessionId: 'trusted-dsh-session', messages: [{ content: [{ type: 'image', attachment: reference.ref }] }],
     client, attachments, getPreference: () => preference, imageDirectory: directory,
     onGenerated: () => { invalidations++ }, onImage: result => delivered.push(result), ...options,
   })
@@ -106,6 +108,19 @@ test('invalid CLI references, injected credentials/paths, and unsupported settin
   assert.match(fx.calls[0].url, /\/edits$/u)
   assert.ok(fx.calls[0].body.get('mask'))
   assert.equal(fx.reads[0].attachmentId, REF.attachmentId)
+})
+
+test('CLI reference-only edits accept null masks and redundant non-PNG mask handles without dropping the reference', async t => {
+  for (const maskId of [null, 'image_1']) {
+    const fx = await fixture(t, { reference: { ref: { ...REF, mediaType: 'image/jpeg', bytes: JPEG.length }, data: JPEG } })
+    const result = await fx.service.call({ prompt: 'Refine the sketch, preserving its character and pose.', referenceIds: ['image_1'], maskId }, signal())
+    assert.equal(result.isError, undefined)
+    assert.equal(fx.calls.length, 1)
+    assert.match(fx.calls[0].url, /\/images\/edits$/u)
+    assert.equal(fx.calls[0].body.get('mask'), null)
+    assert.equal(fx.calls[0].body.get('image[]').type, 'image/jpeg')
+    assert.deepEqual(Buffer.from(await fx.calls[0].body.get('image[]').arrayBuffer()), JPEG)
+  }
 })
 
 test('image preferences are read at call time; settings sentinel and explicit auto stay distinct', async t => {
@@ -184,7 +199,7 @@ test('MCP image calls share the authenticated transport, keep search separate, s
     body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })).json()
   const list = (await rpc('tools/list', {})).result.tools
   assert.deepEqual(list.map(tool => tool.name), ['web_search', IMAGE_TOOL_NAME])
-  const first = (await rpc('tools/call', { name: IMAGE_TOOL_NAME, arguments: { prompt: 'x'.repeat(32000) } })).result
+  const first = (await rpc('tools/call', { name: IMAGE_TOOL_NAME, arguments: { prompt: 'x'.repeat(32000), maskId: null } })).result
   assert.equal(first.isError, undefined)
   assert.equal(first.content[1].type, 'image')
   assert.equal((await rpc('tools/call', { name: 'web_search', arguments: { query: 'q' } })).result.isError, undefined)

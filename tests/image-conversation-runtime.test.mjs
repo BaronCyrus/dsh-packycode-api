@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
+import savedResult from './fixtures/image-result-event.json' with { type: 'json' }
 
 import { assembler, chatRoots } from './image-conversation-fixture.mjs'
 
@@ -10,7 +11,7 @@ const event = (seq, type, data) => ({ type: 'event', event: { seq, type, data } 
 const events = [
   event(1, 'turn/start', { turn: 1 }),
   event(2, 'step/start', { turn: 1, step: 1 }),
-  event(3, 'tool/result', { meta: { kind: 'packycode-image' }, message: { content: [{ type: 'tool-result', toolCallId: 'generated', content: [{ type: 'image', attachment }] }] } }),
+  event(3, 'tool/result', { meta: { kind: 'packycode-image' }, message: { role: 'tool', source: { kind: 'tool', callId: 'generated' }, toolCallId: 'generated', isError: false, content: [{ type: 'image', attachment }] } }),
   event(4, 'assistant/message', { turn: 1, step: 1, message: { source: { kind: 'model', provider: 'packycode', model: 'gpt-6-astra' }, content: [{ type: 'text', text: 'Generated. ![Preview](a-host-local-path.png)' }] } }),
   event(5, 'step/end', { turn: 1, step: 1 }),
   event(6, 'turn/end', { turn: 1, reason: { kind: 'stop' } }),
@@ -24,7 +25,7 @@ const chatNodes = runtime => {
 
 test('raw image records stay with their own turns across live updates, history reload and older-page prepend', () => {
   const second = events.map(entry => ({ type: 'event', event: { ...entry.event, seq: entry.event.seq + 10,
-    data: entry.event.type === 'tool/result' ? { ...entry.event.data, message: { content: [{ ...entry.event.data.message.content[0], toolCallId: 'second-image' }] } }
+    data: entry.event.type === 'tool/result' ? { ...entry.event.data, message: { ...entry.event.data.message, source: { kind: 'tool', callId: 'second-image' }, toolCallId: 'second-image' } }
       : { ...entry.event.data, turn: 2 },
   } }))
   for (const replay of [false, true]) {
@@ -51,7 +52,7 @@ test('shared image definition never mixes independent sessions with identical ca
   for (const entry of events) {
     first.append(entry); first.flush()
     const copy = structuredClone(entry)
-    if (copy.event.type === 'tool/result') copy.event.data.message.content[0].content[0].attachment = other
+    if (copy.event.type === 'tool/result') copy.event.data.message.content[0].attachment = other
     second.append(copy); second.flush()
   }
   assert.deepEqual(chatNodes(first)[0].data.blocks[0].content[0].attachment, attachment)
@@ -84,7 +85,7 @@ for (const version of ['0.1.5', '0.2.0']) test(`DSH ${version} keeps a generated
   }
 })
 
-test('DSH 0.2 real Chat snapshot and grouping render raw native image events without fabricated turn fields', () => {
+test('DSH 0.2 real Chat snapshot and grouping render flat native ToolMessages without fabricated turn fields', () => {
   for (const replay of [false, true]) {
     const runtime = assembler('0.2.0', true)
     runtime.activateTarget('chat')
@@ -96,6 +97,24 @@ test('DSH 0.2 real Chat snapshot and grouping render raw native image events wit
     const node = snapshot.nodes.get(snapshot.order[0])
     assert.deepEqual(node.data.blocks[0].content[0].attachment, attachment)
     assert.equal(node.data.turn, 1, 'use the host Location to recover the owning turn')
+  }
+})
+
+test('a sanitized actual DSH stored native result appears in main chat without opening tool details', () => {
+  // Preserve the recorded ToolMessage structure. Only identifiers, text and the
+  // attachment digest/name were replaced; no pi-ai tool-result wrapper exists.
+  for (const replay of [false, true]) {
+    const runtime = assembler('0.2.0', true)
+    runtime.activateTarget('chat')
+    const record = { type: 'event', event: structuredClone(savedResult) }
+    if (replay) runtime.replaceWindow([record], false)
+    else runtime.append(record)
+    const nodes = chatNodes(runtime)
+    assert.equal(nodes.length, 1, 'the successful saved result must create a main-chat gallery')
+    assert.equal(nodes[0].location.kind, 'session')
+    assert.equal(nodes[0].data.blocks[0].toolCallId, 'image-call')
+    assert.deepEqual(nodes[0].data.blocks[0].content, savedResult.data.message.content)
+    assert.equal(nodes[0].data.blocks[0].meta.requestedQuality, 'max')
   }
 })
 

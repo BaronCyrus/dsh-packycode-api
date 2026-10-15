@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import { zh } from '../src/client-copy.js'
 import { IMAGE_CHAT_KIND } from '../src/image-conversation.js'
 import { assembler } from './image-conversation-fixture.mjs'
+import savedResult from './fixtures/image-result-event.json' with { type: 'json' }
 
 /** Run the built client with deterministic Hook lifetimes and the public image-loader seam. */
 function clientFixture() {
@@ -62,7 +63,7 @@ function clientFixture() {
   return { slots, reads, opened, render, preview, definition: () => definition }
 }
 
-test('built main-chat gallery uses the same session image loader/viewer as tool details, including old PTC history', async () => {
+for (const protocol of ['native', 'ptc', 'cli']) test(`built ${protocol} main-chat gallery uses the same session image loader/viewer as tool details`, async () => {
   const fx = clientFixture()
   assert.equal(fx.definition().kind, IMAGE_CHAT_KIND)
   const gallery = fx.slots.get(`conversation.chat.node:${IMAGE_CHAT_KIND}`)
@@ -70,10 +71,17 @@ test('built main-chat gallery uses the same session image loader/viewer as tool 
   assert.ok(gallery && details)
   const attachment = { attachmentId: `sha256:${'a'.repeat(64)}`, bytes: 100, width: 1152, height: 2048, mediaType: 'image/png', name: 'saved-output.png' }
   const end = { type: 'turn/end', seq: 10, data: { turn: 1 } }
+  const image = { type: 'image', attachment }
+  const output = protocol === 'native' ? { ...savedResult, seq: 4,
+    data: { ...savedResult.data, message: { ...savedResult.data.message, content: [image] } } }
+    : protocol === 'ptc' ? { type: 'tool/ptc-dispatch', seq: 4, data: { name: 'packycode_image_generate', subCallId: 'nested-image', isError: false, content: [image] } }
+      : { type: 'assistant/message', seq: 4, data: { turn: 1, step: 1, message: {
+        source: { kind: 'model', provider: 'packycode', model: 'claude-opus-5-5' }, content: [image],
+      } } }
   const entries = [
     { type: 'turn/start', seq: 1, data: { turn: 1 } },
     { type: 'step/start', seq: 2, data: { turn: 1, step: 1 } },
-    { type: 'tool/ptc-dispatch', seq: 4, data: { name: 'packycode_image_generate', subCallId: 'nested-image', isError: false, content: [{ type: 'image', attachment }] } },
+    output,
     { ...end, data: { turn: 1, reason: { kind: 'stop' } } },
   ]
   const runtime = assembler('0.2.0', true, fx.definition())

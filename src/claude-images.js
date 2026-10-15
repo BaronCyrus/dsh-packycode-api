@@ -19,7 +19,7 @@ export const MCP_IMAGE_SCHEMA = Object.freeze({
     size: { type: 'string', maxLength: 9, description: 'auto or widthxheight. Edges must be multiples of 16, at most 3840, ratio at most 3:1, pixels 655360..8294400.' },
     background: { type: 'string', enum: ['auto', 'opaque', 'transparent'] },
     referenceIds: { type: 'array', maxItems: 16, uniqueItems: true, items: { type: 'string', pattern: '^image_[1-9][0-9]*$' }, description: 'For edits use image handles from the session image catalog or a previous successful result in this run. Omit or [] for generation. Never invent handles or substitute files/URLs.' },
-    maskId: { type: 'string', pattern: '^image_[1-9][0-9]*$', description: 'Optional session image handle for a PNG mask, matching the first reference. Omit when there is no mask.' },
+    maskId: { oneOf: [{ type: 'null' }, { type: 'string', pattern: '^image_[1-9][0-9]*$' }], description: 'Omit or use null for ordinary reference-image editing, including sketch refinement. Only use an actual PNG mask provided for masking, matching the first reference; never reuse an ordinary reference as a mask.' },
   },
   required: ['prompt'],
 })
@@ -62,13 +62,14 @@ export function createClaudeImageService({ sessionId, messages, client, attachme
     if (!Array.isArray(ids) || ids.length > 16 || new Set(ids).size !== ids.length || ids.some(id => !references.has(id))) invalid('Use 1-16 distinct image handles from this run’s session catalog for an edit.')
     if (value.operation === 'edit' && ids.length === 0) invalid('Image edits require referenceIds; an edit will not be replaced with generation.')
     if (value.operation === 'generate' && ids.length > 0) invalid('Image generation cannot include referenceIds; use edit.')
-    if (value.maskId !== undefined && (!references.has(value.maskId) || ids.length === 0)) invalid('A mask requires references and a valid session image handle.')
+    const maskId = value.maskId ?? undefined
+    if (maskId !== undefined && (!references.has(maskId) || ids.length === 0)) invalid('A mask requires references and a valid session image handle.')
     const preference = getPreference()
     const model = value.model === undefined || value.model === 'settings' ? preference.imageModel : value.model
     const quality = value.quality === undefined || value.quality === 'settings' ? preference.imageQuality : value.quality
     try { validateImageOptions({ ...value, model, quality }) }
     catch (error) { invalid(error.message) }
-    const { referenceIds: _ids, maskId, ...args } = value
+    const { referenceIds: _ids, maskId: _maskId, ...args } = value
     return { ...args, model, quality, referenceImages: ids.map(id => references.get(id)), ...(maskId === undefined ? {} : { maskImage: references.get(maskId) }) }
   }
 

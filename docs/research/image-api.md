@@ -32,6 +32,8 @@ Multipart 使用 `image`（单图）或重复的 `image[]`（多图），最多 
 
 官方资料存在一个明确差异：`CreateImageEditRequest.mask` 要求 **小于 4 MB**；指南的 Mask requirements 则写图与 mask 格式、尺寸一致且小于 50 MB。实现建议采用更严格的 PNG mask <4 MB，并在需要 mask 时使用相同尺寸的 PNG 输入，直到实际网关验证更宽限制；不要把指南的 50 MB 直接当作 mask 已确认上限。[OpenAPI mask schema](https://github.com/openai/openai-openapi/blob/main/openapi.json)、[指南 Mask requirements](https://developers.openai.com/api/docs/guides/image-generation#mask-requirements)
 
+2026-10-15 再核对：[官方编辑 API 参考](https://developers.openai.com/api/reference/python/resources/images/methods/edit)仍将 `mask` 列为可选 PNG、与输入同尺寸且 <4 MB。用户随后报告“完善草图”触发同样的 mask 校验，并确认仅上传原图，没有单独遮罩。当前本机没有该报错会话的调用参数；离线回放可用“JPEG/WebP 参考图又被模型重复填到 mask 字段”复现完全相同的报错，不能据此声称已取得同事设备的原始参数。工具现支持 `maskImage: null` / CLI `maskId: null` 明确表示无遮罩，并只兼容宿主已验证的同一个非 PNG 参考附件被重复填入 mask 的情况。真实 PNG mask 和不同附件的 mask 保留原有检查；没有放宽 4 MB 限制，没有把编辑换成生图，也没有新增付费重试。
+
 JSON 编辑的字段为 `images: [{ image_url: "…" }]` 或 `images: [{ file_id: "…" }]`，每项二选一；`image_url` 可为完整 URL 或 data URL。JSON 的可选 mask 同样为图片引用对象。这是官方额外能力，不能据此假定 PackyCode 也支持它。[官方 OpenAPI：EditImageBodyJsonParam / ImageRefParam](https://github.com/openai/openai-openapi/blob/main/openapi.json)
 
 `gpt-image-2` 必须省略 `input_fidelity`，其图片输入始终按高保真处理。当前通用 schema 只明确为 GPT Image 1 / 1.5 声明可调 high/low，没有明确说明 2.5 两款可调；本次集成建议三款均省略此字段，不推断 2.5 的未记载行为。[官方高保真说明](https://developers.openai.com/api/docs/guides/image-generation#image-input-fidelity)、[官方 OpenAPI：InputFidelity](https://github.com/openai/openai-openapi/blob/main/openapi.json)

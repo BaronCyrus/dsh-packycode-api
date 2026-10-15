@@ -5,8 +5,13 @@ const hasImage = content => Array.isArray(content) && content.some(part => part.
 
 function successfulImages(event) {
   if (event?.type === 'tool/result' && event.data?.meta?.kind === 'packycode-image') {
-    return (event.data.message?.content ?? []).filter(block => block.type === 'tool-result' && !block.isError
-      && hasImage(block.content)).map(block => ({ ...block, meta: event.data.meta }))
+    const message = event.data.message
+    const toolCallId = message?.source?.callId
+    if (message?.source?.kind !== 'tool' || typeof toolCallId !== 'string' || toolCallId === ''
+      || message.isError === true || !hasImage(message.content)) return []
+    // DSH persists a ToolMessage with image/text parts directly in content.
+    // The tool-result wrapper belongs to the view/SDK, not the stored event.
+    return [{ type: 'tool-result', toolCallId, content: message.content, isError: false, meta: event.data.meta }]
   }
   // PTC logs the settled child output under its own event, without the root
   // tool's presentationMeta. The tool-detail panel already reads this record.

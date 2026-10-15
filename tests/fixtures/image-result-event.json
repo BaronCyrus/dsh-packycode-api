@@ -1,0 +1,36 @@
+{
+  "type": "tool/result",
+  "seq": 20,
+  "data": {
+    "turn": 1,
+    "step": 1,
+    "message": {
+      "role": "tool",
+      "source": { "kind": "tool", "callId": "image-call" },
+      "toolCallId": "image-call",
+      "content": [
+        { "type": "text", "text": "Generated image." },
+        {
+          "type": "image",
+          "attachment": {
+            "attachmentId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "mediaType": "image/png",
+            "bytes": 2477762,
+            "width": 1024,
+            "height": 1536,
+            "name": "fixture-output.png"
+          }
+        }
+      ],
+      "isError": false,
+      "id": "fixture-tool-message"
+    },
+    "meta": {
+      "kind": "packycode-image",
+      "requestedModel": "gpt-image-2.5-sunburst",
+      "requestedQuality": "max",
+      "width": 1024,
+      "height": 1536
+    }
+  }
+}

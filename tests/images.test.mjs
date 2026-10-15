@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import { IMAGE_MODELS, validateImageOptions } from '../src/image-models.js'
 import { createPackyCodeImageClient, createPackyCodeImageTool, decodeImagePng, IMAGE_TOOL_NAME } from '../src/images.js'
+import { JPEG, WEBP } from './fixtures/images.mjs'
 
 const KEY = 'sk-fixture-image-only-key'
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jpj8AAAAASUVORK5CYII=', 'base64')
@@ -223,6 +224,62 @@ test('DSH edits resolve trusted session references rather than model-supplied me
   await assert.rejects(() => tool.execute({ prompt: args.prompt, referenceImages: [{ ...REF, attachmentId: '/tmp/reference.png' }] }, exec), /complete attachment reference/u)
   await assert.rejects(() => tool.execute({ prompt: args.prompt, operation: 'edit', referenceImages: [] }, exec), /1-16/u)
   assert.equal(calls.length, count)
+})
+
+for (const [mediaType, bytes] of [['image/jpeg', JPEG], ['image/webp', WEBP]]) test(`a reference-only ${mediaType} edit tolerates a model-filled copy of the same non-PNG image in the optional mask field`, async t => {
+  const reference = { ...REF, mediaType, bytes: bytes.length }
+  let reads = 0
+  const { tool, exec, calls } = await toolFixture(t, {
+    getSessionMessages: async () => [{ role: 'user', content: [{ type: 'image', attachment: reference }] }],
+    attachments: {
+      imageLimits: { maxMessageImageBytes: 20 * 1024 * 1024 },
+      readImage: async ref => { reads++; return { data: bytes, ref } },
+      saveImage: async () => REF,
+    },
+  })
+  // The user supplied only the reference, no separate mask. Model metadata
+  // cannot turn that same stored JPEG/WebP into a PNG mask.
+  await tool.execute({ prompt: 'Refine the sketch, preserving its character and pose.', operation: 'edit',
+    referenceImages: [reference], maskImage: { ...reference, mediaType: 'image/png' },
+  }, exec)
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].url, /\/images\/edits$/u)
+  assert.equal(calls[0].init.body.get('mask'), null)
+  assert.equal(calls[0].init.body.get('image[]').type, mediaType)
+  assert.deepEqual(Buffer.from(await calls[0].init.body.get('image[]').arrayBuffer()), bytes)
+  assert.equal(reads, 1, 'a redundant non-mask reference does not need a second attachment read')
+})
+
+test('the native tool accepts an explicit null mask for both reference-only edits and new images', async t => {
+  const { tool, exec, calls } = await toolFixture(t)
+  await tool.execute({ prompt: args.prompt, referenceImages: [REF], maskImage: null }, exec)
+  await tool.execute({ prompt: args.prompt, referenceImages: [], maskImage: null }, exec)
+  assert.equal(calls.length, 2)
+  assert.match(calls[0].url, /\/images\/edits$/u)
+  assert.equal(calls[0].init.body.get('mask'), null)
+  assert.match(calls[1].url, /\/images\/generations$/u)
+})
+
+test('mask compatibility preserves PNG masks and never discards a distinct invalid mask', async t => {
+  const valid = await toolFixture(t)
+  await valid.tool.execute({ prompt: args.prompt, referenceImages: [REF], maskImage: REF }, valid.exec)
+  assert.deepEqual(Buffer.from(await valid.calls[0].init.body.get('mask').arrayBuffer()), PNG)
+
+  for (const mediaType of ['image/jpeg', 'image/webp', 'image/png']) {
+    const maskRef = { ...REF, attachmentId: `sha256:${'b'.repeat(64)}`, mediaType }
+    const maskData = mediaType === 'image/png' ? Buffer.concat([PNG, Buffer.alloc(4 * 1024 * 1024)]) : mediaType === 'image/webp' ? WEBP : JPEG
+    const fx = await toolFixture(t, {
+      getSessionMessages: async () => [{ content: [REF, maskRef].map(attachment => ({ type: 'image', attachment })) }],
+      attachments: {
+        imageLimits: { maxMessageImageBytes: 20 * 1024 * 1024 },
+        readImage: async ref => ({ data: ref.attachmentId === REF.attachmentId ? PNG : maskData, ref }),
+        saveImage: async () => REF,
+      },
+    })
+    await assert.rejects(() => fx.tool.execute({ prompt: args.prompt, referenceImages: [REF], maskImage: maskRef }, fx.exec),
+      mediaType === 'image/png' ? /PNG smaller than 4 MB/u : /separate PNG mask.*omit maskImage/u)
+    assert.equal(fx.calls.length, 0, 'invalid distinct masks never become unmasked edits or generations')
+  }
 })
 
 test('disabled images and sessionless execution cannot make paid requests', async t => {
