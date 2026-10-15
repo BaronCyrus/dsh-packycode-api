@@ -49,7 +49,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.7`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.8`。
 
 首次安装后**无需重启 DSH**，可直接打开**设置 → PackyCode** 添加 Key。更新已加载的旧版时，按「插件版本」卡片的重启提示操作。
 
@@ -68,9 +68,9 @@ dsh-packycode-api
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.7`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.8`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
-本地开发可以用绝对路径：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。
+本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
 没有浏览器的 profile 也能走模型路由，只是看不到设置页和输入框额度。
 
@@ -183,9 +183,21 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 
 **更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装 `dsh-packycode-api`。
 
+**从本地路径安装切回官方源时，必须先卸载。** 「更新」是 `pnpm add`，它只重写包目录里的文件，不会删除更早一次本地路径安装留在包目录内的 `node_modules`；那份旧依赖会继续挡住 DSH 自带的包，插件行加载失败且看不出原因。「卸载」执行的是 `pnpm remove`，会删掉整个包目录，重装才是干净的。用 `node scripts/install-check.mjs` 可以确认当前 profile 是否处于这个状态。
+
 **卸载：** 用过 PackyCode 网页搜索的话，先在 **设置 → PackyCode → 网页搜索** 切回「不接管」，再到**插件**页卸载本插件，然后重启桌面应用。否则 `cordis.patch.yml` 里会留下指向已卸载后端的 web 配置，`web_search` 会报 `configured web provider "packycode-api-auto" is not registered`；这时手动删掉带 `dsh-packycode-api: web search provider` 标记的那一段即可。卸载不会删除其它插件、整个 profile，也不会撤销 PackyCode 控制台里的令牌。
 
 ## 常见问题
+
+**装好了，但设置里完全没有 PackyCode 这一项？** 说明插件行在启动时加载失败了 —— DSH 只在宿主日志里记录这件事，设置页不会显示原因。先用仓库里的 `node scripts/install-check.mjs` 查一次（只读，不发网络请求）；手动检查则是看这个目录是否存在：
+
+```sh
+ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
+```
+
+有输出就是残留：从 npm 安装的包不会自带 `node_modules`，这一份通常来自更早一次「本地路径」安装（`file:` 或直接写路径，而不是 `link:`）。它位于 profile 目录内部，而 DSH 解析插件导入时优先使用 profile 内的副本，所以插件拿到的仍是那份旧依赖 —— 例如 `@deepseek-ai/schemastery` 3.18.2 没有 `Schema.volatile()`，模块在导入阶段就抛错。导入失败时 Loader 不会为这一行创建 fiber，客户端 bundle 也不会被组合，于是模型路由、RPC 通道和设置页全都不会出现。
+
+修复：到**插件**页**卸载**本插件，再重新**安装** `dsh-packycode-api`，然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
 
 **某个模型不可用，但 Key 是有效的？** 看「账户与 Key」里这个 Key 的分组和 ✓ / ✕：分组不覆盖这个模型时，换一个分组合适的 Key，或在 PackyCode 控制台给 Key 加上对应分组。存了分组合适的 Key 时，插件会自动用它跑这个模型。分组拒绝不会停用 Key。
 
@@ -229,6 +241,8 @@ pnpm run check
 Claude CLI 的 MCP 接口验证用 `node scripts/cli-search-check.mjs`：运行真实 CLI，普通 Claude 响应和搜索数据默认由本地测试服务模拟，不消费额度；会检查三种权限模式、原生搜索禁用和临时资源清理。加 `--live --backend deepseek` 或 `--live --backend gpt` 会让只读模式的那一次搜索走真实后端（其它两种模式仍模拟）。这不等于验证了真实 Claude 上游对话或运行中的 DSH 集成。
 
 计划模式另用 `node scripts/cli-plan-check.mjs` 验证：真实 CLI 对接本地模拟网关，检查 stdio 计划提交、并发计划归属、本轮文件回退、旧计划隔离、实际拒绝次数上限和清理；不读取真实凭据、不消费额度、不启动 DSH。
+
+排查「装了却看不到插件」用 `node scripts/install-check.mjs`：它只读当前 profile，列出被包内残留 `node_modules` 挡住的宿主包（含版本）和对应的修复步骤，发现问题时以退出码 1 结束；`--profile <name>`、`--home <dir>` 可指定其它 profile，`--json` 输出结构化结果。
 
 使用 Agent 修改或发布时，先读 [AGENTS.md](AGENTS.md)。发布由推送 `v*` 标签触发 [Publish workflow](.github/workflows/publish.yml)，不要在本机执行 `npm publish`。
 

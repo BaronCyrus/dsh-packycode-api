@@ -15,10 +15,27 @@
 
 /**
  * Mark a preference editable without restarting the plugin. DSH 0.2 stores
- * plugin preferences as volatile Config fields and writes only those. The
- * peer dependency requires the schema version that implements `volatile()`.
+ * plugin preferences as volatile Config fields and writes only those, so the
+ * schema version that implements `volatile()` is a peer requirement.
+ *
+ * Name the cause when it is missing instead of letting a bare
+ * `schema.volatile is not a function` reach the host log: the Loader creates
+ * no fiber for a plugin whose module throws while it is imported, so DSH shows
+ * nothing at all — no settings section, no model route, no RPC channel — and
+ * the only explanation is that one log line.
  */
-export const live = schema => schema.volatile()
+export const live = schema => {
+  if (typeof schema?.volatile !== 'function') {
+    throw new Error(
+      'PackyCode needs @deepseek-ai/schemastery ^3.18.4, which implements Schema.volatile(); '
+      + 'the copy resolved for this plugin is older. A plugin installed from a registry has no node_modules of its own, '
+      + 'so this usually means a stale dependency tree inside the installed package directory '
+      + '(for example <profile>/node_modules/dsh-packycode-api/node_modules, left by an earlier local-path install) '
+      + 'is shadowing the DSH installation. Remove that directory, or uninstall the plugin and install it again, then restart DSH.',
+    )
+  }
+  return schema.volatile()
+}
 
 /** Read a Config field that may arrive as a volatile reference. */
 export const fieldValue = value => (value !== null && typeof value === 'object' && typeof value.get === 'function' ? value.get() : value)
