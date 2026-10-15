@@ -27,19 +27,27 @@ export const imageConversationNode = {
   kind: IMAGE_CHAT_KIND,
   target: 'chat',
   match(event) {
-    return event.type === 'turn/end' || successfulImages(event).length > 0
-      ? { id: String(event.data.turn), role: 'update' } : null
+    const images = successfulImages(event)
+    if (images.length === 0) return null
+    // Tool output records do not carry data.turn. Keep each call's evidence
+    // together; the engine supplies its Turn/Step Location at materialization.
+    const id = event.type === 'assistant/message' ? `cli:${event.seq}`
+      : event.data?.subCallId ?? event.data?.message?.source?.callId ?? images[0].toolCallId ?? `event:${event.seq}`
+    return { id: String(id), role: 'update' }
   },
-  start: () => undefined,
-  update: context => context.state,
+  start: () => ({}),
+  update: context => context.state ?? {},
   buildViewNode(context) {
-    const finished = context.matches.find(match => match.event.type === 'turn/end')
-    if (finished === undefined) return null
     const results = context.matches.filter(match => successfulImages(match.event).length > 0)
     if (results.length === 0) return null
+    const location = results.find(match => match.location?.kind === 'turn' || match.location?.kind === 'step')?.location
+    const turn = location?.turn
+    // Show paid successes immediately. History can acquire its opening/closing
+    // boundaries later; refining Location must never withdraw an existing card.
+    const finished = turn?.end
     const blocks = [...new Map(results.flatMap(({ event }) => successfulImages(event)
       .map(block => [block.toolCallId, { ...block, kind: 'tool-result' }]))).values()]
-    const answerSeq = finished.location.turn?.steps?.at(-1)?.data.get('assistant-step')?.finalNode?.seq
+    const answerSeq = turn?.steps?.at(-1)?.data.get('assistant-step')?.finalNode?.seq
     const lastImageSeq = Math.max(...results.map(match => match.event.seq))
     return {
       key: context.key, id: context.id, kind: IMAGE_CHAT_KIND, target: 'chat',
@@ -47,8 +55,8 @@ export const imageConversationNode = {
       // anchored after the answer. This Session-level gallery stays in the
       // main flow; its durable evidence/turn and numeric placement are retained.
       location: { kind: 'session' }, visibility: 'visible',
-      anchorSeq: answerSeq > lastImageSeq ? answerSeq + 0.025 : finished.event.seq - 0.025,
-      data: { turn: finished.event.data.turn, blocks },
+      anchorSeq: answerSeq > lastImageSeq ? answerSeq + 0.025 : finished === undefined ? lastImageSeq + 0.025 : finished.seq - 0.025,
+      data: { ...(turn === undefined ? {} : { turn: turn.turn }), blocks },
     }
   },
 }

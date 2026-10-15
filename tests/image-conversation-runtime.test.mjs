@@ -1,66 +1,74 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import test from 'node:test'
-import vm from 'node:vm'
 import { Context } from '@deepseek-ai/cordis'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 
-import { imageConversationNode } from '../src/image-conversation.js'
-
-const host020 = createRequire(import.meta.resolve('packycode-host-v020-fixture'))
-
-/** Use DSH's shipped assembler and location index, with only its snapshot sink replaced. */
-function assembler(version = '0.1.5') {
-  const bundle = readFileSync(version === '0.2.0' ? host020.resolve('@deepseek-ai/dsh-client-ui-conversation/client')
-    : new URL('../node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js', import.meta.url), 'utf8')
-  const start = bundle.indexOf('//#region lib/types/client/contract/conversation.js')
-  const end = bundle.indexOf('//#region lib/types/client/conversation/definition-registry.js')
-  assert.ok(start >= 0 && end > start, 'pinned DSH conversation runtime is available')
-  const Runtime = vm.runInNewContext(`${bundle.slice(start, end)}\nConversationNodeAssembler`, {
-    _deepseek_ai_dsh_client_store: { notifySubscribers: listeners => { for (const listener of listeners) listener() } },
-  })
-  return new Runtime({ entries: () => [imageConversationNode], fallbackEntry: () => undefined }, {
-    entries: () => [{ target: 'chat', create() {
-      const nodes = new Map()
-      const snapshot = () => [...nodes.values()].filter(node => node.visibility === 'visible')
-      return { empty: [], replace(input) { nodes.clear(); for (const node of input.nodes) nodes.set(node.key, node); return snapshot() },
-        apply(input) { for (const node of input.upserts) nodes.set(node.key, node); return snapshot() } }
-    } }],
-  })
-}
-
-/** Exercise the real 0.2 chat grouping policy; custom Turn nodes default to process groups. */
-function chatRoots(nodes) {
-  const bundle = readFileSync(host020.resolve('@deepseek-ai/dsh-client-ui-chat/client'), 'utf8')
-  const start = bundle.indexOf('//#region lib/types/client/conversation-nodes/process-activity.js')
-  const end = bundle.indexOf('//#region lib/types/client/conversation-nodes/register.js')
-  assert.ok(start >= 0 && end > start)
-  const State = vm.runInNewContext(`${bundle.slice(start, end)}\nProcessState`, {
-    brandString: value => value,
-    isVisibleChatNode: node => node.visibility === 'visible',
-  })
-  const state = new State()
-  const order = nodes.map(node => node.key)
-  const byKey = new Map(nodes.map(node => [node.key, node]))
-  const turnOf = node => ['turn', 'step'].includes(node.location.kind) ? node.location.turn.turn : undefined
-  state.accept({ kind: 'replace', order, timeline: { turns: new Map([[1, { status: 'closed' }]]) },
-    readNode: key => byKey.get(key), readTurn: turn => order.filter(key => turnOf(byKey.get(key)) === turn),
-    readPosition: key => ({ turn: turnOf(byKey.get(key)), previous: order[order.indexOf(key) - 1], next: order[order.indexOf(key) + 1] }),
-  })
-  return JSON.parse(JSON.stringify(state.output().entries))
-}
+import { assembler, chatRoots } from './image-conversation-fixture.mjs'
 
 const attachment = { attachmentId: `sha256:${'a'.repeat(64)}`, mediaType: 'image/png', bytes: 100, width: 1152, height: 2048 }
 const event = (seq, type, data) => ({ type: 'event', event: { seq, type, data } })
 const events = [
   event(1, 'turn/start', { turn: 1 }),
   event(2, 'step/start', { turn: 1, step: 1 }),
-  event(3, 'tool/result', { turn: 1, step: 1, meta: { kind: 'packycode-image' }, message: { content: [{ type: 'tool-result', toolCallId: 'generated', content: [{ type: 'image', attachment }] }] } }),
+  event(3, 'tool/result', { meta: { kind: 'packycode-image' }, message: { content: [{ type: 'tool-result', toolCallId: 'generated', content: [{ type: 'image', attachment }] }] } }),
   event(4, 'assistant/message', { turn: 1, step: 1, message: { source: { kind: 'model', provider: 'packycode', model: 'gpt-6-astra' }, content: [{ type: 'text', text: 'Generated. ![Preview](a-host-local-path.png)' }] } }),
   event(5, 'step/end', { turn: 1, step: 1 }),
-  event(6, 'turn/end', { turn: 1 }),
+  event(6, 'turn/end', { turn: 1, reason: { kind: 'stop' } }),
 ]
+
+const chatNodes = runtime => {
+  runtime.flush()
+  const snapshot = runtime.snapshot('chat')
+  return snapshot.order.map(key => snapshot.nodes.get(key))
+}
+
+test('raw image records stay with their own turns across live updates, history reload and older-page prepend', () => {
+  const second = events.map(entry => ({ type: 'event', event: { ...entry.event, seq: entry.event.seq + 10,
+    data: entry.event.type === 'tool/result' ? { ...entry.event.data, message: { content: [{ ...entry.event.data.message.content[0], toolCallId: 'second-image' }] } }
+      : { ...entry.event.data, turn: 2 },
+  } }))
+  for (const replay of [false, true]) {
+    const runtime = assembler('0.2.0', true)
+    runtime.activateTarget('chat')
+    if (replay) runtime.replaceWindow([...events, ...second], false)
+    else for (const entry of [...events, ...second]) { runtime.append(entry); runtime.flush() }
+    assert.deepEqual([...chatNodes(runtime)].map(node => node.data.turn), [1, 2])
+    assert.deepEqual([...chatNodes(runtime)].map(node => node.data.blocks[0].toolCallId), ['generated', 'second-image'])
+  }
+  const paged = assembler('0.2.0', true)
+  paged.activateTarget('chat')
+  paged.replaceWindow(second, true)
+  const key = chatNodes(paged)[0].key
+  paged.prepend(events, false)
+  assert.equal(chatNodes(paged).length, 2)
+  assert.equal(chatNodes(paged)[1].key, key)
+})
+
+test('shared image definition never mixes independent sessions with identical call IDs', () => {
+  const first = assembler('0.2.0', true), second = assembler('0.2.0', true)
+  first.activateTarget('chat'); second.activateTarget('chat')
+  const other = { ...attachment, attachmentId: `sha256:${'b'.repeat(64)}` }
+  for (const entry of events) {
+    first.append(entry); first.flush()
+    const copy = structuredClone(entry)
+    if (copy.event.type === 'tool/result') copy.event.data.message.content[0].content[0].attachment = other
+    second.append(copy); second.flush()
+  }
+  assert.deepEqual(chatNodes(first)[0].data.blocks[0].content[0].attachment, attachment)
+  assert.deepEqual(chatNodes(second)[0].data.blocks[0].content[0].attachment, other)
+})
+
+test('history whose image arrives before its opening boundary can refine Location without losing the card', () => {
+  const runtime = assembler('0.2.0', true)
+  runtime.activateTarget('chat')
+  runtime.replaceWindow([events[2]], true)
+  assert.equal(chatNodes(runtime).length, 1)
+  runtime.prepend(events.slice(0, 2), false)
+  assert.equal(chatNodes(runtime).length, 1)
+  for (const entry of events.slice(3)) runtime.append(entry)
+  assert.equal(chatNodes(runtime).length, 1)
+  assert.equal(chatNodes(runtime)[0].data.turn, 1)
+})
 
 for (const version of ['0.1.5', '0.2.0']) test(`DSH ${version} keeps a generated image in main chat after tool details are collapsed and history is reopened`, () => {
   for (const replay of [false, true]) {
@@ -76,11 +84,26 @@ for (const version of ['0.1.5', '0.2.0']) test(`DSH ${version} keeps a generated
   }
 })
 
+test('DSH 0.2 real Chat snapshot and grouping render raw native image events without fabricated turn fields', () => {
+  for (const replay of [false, true]) {
+    const runtime = assembler('0.2.0', true)
+    runtime.activateTarget('chat')
+    if (replay) runtime.replaceWindow(events, false)
+    else for (const entry of events) { runtime.append(entry); runtime.flush() }
+    runtime.flush()
+    const snapshot = runtime.snapshot('chat')
+    assert.equal(snapshot.order.length, 1, 'the real Chat builder must publish a main-chat image card')
+    const node = snapshot.nodes.get(snapshot.order[0])
+    assert.deepEqual(node.data.blocks[0].content[0].attachment, attachment)
+    assert.equal(node.data.turn, 1, 'use the host Location to recover the owning turn')
+  }
+})
+
 test('an image rendered by a nested native tool also appears in main chat after PTC tool details are closed', async () => {
   const ctx = new Context()
   const log = events.slice(0, 2)
   const session = { id: 'image-repro', append(type, data) {
-    const entry = event(log.length + 1, type, { turn: 1, step: 1, ...data })
+    const entry = event(log.length + 1, type, data)
     log.push(entry)
     return entry.event
   } }

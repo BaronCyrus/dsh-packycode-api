@@ -5,20 +5,23 @@ import { imageConversationNode, IMAGE_CHAT_KIND } from '../src/image-conversatio
 
 const image = { type: 'image', attachment: { attachmentId: `sha256:${'a'.repeat(64)}` } }
 const block = { type: 'tool-result', toolCallId: 'image-call', content: [image] }
-const result = (extra = {}) => ({ type: 'tool/result', seq: 4, data: { turn: 1, meta: { kind: 'packycode-image' }, message: { content: [block] } }, ...extra })
+const result = (extra = {}) => ({ type: 'tool/result', seq: 4, data: { meta: { kind: 'packycode-image' }, message: { content: [block] } }, ...extra })
 const end = { type: 'turn/end', seq: 10, data: { turn: 1 } }
-const match = event => ({ event, location: { turn: { steps: [{ data: new Map([['assistant-step', { finalNode: { seq: 8 } }]]) }] } } })
+const match = event => ({ event, location: { kind: 'turn', turn: { turn: 1, end, steps: [{ data: new Map([['assistant-step', { finalNode: { seq: 8 } }]]) }] } } })
 const context = matches => ({ key: 'image-output', id: '1', matches: matches.map(match) })
 
 test('image chat projection recognizes only successful image results from this plugin', () => {
-  assert.deepEqual(imageConversationNode.match(result()), { id: '1', role: 'update' })
+  assert.deepEqual(imageConversationNode.match(result()), { id: 'image-call', role: 'update' })
+  assert.equal(imageConversationNode.match(end), null, 'boundaries update the engine Location rather than form another Context')
   assert.equal(imageConversationNode.match(result({ data: { turn: 1, meta: { kind: 'codex-subscription-image' }, message: { content: [block] } } })), null)
   assert.equal(imageConversationNode.match(result({ data: { turn: 1, meta: { kind: 'packycode-image' }, message: { content: [{ ...block, isError: true }] } } })), null)
   assert.equal(imageConversationNode.match({ type: 'assistant/message', data: {} }), null)
 })
 
 test('images appear after the final answer and remain projections of durable tool output', () => {
-  assert.equal(imageConversationNode.buildViewNode(context([result()])), null)
+  const pending = context([result()])
+  pending.matches[0].location.turn = { turn: 1, steps: [], status: 'open' }
+  assert.equal(imageConversationNode.buildViewNode(pending).anchorSeq, 4.025, 'a completed image is visible even while the turn is still open')
   assert.equal(imageConversationNode.buildViewNode(context([end])), null)
   const source = result()
   const before = structuredClone(source)
@@ -35,8 +38,8 @@ test('images appear after the final answer and remain projections of durable too
 })
 
 test('PTC projects only successful image output from this plugin and deduplicates the same call', () => {
-  const dispatch = { type: 'tool/ptc-dispatch', seq: 4, data: { turn: 1, name: 'packycode_image_generate', subCallId: 'image-call', isError: false, content: [image] } }
-  assert.deepEqual(imageConversationNode.match(dispatch), { id: '1', role: 'update' })
+  const dispatch = { type: 'tool/ptc-dispatch', seq: 4, data: { name: 'packycode_image_generate', subCallId: 'image-call', isError: false, content: [image] } }
+  assert.deepEqual(imageConversationNode.match(dispatch), { id: 'image-call', role: 'update' })
   for (const patch of [{ name: 'other_image_tool' }, { name: 'web_search' }, { isError: true }, { subCallId: undefined }, { content: [{ type: 'text', text: 'not an image' }] }]) {
     assert.equal(imageConversationNode.match({ ...dispatch, data: { ...dispatch.data, ...patch } }), null)
   }
@@ -57,7 +60,7 @@ test('CLI assistant images survive chat replay as view projections of the owned 
   const event = { type: 'assistant/message', seq: 7, data: { turn: 1, message: {
     source: { kind: 'model', provider: 'packycode', model: 'claude-opus-5-5' }, content: [{ type: 'text', text: 'Done' }, image],
   } } }
-  assert.deepEqual(imageConversationNode.match(event), { id: '1', role: 'update' })
+  assert.deepEqual(imageConversationNode.match(event), { id: 'cli:7', role: 'update' })
   const view = imageConversationNode.buildViewNode(context([event, end]))
   assert.deepEqual(view.data.blocks[0].content, [image])
   assert.equal(view.data.blocks[0].kind, 'tool-result')

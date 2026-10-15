@@ -4,7 +4,8 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 import { zh } from '../src/client-copy.js'
-import { imageConversationNode, IMAGE_CHAT_KIND } from '../src/image-conversation.js'
+import { IMAGE_CHAT_KIND } from '../src/image-conversation.js'
+import { assembler } from './image-conversation-fixture.mjs'
 
 /** Run the built client with deterministic Hook lifetimes and the public image-loader seam. */
 function clientFixture() {
@@ -70,9 +71,18 @@ test('built main-chat gallery uses the same session image loader/viewer as tool 
   const attachment = { attachmentId: `sha256:${'a'.repeat(64)}`, bytes: 100, width: 1152, height: 2048, mediaType: 'image/png', name: 'saved-output.png' }
   const end = { type: 'turn/end', seq: 10, data: { turn: 1 } }
   const entries = [
-    { type: 'tool/ptc-dispatch', seq: 4, data: { turn: 1, name: 'packycode_image_generate', subCallId: 'nested-image', isError: false, content: [{ type: 'image', attachment }] } }, end,
+    { type: 'turn/start', seq: 1, data: { turn: 1 } },
+    { type: 'step/start', seq: 2, data: { turn: 1, step: 1 } },
+    { type: 'tool/ptc-dispatch', seq: 4, data: { name: 'packycode_image_generate', subCallId: 'nested-image', isError: false, content: [{ type: 'image', attachment }] } },
+    { ...end, data: { turn: 1, reason: { kind: 'stop' } } },
   ]
-  const node = imageConversationNode.buildViewNode({ key: 'saved-gallery', id: '1', matches: JSON.parse(JSON.stringify(entries)).map(event => ({ event, location: { kind: 'turn', turn: {} } })) })
+  const runtime = assembler('0.2.0', true, fx.definition())
+  runtime.activateTarget('chat')
+  runtime.replaceWindow(JSON.parse(JSON.stringify(entries)).map(event => ({ type: 'event', event })), false)
+  runtime.flush()
+  const snapshot = runtime.snapshot('chat')
+  assert.equal(snapshot.order.length, 1, 'built registry definition must reach the real DSH chat snapshot')
+  const node = snapshot.nodes.get(snapshot.order[0])
   assert.equal(node.location.kind, 'session', 'main gallery is independent of collapsed tool/turn views')
   const props = gallery.spec.inject('colleague-session')
   const show = () => fx.render({ type: gallery.component, props: { ...props, node } })
