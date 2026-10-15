@@ -154,3 +154,43 @@ test('rename keeps a disabled mark and rejects an empty name or an unknown id', 
   await assert.rejects(ring.rename(a.id, '   '), /cannot be empty/)
   await assert.rejects(ring.rename('nope', 'x'), /Unknown PackyCode key/)
 })
+
+test('an emptied ring is stored as plain JSON, which DSH\'s credential store requires', async () => {
+  // The fake store refuses `undefined` the way DSH's credentials-local does.
+  const credentials = fakeCredentials()
+  const ring = new PackyCodeKeyRing(credentials)
+  await ring.add(KEY_A)
+  await ring.add(KEY_B)
+  await ring.removeAll()
+  assert.deepEqual(credentials.payload(), { version: 1, keys: [] })
+  assert.deepEqual(await ring.list(), { activeId: undefined, keys: [] })
+
+  await ring.add(KEY_A)
+  const [only] = (await ring.list()).keys
+  await ring.remove(only.id)
+  assert.deepEqual(credentials.payload(), { version: 1, keys: [] }, 'removing the last key empties the ring too')
+
+  await ring.add(KEY_B)
+  const [last] = (await ring.list()).keys
+  await ring.disable(last.id, 'quota')
+  assert.equal(Object.hasOwn(credentials.payload(), 'activeId'), false, 'disabling the only key leaves no active key')
+  assert.equal((await ring.list()).keys[0].disabled, true)
+  assert.equal(await ring.activeKey(), undefined)
+})
+
+test('a disabled mark without a reason survives the next write', async () => {
+  const credentials = fakeCredentials({ record: { kind: 'grant', payload: { version: 1, activeId: 'k1', keys: [{ id: 'k1', label: 'old', key: KEY_A, addedAt: 1, disabledAt: 5 }] } } })
+  const ring = new PackyCodeKeyRing(credentials)
+  await ring.rename('k1', 'renamed')
+  assert.deepEqual(credentials.payload().keys, [{ id: 'k1', label: 'renamed', key: KEY_A, addedAt: 1, disabledAt: 5 }])
+})
+
+test('a credential store failure is reported in the ring\'s words, its own refusals verbatim', async () => {
+  const ring = new PackyCodeKeyRing({
+    readRecord: async () => undefined,
+    modifyRecord: async () => { throw new Error(`could not parse .credentials.yaml near "key: ${KEY_C}"`) },
+  })
+  await assert.rejects(ring.removeAll(), error => error.message === 'PackyCode could not save the key change in DSH\'s credential store' && !error.message.includes(KEY_C))
+  const strict = new PackyCodeKeyRing(fakeCredentials())
+  await assert.rejects(strict.select('missing'), /^Error: Unknown PackyCode key$/u)
+})

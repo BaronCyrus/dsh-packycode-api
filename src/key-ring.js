@@ -111,26 +111,47 @@ export class PackyCodeKeyRing {
     return normalizeState(await this.#credentials.readRecord(this.#recordKey))
   }
 
+  /**
+   * Replace the record with what `mutate` decides. The store accepts plain
+   * JSON only and refuses a payload holding `undefined`, so a field without a
+   * value is left out: an emptied ring has no `activeId`, and a disabled mark
+   * from a hand-edited record may have no reason. A store failure is reported
+   * in the ring's own words, since the store's may quote the credential file.
+   */
   async #write(mutate) {
-    const next = await this.#credentials.modifyRecord(this.#recordKey, async (current) => {
-      const state = normalizeState(current)
-      const updated = await mutate(state)
-      if (updated === undefined) return current
-      return {
-        kind: 'grant',
-        payload: {
-          version: RECORD_VERSION,
-          activeId: updated.activeId,
-          keys: updated.keys.map(candidate => ({
-            id: candidate.id,
-            label: candidate.label,
-            key: candidate.key,
-            addedAt: candidate.addedAt,
-            ...(candidate.disabledAt === undefined ? {} : { disabledAt: candidate.disabledAt, disabledReason: candidate.disabledReason }),
-          })),
-        },
-      }
-    })
+    let refused = false
+    let next
+    try {
+      next = await this.#credentials.modifyRecord(this.#recordKey, async (current) => {
+        const state = normalizeState(current)
+        let updated
+        try {
+          updated = await mutate(state)
+        } catch (error) {
+          refused = true
+          throw error
+        }
+        if (updated === undefined) return current
+        return {
+          kind: 'grant',
+          payload: {
+            version: RECORD_VERSION,
+            ...(updated.activeId === undefined ? {} : { activeId: updated.activeId }),
+            keys: updated.keys.map(candidate => ({
+              id: candidate.id,
+              label: candidate.label,
+              key: candidate.key,
+              addedAt: candidate.addedAt,
+              ...(candidate.disabledAt === undefined ? {} : { disabledAt: candidate.disabledAt }),
+              ...(candidate.disabledAt === undefined || candidate.disabledReason === undefined ? {} : { disabledReason: candidate.disabledReason }),
+            })),
+          },
+        }
+      })
+    } catch (error) {
+      if (refused) throw error
+      throw new Error('PackyCode could not save the key change in DSH\'s credential store', { cause: error })
+    }
     return normalizeState(next)
   }
 

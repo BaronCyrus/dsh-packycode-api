@@ -50,3 +50,27 @@ test('an unexpected storage failure never places upstream diagnostics in the env
   assert.equal(connectionFailure(result).message, 'PackyCode request failed')
   assert.equal(JSON.stringify(result).includes(secret), false)
 })
+
+test('clearing every key through the channel answers the empty status', async () => {
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  await ring.add('sk-fixture-clear-all-0001')
+  await ring.add('sk-fixture-clear-all-0002')
+  const invalidated = []
+  const rpc = createPackyCodeRpc({
+    ring,
+    balance: { invalidate: () => invalidated.push('balance') },
+    groups: { invalidate: () => invalidated.push('groups') },
+    hosts: () => ({}),
+    preference: { writable: true },
+  })
+  const result = await rpc('keys/remove-all', {})
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(result.value.keys, [])
+  assert.deepEqual(invalidated, ['balance', 'groups'])
+})
+
+test('a credential store failure reaches the panel as the ring\'s own sentence', async () => {
+  const ring = new PackyCodeKeyRing({ readRecord: async () => undefined, modifyRecord: async () => { throw new TypeError('credentials-local: record payload holds a value JSON cannot represent') } })
+  const rpc = createPackyCodeRpc({ ring, balance: { invalidate() {} }, hosts: () => ({}), preference: {} })
+  assert.equal(connectionFailure(await rpc('keys/remove-all', {})).message, 'PackyCode could not save the key change in DSH\'s credential store')
+})

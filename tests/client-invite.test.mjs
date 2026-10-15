@@ -17,9 +17,10 @@ const STORED = { id: 'chat-a', label: 'Chat main', addedAt: 1, active: true, dis
 
 /**
  * The built settings page against a channel holding `keys` (or failing its
- * status read), with `keys/add` storing one more key the way the host does.
+ * status read), with `keys/add` storing one more key and `keys/remove-all`
+ * emptying the ring (or failing in the host's words) the way the host does.
  */
-async function accountsFixture(t, { keys = [], statusFails = false } = {}) {
+async function accountsFixture(t, { keys = [], statusFails = false, removeAllFails = false } = {}) {
   let chat = { activeId: keys[0]?.id ?? null, writable: true, hosts: {}, defaults: {}, keys }
   const answers = {
     status: () => {
@@ -29,6 +30,10 @@ async function accountsFixture(t, { keys = [], statusFails = false } = {}) {
     balance: () => ({ activeId: chat.activeId, fetchedAt: 1, keys: [] }),
     groups: () => ({ keys: [], descriptions: {} }),
     'keys/add': payload => (chat = { ...chat, activeId: 'chat-new', keys: [...chat.keys, { id: 'chat-new', label: payload.label || 'Key 1', addedAt: 2, active: true, disabled: false }] }),
+    'keys/remove-all': () => {
+      if (removeAllFails) throw new Error('PackyCode could not save the key change in DSH\'s credential store')
+      return (chat = { ...chat, activeId: undefined, keys: [] })
+    },
   }
   const rpc = { async call(channel, endpoint, payload) {
     assert.equal(channel, '/packycode-api')
@@ -36,8 +41,9 @@ async function accountsFixture(t, { keys = [], statusFails = false } = {}) {
     if (answer === undefined) return { ok: false, error: { code: 'packycode/request-failed', message: 'PackyCode fixture: not under test', details: {} } }
     try {
       return { ok: true, value: structuredClone(answer(payload)) }
-    } catch {
-      return { ok: false, error: { code: 'packycode/request-failed', message: 'PackyCode request failed', details: {} } }
+    } catch (error) {
+      const message = error.message.startsWith('PackyCode') ? error.message : 'PackyCode request failed'
+      return { ok: false, error: { code: 'packycode/request-failed', message, details: {} } }
     }
   } }
   let client
@@ -66,6 +72,12 @@ async function accountsFixture(t, { keys = [], statusFails = false } = {}) {
   return {
     accounts,
     invites: () => root.root.findAll(node => node.type === 'a' && node.props.href === INVITE_URL),
+    alerts: () => accounts().findAll(node => node.props.role === 'alert').map(text),
+    async removeAll() {
+      const button = accounts().find(node => node.type === 'button' && text(node) === zh.removeAll)
+      await act(async () => button.props.onClick())
+      await settle()
+    },
     async addKey(value) {
       const card = accounts()
       const input = card.find(node => node.type === 'input' && node.props.type === 'password')
@@ -102,5 +114,21 @@ test('adding the first key removes the invite at once', async t => {
   const page = await accountsFixture(t)
   assert.equal(page.invites().length, 1)
   await page.addKey('sk-fixture-not-a-real-key')
+  assert.equal(page.invites().length, 0)
+})
+
+test('clearing every key empties the list and brings the invite back', async t => {
+  const page = await accountsFixture(t, { keys: [STORED] })
+  await page.removeAll()
+  assert.deepEqual(page.alerts(), [])
+  assert.ok(text(page.accounts()).includes(zh.empty), 'the empty-state note replaces the key list')
+  assert.equal(page.invites().length, 1)
+})
+
+test('a refused key change is reported as a failed update, not as a failed status read', async t => {
+  const page = await accountsFixture(t, { keys: [STORED], removeAllFails: true })
+  await page.removeAll()
+  assert.deepEqual(page.alerts(), [`${zh.saveError}: PackyCode could not save the key change in DSH's credential store`])
+  assert.ok(text(page.accounts()).includes(STORED.label), 'the keys stay listed')
   assert.equal(page.invites().length, 0)
 })

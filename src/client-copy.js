@@ -88,6 +88,7 @@ export const zh = {
   add: '添加',
   notWritable: '当前 profile 不允许写入设置，改动只在本次运行内生效。',
   error: '读取 PackyCode 状态失败',
+  saveError: '更新 Key 失败',
 
   groupsTitle: '分组',
   groupsChecking: '正在读取分组…',
@@ -296,6 +297,7 @@ export const en = {
   add: 'Add',
   notWritable: 'This profile does not allow settings writes; changes apply to this run only.',
   error: 'Could not read PackyCode status',
+  saveError: 'Could not update the keys',
 
   groupsTitle: 'Groups',
   groupsChecking: 'Reading groups…',

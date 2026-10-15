@@ -221,7 +221,7 @@ function AccountsCard({ call, t }) {
         setBalance(nextBalance)
       })
       .catch(failure => {
-        if (generation.current === current) setError(clearMessage(failure))
+        if (generation.current === current) setError({ kind: 'read', message: clearMessage(failure) })
       })
       .finally(() => {
         if (generation.current === current) setBusy(false)
@@ -235,17 +235,20 @@ function AccountsCard({ call, t }) {
     }
   }, [load])
 
+  /** A refused change says so; a balance read after a stored change is a read. */
   const mutate = (endpoint, payload) => {
     setBusy(true)
     setError(undefined)
     return call(endpoint, payload)
-      .then(nextStatus => {
-        setStatus(nextStatus)
-        void readGroups(false)
-        return call('balance', { force: true })
-      })
-      .then(setBalance)
-      .catch(failure => setError(clearMessage(failure)))
+      .then(
+        nextStatus => {
+          setStatus(nextStatus)
+          void readGroups(false)
+          return call('balance', { force: true })
+            .then(setBalance, failure => setError({ kind: 'read', message: clearMessage(failure) }))
+        },
+        failure => setError({ kind: 'save', message: clearMessage(failure) }),
+      )
       .finally(() => setBusy(false))
   }
 
@@ -321,7 +324,7 @@ function AccountsCard({ call, t }) {
         </div>
       </form>
       {status !== undefined && status.writable !== true && <p className="pkc-note">{t('notWritable')}</p>}
-      {error !== undefined && <p className="pkc-error" role="alert">{`${t('error')}: ${error}`}</p>}
+      {error !== undefined && <p className="pkc-error" role="alert">{`${t(error.kind === 'save' ? 'saveError' : 'error')}: ${error.message}`}</p>}
       <details className="pkc-advanced">
         <summary>{t('advanced')}</summary>
         <label className="pkc-field">
