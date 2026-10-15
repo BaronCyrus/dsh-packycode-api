@@ -3,6 +3,8 @@ import * as react from 'react'
 import { IMAGE_CHAT_KIND, imageConversationNode } from './image-conversation.js'
 import { BalanceTotals, KeyBalance } from './client-balance.jsx'
 import { ImageShortcutBalance } from './client-image-balance.jsx'
+import { readOriginalImage } from './client-image-download.js'
+import { createImageViewer, PackyCodeImageViewer } from './client-image-viewer.jsx'
 
 const imageModelLabel = id => id.replace('gpt-image-', 'GPT Image ').replace('-flare', ' Flare').replace('-sunburst', ' Sunburst')
 
@@ -186,17 +188,23 @@ function ImageChatOutput({ node, ...props }) {
   return <div className="pkc-image-chat">{node.data.blocks.map(block => <PackyCodeImageResult key={block.toolCallId} block={block} {...props} />)}</div>
 }
 
-export function installImagePresentation(ctx, t) {
+export function installImagePresentation(ctx, t, call) {
   ctx.inject(['uiConversation'], scope => {
     const conversation = scope.get('uiConversation')
     if (typeof conversation?.events?.register !== 'function' || typeof conversation?.imageUrl !== 'function') return
+    const viewer = createImageViewer()
+    scope.effect(() => () => viewer.dispose(), 'packycode-api: image viewer')
+    scope.slots.inject('shell.overlay', () => scope.slots.register({
+      name: 'shell.overlay', id: 'packycode-image-viewer', order: 21,
+      inject: () => ({ viewer, t }),
+    }, PackyCodeImageViewer))
     const imageProps = sessionId => ({
       t,
       loadImage: attachment => conversation.imageUrl(sessionId, attachment),
       openImage: (src, attachment, opener) => {
-        const viewer = scope.get('nativeImageViewer')
-        if (viewer?.open?.({ items: [{ id: attachment.attachmentId, src, name: attachment.name ?? 'packycode-generated.png', width: attachment.width, height: attachment.height }], opener, source: 'packycode-generated' }) === true) return
-        window.open(src, '_blank', 'noopener,noreferrer')
+        viewer.open({ src, attachment, opener,
+          readOriginal: options => readOriginalImage(call, sessionId, attachment.attachmentId, options),
+        })
       },
     })
     scope.effect(() => conversation.events.register(imageConversationNode), 'packycode-api: image results in chat')

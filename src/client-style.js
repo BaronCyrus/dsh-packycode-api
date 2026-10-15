@@ -45,6 +45,18 @@ export const STYLE = `
 .pkc-image-result,.pkc-image-chat{display:flex;flex-direction:column;gap:10px;padding:8px 0}
 .pkc-generated-image{display:grid;place-items:center;align-self:flex-start;max-width:100%;width:320px;min-height:80px;padding:0;overflow:hidden;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:zoom-in}
 .pkc-generated-image img{display:block;max-width:100%;max-height:480px;object-fit:contain}
+.pkc-image-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgba(0,0,0,.84);box-sizing:border-box}
+.pkc-image-viewer{display:flex;flex-direction:column;box-sizing:border-box;width:100%;height:100%;min-height:0;color:#f5f5f5;font:13px/1.5 var(--ds-font-family,system-ui,sans-serif)}
+.pkc-image-viewer-toolbar{display:flex;align-items:center;gap:8px;flex:0 0 auto;min-height:40px;margin-bottom:12px}
+.pkc-image-viewer-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(255,255,255,.75)}
+.pkc-image-viewer-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;box-sizing:border-box;flex:none;height:36px;padding:0 12px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(255,255,255,.08);color:#f5f5f5;font:inherit;cursor:pointer;white-space:nowrap}
+.pkc-image-viewer-button:hover:not(:disabled){background:rgba(255,255,255,.18)}
+.pkc-image-viewer-button:focus-visible{outline:2px solid #a7c3ff;outline-offset:2px}
+.pkc-image-viewer-button:disabled{opacity:.55;cursor:wait}
+.pkc-image-viewer-close{width:36px;padding:0;border-color:transparent;background:transparent}
+.pkc-image-viewer-canvas{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:hidden}
+.pkc-image-viewer-canvas img{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
+.pkc-image-viewer-error{align-self:center;flex:none;margin:12px 0 0;padding:8px 12px;border-radius:8px;background:#4d2222;color:#ffd3d3;text-align:center}
 .pkc-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 
 .pkc-chip{flex:none;padding:0 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:18px;white-space:nowrap}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.5
+
+- Fixed generated-image clicks doing nothing in DSH desktop. The optional `nativeImageViewer` service is absent in the current desktop build, and its popup policy denies the previous `window.open(blob:...)` fallback. PackyCode now owns an in-app large-image overlay shared by main-chat and tool-detail results, with Escape/close, focus restoration and viewport fitting.
+- Added **Download original** immediately to the left of the overlay's Close button. It opens a save-location picker and transfers the preserved PNG rather than DSH's normalized chat preview. Desktop builds without File System Access use Electron's normal download/save-dialog routine without a preset destination. Cancellation does not become an error or start another download.
+- Original reads resolve native/PTC/Claude image evidence from a read-only session observation, accept no client-supplied paths and stay inside the plugin's original-image directory. The bounded chunk transfer checks the complete SHA-256 before writing; closing the viewer cancels pending reads, and missing/corrupt originals remain retryable without substituting the preview.
+- Validation, 2026-10-15: 411 offline tests, both bundles and the tarball; real-browser verification of the built client confirmed large-image opening, uncropped fitting, Download original left of Close, Escape and focus restoration. Save-picker invocation, cancellation, exact original-byte writes and interrupted/corrupt transfers are covered by automated regressions. Native save-dialog interaction remains a manual DSH check because the current computer-use interface cannot control the Codex app's native chooser. No paid image request or DSH restart was performed.
+
 ## 1.2.4
 
 - Added the current image key's remaining quota immediately after the Create image shortcut. Hovering or focusing it shows the key label, account name, remaining/used/total quota and update time. It shares the shortcut's visibility, refreshes every minute while mounted and after image-setting/key changes, and marks stale or failed reads without confusing them with zero credit. Real React lifecycle regressions cover provider switches, image availability, disabled/missing keys and late responses.

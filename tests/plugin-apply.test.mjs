@@ -134,3 +134,23 @@ test('the RPC surface refuses key material and answers status without one', asyn
   assert.equal(rejected.ok, false)
   assert.match(rejected.error.message, /printable ASCII/u)
 })
+
+test('original image RPC uses a cancellable read-only session observation and always releases its lease', async () => {
+  const { ctx, registered } = stubContext()
+  let released = 0, broken = false
+  const signal = new AbortController().signal
+  ctx.get = name => name === 'sessionQuery' ? { async observeSession(id, options) {
+    assert.equal(id, 'image-session')
+    assert.equal(options.signal, signal)
+    assert.equal(options.projectionMode, 'none')
+    return { get events() { if (broken) throw new Error('storage unavailable'); return [] }, [Symbol.dispose]() { released += 1 } }
+  } } : undefined
+  apply(ctx)
+  const rpc = registered.rpc[0].handler
+  const request = { sessionId: 'image-session', attachmentId: `sha256:${'a'.repeat(64)}` }
+  assert.equal((await rpc('images/original', request, signal)).ok, false)
+  assert.equal(released, 1)
+  broken = true
+  assert.equal((await rpc('images/original', request, signal)).ok, false)
+  assert.equal(released, 2)
+})

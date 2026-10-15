@@ -39,6 +39,7 @@ import {
 import { createGroupReader } from './groups.js'
 import { DEFAULT_IMAGE_MODEL, IMAGE_MODEL_IDS, IMAGE_QUALITIES } from './image-models.js'
 import { createImageController } from './image-settings.js'
+import { createImageOriginalReader } from './image-originals.js'
 import { createPackyCodeImageClient, createPackyCodeImageTool } from './images.js'
 import { normalizeHost } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
@@ -359,6 +360,18 @@ export function apply(ctx, config) {
     search,
     modelSelection,
     images,
+    imageOriginals: createImageOriginalReader({
+      imageDirectory: join(dshHome, 'packycode-api', 'images'),
+      getSessionEvents: async (sessionId, signal) => {
+        const query = ctx.get?.('sessionQuery')
+        if (typeof query?.observeSession === 'function') {
+          const observation = await query.observeSession(sessionId, { signal, projectionMode: 'none' })
+          try { return [...observation.events] } finally { observation[Symbol.dispose]() }
+        }
+        if (typeof query?.readSession === 'function') return (await query.readSession(sessionId)).events
+        return []
+      },
+    }),
   })
   /**
    * The shipped Connection getter retains its own service context, whose row

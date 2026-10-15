@@ -41,7 +41,7 @@ const MODEL_FAMILIES = [
  * call carries an object.
  */
 function channelCaller(rpc) {
-  return (endpoint, payload = {}) => rpc.call(CHANNEL, endpoint, payload).then(response => {
+  return (endpoint, payload = {}, signal) => rpc.call(CHANNEL, endpoint, payload, signal).then(response => {
     if (!response?.ok) throw new Error(response?.error?.message ?? 'PackyCode RPC failed')
     return response.value
   })
@@ -802,8 +802,8 @@ export function apply(ctx) {
   }, 'packycode-api: style')
   const connection = ctx.get('connection')
   const t = ctx.locale.bind(NS)
-  installImagePresentation(ctx, t)
   const call = channelCaller(connection.rpc)
+  installImagePresentation(ctx, t, call)
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'packycode-api',

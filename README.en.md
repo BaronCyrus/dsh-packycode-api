@@ -51,7 +51,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.2.4`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.2.5`.
 
 A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
 
@@ -70,7 +70,7 @@ Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.4`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.2.5`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -155,6 +155,8 @@ All three CLI-backed Claude models and the `claude_code` delegation tool also su
 Tool callers can set `model` and `quality` to `settings` to follow the saved preferences; `auto` is an explicit API quality. New images may omit `referenceImages` or pass an empty array. Explicit `operation: edit` requires valid references, and invalid real references are never discarded in favor of new-image generation.
 
 Image 2 accepts `auto / low / medium / high`; both 2.5 models also accept `xhigh / max`. These are Images API `quality` values, separate from text reasoning effort. There is no automatic model substitution, quality downgrade or paid retry. Each call returns one PNG; original bytes are saved under `~/.dsh/packycode-api/images/` (following `DSH_HOME` when set), alongside the chat preview. References and optional PNG masks must belong to the current session; file paths cannot replace attachment references.
+
+Click a generated image to open the in-app large preview. **Download original**, immediately left of Close, opens a save-location picker for the complete preserved PNG. Cancelling is harmless; a moved or deleted original reports a retryable error instead of downloading the chat thumbnail. Saved conversations also support this as long as their original file is still on this host.
 
 After adding the image key, `node scripts/image-check.mjs --all --edit` checks all three engines and one edit. Use `--model <id> --edit` for generation and editing on a specific engine, adding `--quality xhigh` or `--quality max` to check a quality. This consumes image quota, saves outputs under `.artifacts/`, and prints only a masked key tail plus the gateway-reported model/quality.
 

@@ -36,7 +36,7 @@ function clientFixture() {
   const conversation = { events: { register: value => { definition = value } },
     imageUrl: async (sessionId, attachment) => { reads.push({ sessionId, attachment }); return preview } }
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
-    window: { open: () => assert.fail('the native viewer should be used'), __ModuleLoader__: { load: spec => { client = spec.factory(name => name === 'react' ? react : { jsx: element, jsxs: element }) } } },
+    window: { open: () => assert.fail('the in-app viewer should be used'), __ModuleLoader__: { load: spec => { client = spec.factory(name => name === 'react' ? react : { jsx: element, jsxs: element }) } } },
     document: { head: { append() {} }, createElement: () => ({ dataset: {}, remove() {} }) },
   })
   const ctx = {
@@ -104,8 +104,10 @@ for (const protocol of ['native', 'ptc', 'cli']) test(`built ${protocol} main-ch
   const button = visible.find(part => part.type === 'button')
   assert.equal(button.props.disabled, false)
   button.props.onClick({ currentTarget: 'opener' })
-  assert.equal(fx.opened[0].items[0].src, fx.preview)
-  assert.equal(fx.opened[0].items[0].id, attachment.attachmentId)
+  const opened = fx.slots.get('shell.overlay:packycode-image-viewer').spec.inject().viewer.getSnapshot()
+  assert.equal(opened.src, fx.preview)
+  assert.equal(opened.attachment.attachmentId, attachment.attachmentId)
+  assert.equal(fx.opened.length, 0, 'the plugin owns its viewer and original-download controls')
   const detailProps = details.spec.inject('colleague-session')
   const detail = { type: details.component, props: { ...detailProps, block: node.data.blocks[0] } }
   fx.render(detail, 'detail')
