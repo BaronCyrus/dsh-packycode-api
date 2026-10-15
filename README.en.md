@@ -50,7 +50,7 @@ Open the desktop application's **Plugins** page, click **Add plugin**, and enter
 dsh-packycode-api
 ```
 
-Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.8`.
+Choose the **official** install source, then click **Install**. To pin a version, enter `dsh-packycode-api@1.1.9`.
 
 A **first install requires no DSH restart**: open **Settings → PackyCode** and add a key immediately. When updating an already loaded older version, follow the restart guidance in the **Plugin version** card.
 
@@ -62,14 +62,14 @@ Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label 
 
 ### 3. Select a model
 
-Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt-6-astra`, and `grok-4.7` use HTTP. The three Claude models also need the Claude Code CLI on this device; see below. Your key's groups must cover the selected model.
+Choose a model from the `PackyCode` group. `deepseek-flash`, `gpt-6.1-sol`, `gpt-6-astra`, `grok-4.7`, `gemini-4-argon`, and `gemini-3.8-flash` use HTTP. The three Claude models also need the Claude Code CLI on this device; see below. Your key's groups must cover the selected model.
 
 <details>
 <summary>Verify the install / other profiles / a local checkout</summary>
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.8`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.1.9`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -147,13 +147,19 @@ Claude Code CLI → temporary local MCP web_search → selected PackyCode DeepSe
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
 | `gpt-6-astra` | Same | Same | Same |
 | `grok-4.7` (Grok 4.7) | HTTP, Responses, text/image input; 500K context | Cannot be off; `low` / `medium` / `high` / `xhigh` | The Grok coverage read from the gateway in Settings |
+| `gemini-4-argon` (Gemini 4 Argon) | HTTP, native Gemini streaming, text/image input; 1,048,576 context, 65,536 output | Cannot be off; `low` / `medium` / `high` | `gemini-slb` |
+| `gemini-3.8-flash` (Gemini 3.8 Flash) | HTTP, native Gemini streaming, text/image input; 1,048,576 input, 65,536 output | Cannot be off; `low` / `medium` / `high` | `gemini-slb` |
 | `claude-opus-5-5` | Local Claude Code CLI | The picker offers the same levels; the CLI chooses the actual effort | A group the official CLI is allowed to use; see below |
 | `claude-sonnet-5-5` | Same | Same | Same |
 | `claude-haiku-5-5` | Same; session titles always use this model | Same | Same |
 
 A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
 
-All seven models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Chat Completions request.
+All nine models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Chat Completions request.
+
+Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon), [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). Both models use the native Gemini protocol through `/v1beta/models/{model}:streamGenerateContent`, streaming text, thinking and tool calls; images are read through DSH's attachment service. Thinking levels are sent with `thinkingLevel`. Both routes use the single-stream output limit without automatic continuation beyond 65,536 tokens. Available endpoints and groups follow the [PackyAPI live model catalog](https://www.packyapi.com/api/pricing).
+
+**Flash native tool continuation:** The gateway sometimes refuses an unchanged valid signature with `Corrupted thought signature` / `Invalid thought signature`. For a current signed tool continuation returning HTTP 400 before any stream event, the plugin waits one second and resends once with the same key, signature and request. A second failure is returned unchanged; the protocol and model stay the same. Text, images and tool continuation passed live checks. This mitigates intermittent gateway refusals, rather than repairing persistent upstream signature errors.
 
 Grok 4.7's context and reasoning levels follow the [official guide](https://docs.x.ai/developers/grok-4-7). There is no separate text-output limit; the plugin uses the context size as its numeric output ceiling, bounded by the remaining context per request.
 

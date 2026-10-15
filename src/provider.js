@@ -2,8 +2,8 @@
  * The PackyCode pi-ai provider, built in code so the user configures no route.
  *
  * `createProvider` dispatches on `model.api`, which is what lets one route
- * carry a chat/completions model, a Responses model, and an Anthropic Messages
- * model — the gateway refuses each of them over the other protocols.
+ * carry Chat Completions, Responses, Anthropic Messages and native Gemini
+ * models — the gateway refuses some of them over other protocols.
  *
  * @module dsh-packycode-api/provider
  */
@@ -15,6 +15,7 @@ import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.l
 
 import { PACKYCODE_MODELS } from './catalog.js'
 import { DEFAULT_API_HOST, DISPLAY_NAME, PROVIDER } from './constants.js'
+import { createGeminiApi } from './gemini-api.js'
 import { classifyClientPolicy, classifyGatewayFailure, explainClientPolicyFailure, normalizeFailureMessage } from './failures.js'
 
 const TERMINAL_EVENTS = new Set(['error', 'done'])
@@ -47,6 +48,7 @@ export function createPackyCodeProvider() {
       'openai-completions': openAICompletionsApi(),
       'openai-responses': openAIResponsesApi(),
       'anthropic-messages': anthropicMessagesApi(),
+      'google-generative-ai': createGeminiApi(),
     },
   })
   // Only GPT's Responses route requires prompt_cache_key here. Sending it

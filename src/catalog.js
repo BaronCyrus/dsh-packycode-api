@@ -14,8 +14,9 @@
  * model does not support is refused before the request is sent: Claude Opus
  * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol and GPT-6 Astra
  * `reasoning.effort` (developers.openai.com model pages), DeepSeek thinking
- * mode (`thinking` toggle plus `low|high|max` effort), and Grok 4.7
- * (docs.x.ai/developers/grok-4-7).
+ * mode (`thinking` toggle plus `low|high|max` effort), Grok 4.7
+ * (docs.x.ai/developers/grok-4-7), and Gemini 4 Argon
+ * (ai.google.dev/gemini-api/docs/models/gemini-4-argon and docs/openai).
  *
  * @module dsh-packycode-api/catalog
  */
@@ -28,6 +29,7 @@ const NO_COST = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0
 const COMPLETIONS_BASE = `${DEFAULT_API_HOST}/v1`
 const RESPONSES_BASE = `${DEFAULT_API_HOST}/v1`
 const MESSAGES_BASE = DEFAULT_API_HOST
+const GEMINI_BASE = `${DEFAULT_API_HOST}/v1beta`
 
 /**
  * pi-ai thinking-level maps. A level pinned to `null` is unsupported; an
@@ -61,6 +63,9 @@ const ALWAYS_THINKING_LEVELS = Object.freeze({
 
 /** Grok 4.7 supports low | medium | high | xhigh, with no off or max. */
 const GROK_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, max: null })
+
+/** Gemini 4 Argon and 3.8 Flash support low | medium | high, with no off. */
+const GEMINI_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, xhigh: null, max: null })
 
 export const PACKYCODE_MODELS = Object.freeze([
   Object.freeze({
@@ -129,6 +134,37 @@ export const PACKYCODE_MODELS = Object.freeze([
     maxTokens: 500_000,
     thinkingLevelMap: GROK_LEVELS,
     compat: Object.freeze({ supportsLongCacheRetention: false }),
+  }),
+  Object.freeze({
+    // PackyCode lists only the native Gemini endpoint for Argon. The Google
+    // model page declares unified 1M context and 65,536 output per stream;
+    // automatic continuation/long decode is not part of this route.
+    id: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
+    api: 'google-generative-ai',
+    provider: PROVIDER,
+    baseUrl: GEMINI_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+    thinkingLevelMap: GEMINI_LEVELS,
+  }),
+  Object.freeze({
+    // ai.google.dev/gemini-api/docs/models/gemini-3.8-flash. Keep the Gemini
+    // family on its native protocol, including image and signature replay.
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    api: 'google-generative-ai',
+    provider: PROVIDER,
+    baseUrl: GEMINI_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+    thinkingLevelMap: GEMINI_LEVELS,
   }),
   Object.freeze({
     id: 'claude-opus-5-5',

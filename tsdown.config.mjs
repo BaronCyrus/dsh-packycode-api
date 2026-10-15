@@ -11,6 +11,8 @@ const hostExternal = [
   '@deepseek-ai/schemastery',
   '@earendil-works/pi-ai',
   '@earendil-works/pi-ai/api/anthropic-messages.lazy',
+  '@earendil-works/pi-ai/api/google-generative-ai.lazy',
+  '@earendil-works/pi-ai/api/lazy',
   '@earendil-works/pi-ai/api/openai-completions.lazy',
   '@earendil-works/pi-ai/api/openai-responses.lazy',
 ]

@@ -13,13 +13,15 @@
  * It prints no key material, only a masked tail. Run it from the repository
  * root after `pnpm run build`:
  *
- *   node scripts/live-check.mjs [--with-cli] [--with-search] [--with-vision] [--key-label LABEL]
+ *   node scripts/live-check.mjs [--with-cli] [--with-search] [--with-vision] [--key-label LABEL] [--model MODEL]
  *
  * `--with-cli` also runs each CLI-backed Claude model through the local
  * Claude Code CLI; `--with-search` runs one web search per backend. Both
  * spend more quota than the default run.
- * `--with-vision` checks DeepSeek with two color images through the host's
- * attachment service seam; the prompt does not disclose the colors.
+ * `--model` limits the run to one HTTP model, its balance/groups and optional
+ * vision checks, skipping unrelated rotation/CLI/search/RPC checks.
+ * `--with-vision` checks DeepSeek (or the selected HTTP model) with two color
+ * images through the host's attachment service; the prompt hides the colors.
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -44,7 +46,7 @@ import {
 const PROVIDER = 'packycode'
 const SESSION_ID = 'live-check-session'
 const HOSTS = Object.freeze({ apiHost: 'https://cf.api.fan', statusHost: 'https://www.packyapi.ai' })
-const HTTP_MODELS = ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7']
+const HTTP_MODELS = ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7', 'gemini-4-argon', 'gemini-3.8-flash']
 
 /** In-memory stand-in for the DSH credential-record service. */
 function fakeCredentials() {
@@ -101,6 +103,7 @@ async function turn(adapter, model, text = 'Reply with exactly: ok', { image } =
     sessionId: SESSION_ID,
     reasoningEffort: 'high',
     maxTokens: 2048,
+    signal: AbortSignal.timeout(90_000),
     messages: [createUserMessage({ content: [{ type: 'text', text }, ...(image === undefined ? [] : [image])], source: { kind: 'user' } })],
   })) {
     if (chunk.type === 'text-delta') answer += chunk.text
@@ -114,6 +117,9 @@ const describe = ({ answer, finish }) => (finish?.kind === 'stop'
   : `→ FAILED: ${String(finish?.failure?.message ?? 'no finish').slice(0, 140)}`)
 
 async function main() {
+  const modelIndex = process.argv.indexOf('--model')
+  const selectedModel = modelIndex < 0 ? undefined : process.argv[modelIndex + 1]
+  if (modelIndex >= 0 && !HTTP_MODELS.includes(selectedModel)) throw new Error('--model needs a catalog HTTP model id')
   const labelIndex = process.argv.indexOf('--key-label')
   const label = labelIndex < 0 ? undefined : process.argv[labelIndex + 1]
   if (labelIndex >= 0 && (label === undefined || label.startsWith('--'))) throw new Error('--key-label needs a key label')
@@ -122,6 +128,18 @@ async function main() {
   console.log(`stored key: …${key.slice(-4)} (${key.length} chars)\n`)
   let visionFixture
   const route = await routeWith([[key, 'live-check']], { resolveAttachments: () => visionFixture?.attachments })
+  const checkVision = async model => {
+    for (const color of ['red', 'blue']) {
+      visionFixture = createVisionFixture(color)
+      const result = await turn(route.adapter, model,
+        'What is the dominant color in this image? Reply with exactly one lowercase English color word.',
+        { image: visionFixture.block })
+      console.log(`   ${model} ${color} image ${mask(describe(result))}`)
+      if (result.finish?.kind !== 'stop' || result.answer.toLowerCase() !== color || visionFixture.reads.length !== 1) {
+        throw new Error(`${model} vision check failed for the ${color} image`)
+      }
+    }
+  }
 
   console.log('1) balance')
   const balance = createBalanceReader({ listKeys: () => route.ring.secrets(), getHosts: () => HOSTS })
@@ -138,8 +156,14 @@ async function main() {
   console.log(`   projection carries key material: ${JSON.stringify(groups).includes(key) ? 'YES (bug)' : 'no'}\n`)
 
   console.log('3) one answer per HTTP model, through the registered route')
-  for (const id of HTTP_MODELS) {
-    console.log(`   ${id.padEnd(16)} ${mask(describe(await turn(route.adapter, id)))}`)
+  for (const id of selectedModel === undefined ? HTTP_MODELS : [selectedModel]) {
+    const result = await turn(route.adapter, id)
+    console.log(`   ${id.padEnd(16)} ${mask(describe(result))}`)
+    if (result.finish?.kind !== 'stop') process.exitCode = 1
+  }
+  if (selectedModel !== undefined) {
+    if (process.argv.includes('--with-vision')) await checkVision(selectedModel)
+    return
   }
 
   console.log('\n4) an invalid key in front of the real one')
@@ -221,16 +245,7 @@ async function main() {
 
   if (process.argv.includes('--with-vision')) {
     console.log('\n9) DeepSeek identifies images through the registered route')
-    for (const color of ['red', 'blue']) {
-      visionFixture = createVisionFixture(color)
-      const result = await turn(route.adapter, 'deepseek-flash',
-        'What is the dominant color in this image? Reply with exactly one lowercase English color word.',
-        { image: visionFixture.block })
-      console.log(`   ${color} image ${mask(describe(result))}`)
-      if (result.finish?.kind !== 'stop' || result.answer.toLowerCase() !== color || visionFixture.reads.length !== 1) {
-        throw new Error(`DeepSeek vision check failed for the ${color} image`)
-      }
-    }
+    await checkVision('deepseek-flash')
   }
 }
 

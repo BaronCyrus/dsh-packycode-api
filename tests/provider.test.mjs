@@ -22,7 +22,7 @@ function fakeStream(items, { throwAt } = {}) {
   return stream
 }
 
-test('builds one route carrying all three protocols', () => {
+test('builds one route carrying all four protocols', () => {
   const provider = createPackyCodeProvider()
   assert.equal(provider.id, PROVIDER)
   assert.equal(provider.name, DISPLAY_NAME)

@@ -1,6 +1,6 @@
 /**
  * The HTTP model route: the pi-ai provider profile and the adapter that
- * serves the catalog's HTTP models (DeepSeek, GPT and Grok) with the ring's keys.
+ * serves the catalog's HTTP models (DeepSeek, GPT, Grok and Gemini) with the ring's keys.
  *
  * @module dsh-packycode-api/route
  */
@@ -9,6 +9,7 @@ import { LlmError, QUOTA_EXCEEDED_CODE, resolveRetryPolicy } from '@deepseek-ai/
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PLUGIN_ID, PROVIDER } from './constants.js'
+import { guardGeminiReplay } from './gemini-replay.js'
 import { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 
 /**
@@ -122,7 +123,8 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   }
   const guarded = method => (model, context, options) => {
     const routed = requestOptions(model, options)
-    return guardKeyRotation(raw[method](model, context, routed), { key: routed?.apiKey, onKeyFailure: keys.onKeyFailure })
+    const stream = guardGeminiReplay(() => raw[method](model, context, routed), { model, context, signal: routed?.signal })
+    return guardKeyRotation(stream, { key: routed?.apiKey, onKeyFailure: keys.onKeyFailure })
   }
   const provider = Object.freeze({ ...raw, stream: guarded('stream'), streamSimple: guarded('streamSimple') })
   const profiles = new Map([[PROVIDER, createPackyCodeProfile(provider)]])

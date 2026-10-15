@@ -50,7 +50,7 @@
 dsh-packycode-api
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.8`。
+在**安装源**中选择**官方源**，然后点击**安装**。需要固定版本时填入 `dsh-packycode-api@1.1.9`。
 
 首次安装后**无需重启 DSH**，可直接打开**设置 → PackyCode** 添加 Key。更新已加载的旧版时，按「插件版本」卡片的重启提示操作。
 
@@ -62,14 +62,14 @@ dsh-packycode-api
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。`deepseek-flash`、`gpt-6.1-sol`、`gpt-6-astra` 和 `grok-4.7` 通过 HTTP 调用；三个 Claude 模型还需要本机装有 Claude Code CLI，见下文。Key 的分组必须覆盖所选模型。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。`deepseek-flash`、`gpt-6.1-sol`、`gpt-6-astra`、`grok-4.7`、`gemini-4-argon` 和 `gemini-3.8-flash` 通过 HTTP 调用；三个 Claude 模型还需要本机装有 Claude Code CLI，见下文。Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.8`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.1.9`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -147,13 +147,19 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
 | `gpt-6-astra` | 同上 | 同上 | 同上 |
 | `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
+| `gemini-4-argon`（Gemini 4 Argon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
+| `gemini-3.8-flash`（Gemini 3.8 Flash） | HTTP，Gemini 原生流式，可带图；1,048,576 输入，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `claude-opus-5-5` | 本机 Claude Code CLI | 选择器档位同上，实际档位由 CLI 决定 | 能给官方 CLI 用的分组，比如cc分组 |
 | `claude-sonnet-5-5` | 同上 | 同上 | 同上 |
 | `claude-haiku-5-5` | 同上；会话标题也固定走它 | 同上 | 同上 |
 
 列表里看得到模型，不代表当前令牌分组一定放行。换分组时不要把对应分组一起去掉。
 
-当前目录中的 7 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 chat/completions 请求发送。
+当前目录中的 9 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 chat/completions 请求发送。
+
+Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
+
+**Flash 原生工具续聊：** 网关偶尔会拒绝原样回传的有效签名，返回 `Corrupted thought signature` / `Invalid thought signature`。插件仅在当前工具续聊、HTTP 400 且尚未输出任何流事件时，等待 1 秒，用相同 Key、签名及请求原样重发一次；再次失败时仍返回原错误，不更换协议或模型。文字、图片和工具续聊均已实测；该处理缓解网关的间歇性拒绝，不能保证修复持续性的上游签名错误。
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 

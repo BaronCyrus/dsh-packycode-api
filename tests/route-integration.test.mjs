@@ -57,6 +57,18 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
   const deepseek = await adapter.resolveModel(PROVIDER, 'deepseek-flash')
   assert.deepEqual(deepseek.reasoning.efforts.map(effort => effort.id), ['off', 'low', 'high', 'max'])
   assert.deepEqual([...deepseek.inputModalities], ['text', 'image'])
+
+  const gemini = await adapter.resolveModel(PROVIDER, 'gemini-4-argon')
+  assert.equal(gemini.name, 'Gemini 4 Argon')
+  assert.equal(gemini.context.contextWindow, 1_048_576)
+  assert.deepEqual([...gemini.inputModalities], ['text', 'image'])
+  assert.deepEqual(gemini.reasoning.efforts.map(effort => effort.id), ['low', 'medium', 'high'])
+  assert.equal(gemini.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
+  const flash = await adapter.resolveModel(PROVIDER, 'gemini-3.8-flash')
+  assert.equal(flash.name, 'Gemini 3.8 Flash')
+  assert.equal(flash.context.contextWindow, 1_048_576)
+  assert.deepEqual([...flash.inputModalities], ['text', 'image'])
+  assert.deepEqual(flash.reasoning.efforts.map(effort => effort.id), ['low', 'medium', 'high'])
 })
 
 test('preparing a call returns the model and a stream, without opening one', async () => {
