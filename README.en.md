@@ -33,6 +33,10 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | **Web search through PackyCode** | Optional: DSH's `web_search` searches through PackyCode, with a DeepSeek or GPT backend, for every request or for PackyCode models only |
 | **Credentials stay on the machine** | Keys live in the DSH credential file. The browser receives labels, state, and balances only |
 
+<img width="774" height="455" alt="截屏2026-10-15 10 34 28" src="https://github.com/user-attachments/assets/c5eaa535-dd1e-4e2f-be9f-c181404d4dd6" />
+<img width="575" height="522" alt="截屏2026-10-15 10 34 49" src="https://github.com/user-attachments/assets/3cf4d090-a4f9-49fe-9ab3-3aab21d6e909" />
+
+
 ## Install
 
 You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH setup, see the [official instructions](https://github.com/deepseek-ai/deepseek-harness#run).
