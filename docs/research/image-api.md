@@ -65,3 +65,11 @@ JSON 编辑的字段为 `images: [{ image_url: "…" }]` 或 `images: [{ file_id
 `xhigh` 生图用时 43.130 秒、编辑 48.064 秒；`max` 生图 83.537 秒、编辑 91.358 秒。两种高档质量的生成、编辑响应分别明确回报 `quality: "xhigh"` / `quality: "max"`。PNG 文件大小不用于推断质量档位。Sunburst 响应未提供可识别的 `model` 字段，结论是这些请求型号在当前 Key / 网关下可用，以及已回报的 quality 与请求一致，不据此独立证明网关内部的模型身份。
 
 本次是已构建插件图片 client 的真实网关测试；桌面确认了设置和 Key 加载，没有新建 DSH 对话来运行完整的模型 → 工具 → 聊天预览流程。透明背景、mask、自定义大尺寸及其它质量档位不在本轮范围内。测试日志与 PNG 保存在本地 `.artifacts/image-live-*.log` 和 `.artifacts/image-check-*/`；汇总记录（参数、耗时、质量回报、文件路径、SHA-256）为 `.artifacts/image-live-results-2026-10-15.json`。这些文件不进入 Git 或 npm 包。
+
+## 原生工具参数回放与兼容修复（2026-10-15）
+
+后续桌面对话暴露了 client 级验证未覆盖的参数问题：模型给新图请求填入 `referenceImages: []`，同时附带一个 `attachmentId` 全零、字节数与宽高均为 0 的占位 mask。工具按字段是否存在判断操作，反复报 `PackyCode image edits require 1-16 reference images`，请求尚未到网关。本地开发链接确实指向当前仓库；该错误在最新源码中同样可复现。
+
+回归测试先复现同样错误，再验证修复：空引用数组表示没有参考图；只把明确的零值、空 ID / 全零 ID 遮罩占位视为未提供。`operation: edit` 仍要求有效参考图，`operation: generate` 拒绝非空参考图，真实无效附件和真实遮罩不能变成新图请求。工具专用的 `model: settings` / `quality: settings` 可明确跟随已保存的设置，`settings` 不会发给网关。
+
+修复后，通过已构建的 `createPackyCodeImageTool().execute()` 回放原生参数结构（提示词替换为公共茶壶测试描述），只发出一次 `/v1/images/generations` 请求并成功返回 PNG，耗时 12.267 秒，`size: auto` 的实际图片为 1329×1183。结果可渲染成图片附件，日志和结果均不含完整 Key。该检查使用真实专用图片 Key、真实网关和本地附件测试适配器；它验证了工具参数路径，仍不等同于自动驱动整个桌面对话。记录在本地 `.artifacts/native-image-argument-replay-results.json`。

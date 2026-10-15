@@ -171,6 +171,46 @@ test('DSH tool saves the original PNG, renders an attachment, and defers child o
   assert.equal(JSON.stringify(value).includes(KEY), false)
 })
 
+test('new-image tool calls with an empty reference array use generations', async t => {
+  const { tool, exec, calls } = await toolFixture(t)
+  const value = await tool.execute({ prompt: args.prompt, referenceImages: [] }, exec)
+  assert.equal(value.image.attachmentId, REF.attachmentId)
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].url, /\/images\/generations$/u)
+})
+
+test('native new-image arguments with a zero placeholder mask use generations', async t => {
+  const { tool, exec, calls } = await toolFixture(t)
+  await tool.execute({ prompt: args.prompt, referenceImages: [], maskImage: {
+    attachmentId: `sha256:${'0'.repeat(64)}`, mediaType: 'image/png', bytes: 0, width: 0, height: 0,
+    name: '', originalDimensions: { width: 0, height: 0 },
+  } }, exec)
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].url, /\/images\/generations$/u)
+})
+
+test('explicit edits still require references and generation never discards real references or masks', async t => {
+  const { tool, exec, calls } = await toolFixture(t)
+  for (const referenceImages of [undefined, []]) {
+    await assert.rejects(() => tool.execute({ prompt: args.prompt, operation: 'edit', ...(referenceImages === undefined ? {} : { referenceImages }) }, exec), /1-16 reference images/u)
+  }
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, operation: 'generate', referenceImages: [REF] }, exec), /cannot include reference images/u)
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, referenceImages: [], maskImage: REF }, exec), /requires referenceImages/u)
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, referenceImages: [], maskImage: { ...REF, bytes: 0, width: 0, height: 0 } }, exec), /requires referenceImages/u)
+  assert.equal(calls.length, 0)
+})
+
+test('settings sentinels follow saved image preferences while explicit overrides remain exact', async t => {
+  const { tool, exec, calls } = await toolFixture(t)
+  const value = await tool.execute({ prompt: args.prompt, operation: 'generate', model: 'settings', quality: 'settings', referenceImages: [] }, exec)
+  assert.equal(value.requestedModel, 'gpt-image-2.5-sunburst')
+  assert.equal(value.requestedQuality, 'max')
+  assert.equal(JSON.parse(calls[0].init.body).quality, 'max')
+  const explicit = await tool.execute({ prompt: args.prompt, model: 'gpt-image-2', quality: 'auto' }, exec)
+  assert.equal(explicit.requestedModel, 'gpt-image-2')
+  assert.equal(explicit.requestedQuality, 'auto')
+})
+
 test('DSH edits resolve trusted session references rather than model-supplied metadata', async t => {
   const { tool, exec, calls } = await toolFixture(t)
   await tool.execute({ prompt: args.prompt, referenceImages: [{ ...REF, mediaType: 'image/gif', width: 999 }] }, exec)
@@ -181,7 +221,7 @@ test('DSH edits resolve trusted session references rather than model-supplied me
   const count = calls.length
   await assert.rejects(() => tool.execute({ prompt: args.prompt, referenceImages: [{ ...REF, attachmentId: `sha256:${'b'.repeat(64)}` }] }, exec), /missing from this session/u)
   await assert.rejects(() => tool.execute({ prompt: args.prompt, referenceImages: [{ ...REF, attachmentId: '/tmp/reference.png' }] }, exec), /complete attachment reference/u)
-  await assert.rejects(() => tool.execute({ prompt: args.prompt, referenceImages: [] }, exec), /1-16/u)
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, operation: 'edit', referenceImages: [] }, exec), /1-16/u)
   assert.equal(calls.length, count)
 })
 

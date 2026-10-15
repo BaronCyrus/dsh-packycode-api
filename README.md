@@ -148,6 +148,8 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 
 选择请求型号与质量后，可在 PackyCode 对话里点 **创建图片** 补充描述，或明确要求使用 `packycode_image_generate`。上传参考图后描述修改要求会调用 `/v1/images/edits`；新图调用 `/v1/images/generations`。图片型号独立于对话型号，其他插件的图片工具仍可并存。CLI 执行的 Claude 主回合目前仅桥接网页搜索，生图请在支持 DSH 工具调用的 API 模型对话中使用。
 
+工具调用可将 `model` 和 `quality` 设为 `settings` 来跟随已保存的图片设置；`auto` 是一个明确的 API 质量档位。新图可省略 `referenceImages` 或传空数组；显式指定 `operation: edit` 时必须提供有效参考图，错误的真实参考图不会被丢弃后改生成新图。
+
 `gpt-image-2` 的质量为 `auto / low / medium / high`；两款 2.5 另支持 `xhigh / max`。质量按 Images API 的 `quality` 原样发送，不作为文字推理强度；不会自动换型号、降档或重试付费请求。输出先采用 PNG，每次一张，聊天预览之外的原图保存在 `~/.dsh/packycode-api/images/`（设置了 `DSH_HOME` 时跟随该目录）。参考图与可选 PNG mask 必须来自当前会话；不能用路径替代附件引用。
 
 用户填入图片 Key 后，可运行 `node scripts/image-check.mjs --all --edit` 验证三个型号与一次编辑；用 `--model <型号> --edit` 单独验证某个型号的生图和编辑，搭配 `--quality xhigh` 或 `--quality max` 验证质量。测试会消耗图片额度，输出写入 `.artifacts/`，日志只显示 Key 的掩码尾号，并记录网关回报的型号/质量。

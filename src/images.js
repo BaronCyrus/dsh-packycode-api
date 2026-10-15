@@ -24,6 +24,15 @@ class ImageRequestError extends Error {}
 
 const nonempty = value => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 
+/** Some model calls fill unused object fields with a zero-valued reference. */
+function emptyMaskReference(value) {
+  return value !== null && typeof value === 'object'
+    && (value.attachmentId === '' || value.attachmentId === `sha256:${'0'.repeat(64)}`)
+    && value.bytes === 0 && value.width === 0 && value.height === 0
+    && (value.name === undefined || value.name === '')
+    && (value.originalDimensions === undefined || (value.originalDimensions.width === 0 && value.originalDimensions.height === 0))
+}
+
 /** A bounded reader applies to both successful payloads and error envelopes. */
 async function readJson(response, maximum, signal) {
   const length = Number(response.headers.get('content-length'))
@@ -234,12 +243,13 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
     description: 'Generate or edit images through PackyCode using the separately configured image API key. Use only when the user requests image output. This is independent of the conversation model and Codex subscription. For a new image omit referenceImages; for edits include only the intended images from this session or read_image. Never replace an edit with text-only generation, silently change models or downgrade quality. Return the resulting image to the user. Rendering may take several minutes.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Complete image description or precise editing instructions.' },
-      model: { type: 'string', enum: [...IMAGE_MODEL_IDS], description: 'Defaults to the PackyCode image setting. Override only when the user requests a specific engine.' },
-      quality: { type: 'string', enum: [...IMAGE_QUALITIES], description: 'Defaults to the user image setting. xhigh and max require a 2.5 model; never downgrade automatically.' },
+      operation: { type: 'string', enum: ['generate', 'edit'], description: 'Use generate for a new image; edit requires 1-16 real referenceImages. If omitted, nonempty references select editing, while an omitted or empty array selects generation.' },
+      model: { type: 'string', enum: ['settings', ...IMAGE_MODEL_IDS], description: 'Use settings (or omit) to follow the PackyCode image setting. Choose an explicit engine only when the user requests one.' },
+      quality: { type: 'string', enum: ['settings', ...IMAGE_QUALITIES], description: 'Use settings (or omit) to follow the user image setting. auto is an explicit API quality, not a request to follow settings. xhigh and max require a 2.5 model; never downgrade automatically.' },
       size: { type: 'string', description: 'auto or widthxheight, e.g. 1024x1024; both edges multiples of 16, each <=3840, ratio <=3:1, pixels 655360..8294400.' },
       background: { type: 'string', enum: ['auto', 'opaque', 'transparent'] },
-      referenceImages: { type: 'array', items: referenceSchema, description: '1-16 complete attachment references for editing. Paths and unrelated images are not accepted.' },
-      maskImage: { ...referenceSchema, description: 'Optional PNG mask from this session. Same dimensions as first reference, under 4 MB; alpha=0 marks the area to edit.' },
+      referenceImages: { type: 'array', items: referenceSchema, description: '1-16 complete attachment references for editing. Omit or use [] for a new image. Paths and unrelated images are not accepted; never drop real references after an edit fails.' },
+      maskImage: { ...referenceSchema, description: 'Omit for new images and edits without a mask. Never invent a reference. Optional PNG mask from this session, matching the first reference and under 4 MB; alpha=0 marks the area to edit.' },
     },
     output: {
       schema: {
@@ -264,15 +274,21 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       if (!preference.imageEnabled) throw new ImageRequestError('PackyCode images are disabled in settings')
       if (exec?.agent?.id === undefined) throw new ImageRequestError('PackyCode images require a session-owned tool call')
       const signal = exec.signal
-      const editing = args.referenceImages !== undefined
-      if (args.maskImage !== undefined && !editing) throw new ImageRequestError('PackyCode image mask requires referenceImages')
+      const hasReferences = Array.isArray(args.referenceImages) && args.referenceImages.length > 0
+      if (args.operation === 'generate' && hasReferences) throw new ImageRequestError('PackyCode image generation cannot include reference images; use edit')
+      const editing = args.operation === 'edit' || hasReferences
+      const maskImage = emptyMaskReference(args.maskImage) ? undefined : args.maskImage
+      if (maskImage !== undefined && !editing) throw new ImageRequestError('PackyCode image mask requires referenceImages')
       let messages
       try { messages = editing ? await getSessionMessages(exec.agent.id) : undefined }
       catch { throw new ImageRequestError('PackyCode could not read the current session image references') }
       const images = editing ? await readReferences(args.referenceImages, attachments, messages, signal) : undefined
-      const masks = args.maskImage === undefined ? undefined : await readReferences([args.maskImage], attachments, messages, signal)
+      const masks = maskImage === undefined ? undefined : await readReferences([maskImage], attachments, messages, signal)
       if (!getPreference().imageEnabled) throw new ImageRequestError('PackyCode images are disabled in settings')
-      const result = await client.request({ ...args, model: args.model ?? preference.imageModel, quality: args.quality ?? preference.imageQuality }, { signal, images, mask: masks?.[0] })
+      const result = await client.request({ ...args,
+        model: args.model === 'settings' ? preference.imageModel : args.model ?? preference.imageModel,
+        quality: args.quality === 'settings' ? preference.imageQuality : args.quality ?? preference.imageQuality,
+      }, { signal, images, mask: masks?.[0] })
       onGenerated?.()
       signal?.throwIfAborted()
       // DSH may resize its chat preview. Preserve the original bytes separately.
