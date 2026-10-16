@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.11
 
 - **Gemini tool continuations send no real thought signature.** Gemini 4 Argon long tasks ended in HTTP 400 `Invalid thought signature.` (`packy_upstream_error`) after DSH's retries. PackyCode support attributes this to its native Gemini route not handling the signature field in tool calls. It advises against resending through that route and recommends that clients ignore the field. Requests for both Gemini models now replace every thought signature with Google's documented `skip_thought_signature_validator`, which also fills the first function call of each step whose response came back unsigned. Only the signature field changes: the protocol (`google-generative-ai`), base URL, model IDs, thinking levels and DSH's stored replay state are unchanged, and no request is routed elsewhere. Google notes that skipped signatures can weaken reasoning continuity across tool steps. Flash keeps its one resend after an HTTP 400 signature refusal; such a refusal still never disables or rotates a key.
 - Validation, 2026-10-16: 458 offline tests (one new; four failed without the change), both rebuilt bundles and the versioned tarball. Live, only the signature field changed between runs.
