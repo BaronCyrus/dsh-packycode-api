@@ -483,6 +483,7 @@ export {
 export {
   classifyClientPolicy,
   classifyGatewayFailure,
+  classifyUpstreamServerError,
   explainClientPolicyFailure,
   explainCliClientPolicyFailure,
   explainCliGroupFailure,

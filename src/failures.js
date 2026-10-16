@@ -59,6 +59,25 @@ export function classifyClientPolicy(message) {
 }
 
 /**
+ * OpenAI's generic transient failure: the sentence its `server_error` carries,
+ * or the `server_error:` prefix pi-ai writes when the event names the code.
+ * The gateway can relay it inside a stream it has already answered 200 for —
+ * an SSE `error` event with a 503 `server_error`, then `response.failed` — so
+ * no HTTP status comes with it.
+ */
+const UPSTREAM_SERVER_ERROR = /an error occurred while processing your request\b[\s\S]*\bhelp\.openai\.com\b|^(?:error code\s+)?server_error:/iu
+
+/**
+ * Whether a failure is the upstream's transient server error, which a resent
+ * request clears. The key is not at fault.
+ * @param message - provider failure text, as pi-ai carries it.
+ * @returns true for OpenAI's generic `server_error`.
+ */
+export function classifyUpstreamServerError(message) {
+  return UPSTREAM_SERVER_ERROR.test(typeof message === 'string' ? message : '')
+}
+
+/**
  * Classify a gateway failure message.
  *
  * Quota wording wins over a status token: an exhausted balance is often

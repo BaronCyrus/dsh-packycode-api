@@ -9,6 +9,7 @@ import { LlmError, QUOTA_EXCEEDED_CODE, resolveRetryPolicy } from '@deepseek-ai/
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PLUGIN_ID, PROVIDER } from './constants.js'
+import { classifyUpstreamServerError } from './failures.js'
 import { guardGeminiReplay } from './gemini-replay.js'
 import { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 
@@ -23,6 +24,26 @@ const REQUEST_LIMITS = Object.freeze({
   requestImagePixelBudget: 2048 * 2048,
   requestImageMaxBytes: 1024 * 1024,
 })
+
+/**
+ * Give the retry policy a failure the host adapter cannot classify.
+ *
+ * The host reads a failure's category from status words in its text. An
+ * upstream `server_error` relayed inside an accepted stream carries none, so
+ * it arrives as the catch-all PI_AI_ERROR, which no retry re-runs — while the
+ * same failure as an HTTP 500 is SERVER and is retried. Only the code
+ * changes: if every retry fails, the upstream sentence reaches the user as is.
+ * @param stream - the adapter's harness chunks.
+ * @returns the same chunks, with that failure filed as SERVER.
+ */
+async function* classifyRouteFailures(stream) {
+  for await (const chunk of stream) {
+    const failure = chunk.type === 'finish' && chunk.reason?.kind === 'error' ? chunk.reason.failure : undefined
+    yield failure?.code === 'PI_AI_ERROR' && classifyUpstreamServerError(failure.message)
+      ? { ...chunk, reason: { ...chunk.reason, failure: { ...failure, code: 'SERVER' } } }
+      : chunk
+  }
+}
 
 /**
  * pi-ai's credential store over the key ring.
@@ -132,6 +153,15 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   // Visibility affects discovery only. Resolution and prepared/in-flight
   // turns still use the complete catalog, including a now-hidden model.
   return new (class extends PiAiAdapter {
+    async prepareCall(provider, model, signal) {
+      const prepared = await super.prepareCall(provider, model, signal)
+      return { ...prepared, stream: options => classifyRouteFailures(prepared.stream(options)) }
+    }
+
+    stream(options) {
+      return classifyRouteFailures(super.stream(options))
+    }
+
     async listModels(provider) {
       return (await super.listModels(provider)).filter(model => isModelVisible(model.id))
     }
