@@ -1,6 +1,6 @@
 {
   "name": "dsh-packycode-api",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "packageManager": "pnpm@10.32.1",
   "description": "Use PackyCode API keys in DeepSeek Harness with multi-protocol models, image generation and editing, separate key rings, and balance display",
   "type": "module",
