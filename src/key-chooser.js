@@ -84,44 +84,6 @@ export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEF
     },
 
     /**
-     * The key one CLI run for `modelId` uses, with what the run may say about
-     * it: its label, its groups, the groups the model needs, and why it was
-     * chosen.
-     * @returns the choice, or undefined when no usable key is stored.
-     */
-    async forRun(modelId) {
-      const current = await active()
-      if (current === undefined) return undefined
-      const chosen = pickKeyForModel(modelId, current, usable(), covers)
-      return {
-        ...chosen,
-        model: modelId,
-        groups: groups.groupsOf(chosen.id),
-        required: groups.requiredGroups(modelId),
-        covers: covers(chosen.id, modelId),
-      }
-    },
-
-    /**
-     * Refresh what a run said about its key from the group reading, waiting
-     * at most `waitMs` for a reading in flight.
-     * @param runKey - the run's key description (`id`, `model`, …).
-     * @returns the description with the reading's groups and coverage.
-     */
-    async describe(runKey) {
-      let timer
-      await Promise.race([groups.read().catch(() => undefined), new Promise(resolve => { timer = setTimeout(resolve, waitMs) })])
-      clearTimeout(timer)
-      if (typeof runKey?.id !== 'string') return runKey
-      return {
-        ...runKey,
-        groups: groups.groupsOf(runKey.id) ?? runKey.groups,
-        required: groups.requiredGroups(runKey.model) ?? runKey.required,
-        covers: covers(runKey.id, runKey.model) ?? runKey.covers,
-      }
-    },
-
-    /**
      * The gateway exhausted or rejected a key: mark it unusable so the ring
      * moves on, then let the caller drop what depended on it.
      * @param kind - `quota` or `invalid-key`.

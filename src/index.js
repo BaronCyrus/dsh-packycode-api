@@ -19,13 +19,6 @@ import { join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 
 import { createBalanceReader } from './balance.js'
-import { PACKYCODE_MODEL_IDS } from './catalog.js'
-import { createClaudeCliAdapter } from './claude-adapter.js'
-import { DEFAULT_CLAUDE_MODE, createClaudeRunner } from './claude-cli.js'
-import { createClaudeCliManager } from './claude-install.js'
-import { createClaudeSearchBridge } from './claude-search-mcp.js'
-import { createClaudeImageService } from './claude-images.js'
-import { createClaudeCodeTool } from './claude-tool.js'
 import {
   CHANNEL,
   DEFAULT_API_HOST,
@@ -46,7 +39,6 @@ import { normalizeHost } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
 import { PackyCodeKeyRing } from './key-ring.js'
 import { createModelSelectionController } from './model-selection.js'
-import { AUTO_CLAUDE_MODE, claudeModeForSession, planModeForSession, planModeForToolExecution } from './permission.js'
 import { createPackyCodePluginManager } from './plugin-version.js'
 import { connectSettings, fieldValue, live, unwritable } from './preferences.js'
 import { createRouteAdapter } from './route.js'
@@ -54,7 +46,6 @@ import { createPackyCodeRpc } from './rpc.js'
 import { DEFAULT_SEARCH_BACKEND, SEARCH_BACKENDS, SEARCH_MODE_DEFAULT, SEARCH_MODES } from './search.js'
 import { createProfileSearchComposition } from './search-composition.js'
 import { createSearchController } from './search-controller.js'
-import { redactSecrets } from './secret-redactor.js'
 
 export const name = PLUGIN_ID
 /**
@@ -65,22 +56,10 @@ export const name = PLUGIN_ID
  */
 export const inject = ['llm', 'credentials']
 
-/** The model a CLI run without one is matched against for its key's groups. */
-const CLI_GROUP_MODEL = 'claude-opus-5-5'
-
 /** Host overrides and preferences; a profile that never sets them keeps the defaults. */
 export const Config = z.object({
   apiHost: z.string().default(DEFAULT_API_HOST),
   statusHost: z.string().default(DEFAULT_STATUS_HOST),
-  /** Path to the Claude Code CLI binary; empty means "look in the usual places, then PATH". */
-  claudeCliPath: z.string().default(''),
-  /**
-   * What the CLI may do on its own during a CLI-backed turn. `auto` follows the
-   * session's permission preset, so nothing needs configuring here.
-   */
-  claudeCliMode: z.union([AUTO_CLAUDE_MODE, 'read-only', 'edit', 'full']).default(AUTO_CLAUDE_MODE),
-  /** Working directory for CLI-backed turns; empty means "the session's workspace". */
-  claudeCliCwd: z.string().default(''),
   /**
    * Web search routing: `default` leaves DSH's search alone, `auto` searches
    * through PackyCode for PackyCode sessions only, `packycode` for every
@@ -160,95 +139,15 @@ export function apply(ctx, config) {
 
   // ── the model route ───────────────────────────────────────────────────────
 
-  /**
-   * The Claude Code CLI runner. PackyCode serves its Claude models only to the
-   * official CLI, so CLI-backed models are run by that CLI itself — with this
-   * plugin's endpoint and a ring key, in an isolated config home. Each run
-   * uses the active key unless its groups cannot reach the run's Claude model
-   * and another stored key's can, and reports which key it used by label.
-   */
-  const claudeCli = createClaudeCliManager({ explicitPath: () => config?.claudeCliPath })
-  const claudeRunner = createClaudeRunner({
-    binary: () => claudeCli.binary(),
-    resolveCredential: async ({ model } = {}) => {
-      // A delegated run without a model runs the CLI's default, a Claude model.
-      const choice = await keys.forRun(PACKYCODE_MODEL_IDS.includes(model) ? model : CLI_GROUP_MODEL)
-      if (choice === undefined) {
-        throw new Error('Claude Code CLI needs a usable PackyCode API key; add one under Settings → PackyCode')
-      }
-      const { key, ...described } = choice
-      return { ...described, baseUrl: hosts().apiHost, token: key }
-    },
-    createSearchBridge: async ({ signal, mode, imageContext, onImage }) => {
-      // MCP HTTP callbacks do not inherit the originating agent's context.
-      // Capture the trusted session now, never from model-supplied arguments.
+  // Every model uses DSH's native HTTP/tool loop; no implicit CLI fallback.
+  const registration = ctx.llm.registerAdapter([PROVIDER], createRouteAdapter({
+    ring, keys, fallbackSessionId, resolveAttachments: attachments, isModelVisible: modelSelection.isVisible,
+    resolveWorkingDirectory: sessionId => {
       const session = currentSession()
-      const sessionId = imageContext?.sessionId ?? session?.id
-      const secrets = new Set((await Promise.all([ring.secrets(), imageRing.secrets()])).flat().map(entry => entry.key))
-      const store = attachments()
-      const image = mode === 'plan' ? undefined : createClaudeImageService({
-        sessionId,
-        messages: imageContext?.messages ?? session?.deriveMessages?.() ?? [],
-        client: imageClient, attachments: store, getPreference: images.preference,
-        imageDirectory: join(dshHome, 'packycode-api', 'images'),
-        onGenerated: () => imageBalance.invalidate(),
-        onImage,
-      })
-      const bridge = await createClaudeSearchBridge({
-        signal,
-        image,
-        backend: () => search.status().searchBackend,
-        // Direct provider only: DSH routing/off does not change CLI searches
-        // or silently send them to another provider's credentials.
-        search: (request, searchSignal) => search.packycode.search({ ...request, sessionId: sessionId ?? fallbackSessionId }, searchSignal),
-        sanitize: async text => {
-          for (const entry of (await Promise.all([ring.secrets(), imageRing.secrets()])).flat()) secrets.add(entry.key)
-          return redactSecrets(text, [...secrets])
-        },
-      })
-      return {
-        ...bridge,
-        scrub: text => redactSecrets(bridge.scrub(text), [...secrets]),
-        redactionValues: () => [...bridge.redactionValues(), ...secrets],
-      }
+      // A background/title call for another session must not inherit the
+      // foreground workspace. Read fresh metadata on every model request.
+      return session && (sessionId === undefined || session.id === sessionId) ? session.header?.cwd : undefined
     },
-  })
-  ctx.effect(() => () => claudeRunner.close(), 'packycode-api: CLI invocation lifetimes')
-
-  /** The session's own workspace, so a CLI turn edits the project in view. */
-  const resolveCliCwd = () => {
-    const configured = typeof config?.claudeCliCwd === 'string' ? config.claudeCliCwd.trim() : ''
-    if (configured !== '') return configured
-    const cwd = currentSession()?.header?.cwd
-    // No agent in scope; the process directory is the honest fallback.
-    return typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd()
-  }
-  /**
-   * The most a CLI turn may do: an explicit setting when the profile names
-   * one, otherwise what the session's permission preset allows.
-   */
-  const cliModeCeiling = session => {
-    const configured = config?.claudeCliMode
-    return configured === undefined || configured === AUTO_CLAUDE_MODE ? claudeModeForSession(ctx, session) : configured
-  }
-
-  // CLI-backed ids run the Claude Code CLI; everything else keeps the pi-ai path.
-  const registration = ctx.llm.registerAdapter([PROVIDER], createClaudeCliAdapter({
-    inner: createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments: attachments, isModelVisible: modelSelection.isVisible }),
-    runner: claudeRunner,
-    // Plan mode is "do not implement yet" for this turn, so it wins over the
-    // permission ceiling and an explicit claudeCliMode pin. Titles ignore it.
-    resolveMode: () => {
-      const session = currentSession()
-      return planModeForSession(ctx, session) ? 'plan' : cliModeCeiling(session) ?? DEFAULT_CLAUDE_MODE
-    },
-    resolveCwd: resolveCliCwd,
-    // Images in a CLI-backed turn are read from the same store the HTTP route
-    // reads them from, and sent to the CLI as image blocks.
-    resolveAttachments: attachments,
-    // A refusal from a run that started before its key's groups were known
-    // is explained from a fresh reading.
-    explainKey: runKey => keys.describe(runKey),
   }))
   refreshModels = () => {
     // Atomic replacement announces the changed catalog to DSH's model
@@ -346,7 +245,7 @@ export function apply(ctx, config) {
     search.register(webCtx.web, (callback, label) => scope.effect(callback, label))
   })
 
-  // ── browser surface and the delegation tool ───────────────────────────────
+  // ── browser surface and native image tool  ───────────────────────────────
 
   void keys.remember().catch(() => undefined)
 
@@ -367,7 +266,6 @@ export function apply(ctx, config) {
     groups,
     hosts,
     preference: hostPreference,
-    claudeCli,
     pluginManager: createPackyCodePluginManager(),
     search,
     modelSelection,
@@ -403,18 +301,6 @@ export function apply(ctx, config) {
     )
   })
 
-  ctx.inject(['tools'], toolsCtx => {
-    ctx.effect(
-      () => toolsCtx.tools.register(createClaudeCodeTool({
-        runner: claudeRunner,
-        modeCeiling: cliModeCeiling,
-        // A selected transition takes effect only at the next accepted step,
-        // never halfway through the batch executing this tool.
-        planActive: (session, agent) => planModeForToolExecution(ctx, session, agent),
-      })),
-      'packycode-api: claude_code tool',
-    )
-  })
   ctx.inject(['tools', 'attachments'], imageCtx => {
     const store = imageCtx.attachments
     if (typeof store?.saveImage !== 'function' || typeof store?.readImage !== 'function') return
@@ -430,43 +316,6 @@ export function apply(ctx, config) {
   })
 }
 
-export {
-  buildClaudeArgs,
-  buildClaudeEnvironment,
-  buildClaudeInput,
-  CLAUDE_CLI_MODES,
-  CLAUDE_MISSING_MESSAGE,
-  CLAUDE_NPM_PACKAGE,
-  claudeBinaryCandidates,
-  createClaudeRunner,
-  DEFAULT_APPEND_SYSTEM_PROMPT,
-  describeRunKey,
-  findClaudeBinary,
-  locateClaudeBinary,
-  parseClaudeResult,
-  readClaudeStreamEvents,
-  resolveSpawnCommand,
-  summarizeToolUse,
-} from './claude-cli.js'
-export { CLAUDE_INSTALL_COMMAND, createClaudeCliManager, explainNpmFailure, locateNpm, npmCandidates, parseClaudeVersion } from './claude-install.js'
-export {
-  buildDelegatedContent,
-  CLI_BACKED_MODEL_IDS,
-  CLI_IMAGE_LIMITS,
-  createClaudeCliAdapter,
-  delegationInstructions,
-  keyNote,
-  renderAuxiliaryPrompt,
-  renderDelegatedPrompt,
-  renderTitlePrompt,
-  TITLE_MODEL_ID,
-  TITLE_MODEL_ROUTES,
-  unwrapTitle,
-} from './claude-adapter.js'
-export { CLAUDE_TOOL_INSTRUCTIONS, createClaudeCodeTool } from './claude-tool.js'
-export { createClaudeSearchBridge, cliSearchInstructions } from './claude-search-mcp.js'
-export { createClaudeImageService, MCP_IMAGE_SCHEMA, MAX_CLI_IMAGE_CALLS } from './claude-images.js'
-export { AUTO_CLAUDE_MODE, capClaudeMode, claudeModeFor, claudeModeForSession, planModeForSession, planModeForToolExecution } from './permission.js'
 export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
 export { accountHostOrder, normalizeHost, statusHostOrder } from './hosts.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
@@ -484,9 +333,10 @@ export {
   classifyClientPolicy,
   classifyGatewayFailure,
   classifyUpstreamServerError,
+  classifyTestMessagePolicy,
+  explainTestMessagePolicyFailure,
+  TEST_MESSAGE_POLICY_CODE,
   explainClientPolicyFailure,
-  explainCliClientPolicyFailure,
-  explainCliGroupFailure,
   normalizeFailureMessage,
 } from './failures.js'
 export { createDiagnostics, DIAGNOSTICS_FORMAT, DIAGNOSTICS_LIMITS, summarizeSessionEvents } from './diagnostics.js'

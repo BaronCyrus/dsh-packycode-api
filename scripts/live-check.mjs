@@ -13,13 +13,12 @@
  * It prints no key material, only a masked tail. Run it from the repository
  * root after `pnpm run build`:
  *
- *   node scripts/live-check.mjs [--with-cli] [--with-search] [--with-vision] [--key-label LABEL] [--model MODEL]
+ *   node scripts/live-check.mjs [--with-search] [--with-vision] [--key-label LABEL] [--model MODEL]
  *
- * `--with-cli` also runs each CLI-backed Claude model through the local
- * Claude Code CLI; `--with-search` runs one web search per backend. Both
- * spend more quota than the default run.
+ * `--with-search` runs one web search per backend, spending more quota
+ * than the default run.
  * `--model` limits the run to one HTTP model, its balance/groups and optional
- * vision checks, skipping unrelated rotation/CLI/search/RPC checks.
+ * vision checks, skipping unrelated rotation/search/RPC checks.
  * `--with-vision` checks DeepSeek (or the selected HTTP model) with two color
  * images through the host's attachment service; the prompt hides the colors.
  */
@@ -27,15 +26,13 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
+import { createBusinessScenario, matchesBusinessAnswer } from './claude-scenarios.mjs'
 
 import {
-  CLI_BACKED_MODEL_IDS,
-  CLAUDE_CLI_MODES,
+  PACKYCODE_MODEL_IDS,
   PackyCodeKeyRing,
   SEARCH_BACKENDS,
   createBalanceReader,
-  createClaudeCliAdapter,
-  createClaudeRunner,
   createGroupReader,
   createKeyChooser,
   createPackyCodeRpc,
@@ -46,7 +43,7 @@ import {
 const PROVIDER = 'packycode'
 const SESSION_ID = 'live-check-session'
 const HOSTS = Object.freeze({ apiHost: 'https://cf.api.fan', statusHost: 'https://www.packyapi.ai' })
-const HTTP_MODELS = ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7', 'gemini-4-argon', 'gemini-3.8-flash']
+const HTTP_MODELS = [...PACKYCODE_MODEL_IDS]
 
 /** In-memory stand-in for the DSH credential-record service. */
 function fakeCredentials() {
@@ -157,9 +154,12 @@ async function main() {
 
   console.log('3) one answer per HTTP model, through the registered route')
   for (const id of selectedModel === undefined ? HTTP_MODELS : [selectedModel]) {
-    const result = await turn(route.adapter, id)
+    const scenario = id.startsWith('claude-') ? createBusinessScenario('text') : undefined
+    const result = await turn(route.adapter, id, scenario?.prompt)
     console.log(`   ${id.padEnd(16)} ${mask(describe(result))}`)
-    if (result.finish?.kind !== 'stop') process.exitCode = 1
+    const valid = scenario === undefined || matchesBusinessAnswer(scenario, result.answer)
+    if (!valid) console.log(`   business validation failed: ${mask(JSON.stringify({ scenario: scenario.id, answer: result.answer, finish: result.finish })).slice(0, 800)}`)
+    if (result.finish?.kind !== 'stop' || !valid) process.exitCode = 1
   }
   if (selectedModel !== undefined) {
     if (process.argv.includes('--with-vision')) await checkVision(selectedModel)
@@ -185,32 +185,8 @@ async function main() {
   const { finish } = await turn(rejected.adapter, 'deepseek-flash')
   console.log(`   finish: ${mask(JSON.stringify(finish)?.slice(0, 200))}`)
 
-  if (process.argv.includes('--with-cli')) {
-    console.log('\n6) the model-shaped bridge: choosing a Claude model runs the CLI')
-    const bridged = createClaudeCliAdapter({
-      inner: route.adapter,
-      runner: createClaudeRunner({
-        resolveCredential: async ({ model } = {}) => {
-          const choice = await route.keys.forRun(model ?? 'claude-opus-5-5')
-          const { key: token, ...described } = choice
-          return { ...described, baseUrl: HOSTS.apiHost, token }
-        },
-      }),
-      resolveMode: () => 'read-only',
-      resolveCwd: () => process.cwd(),
-    })
-    for (const id of CLI_BACKED_MODEL_IDS) {
-      const started = Date.now()
-      const result = await turn(bridged, id, 'Reply with exactly: cli-bridge-ok')
-      console.log(`   ${id.padEnd(18)} ${mask(describe(result))} (${Math.round((Date.now() - started) / 1000)}s)`)
-    }
-  } else {
-    console.log('\n6) model-shaped bridge skipped (pass --with-cli to run the real CLI)')
-    console.log(`   CLI-backed models: ${CLI_BACKED_MODEL_IDS.join(', ')} · modes: ${Object.keys(CLAUDE_CLI_MODES).join(', ')}`)
-  }
-
   if (process.argv.includes('--with-search')) {
-    console.log('\n7) one web search per backend')
+    console.log('\n6) one web search per backend')
     for (const backend of SEARCH_BACKENDS) {
       const provider = createPackyCodeSearchProvider({ ring: route.ring, hosts: () => HOSTS, backend: () => backend, covers: route.keys.covers, onKeyFailure: route.keys.onKeyFailure })
       const started = Date.now()
@@ -222,10 +198,10 @@ async function main() {
       }
     }
   } else {
-    console.log('\n7) web search skipped (pass --with-search to run one search per backend)')
+    console.log('\n6) web search skipped (pass --with-search to run one search per backend)')
   }
 
-  console.log('\n8) what the settings panel receives over RPC')
+  console.log('\n7) what the settings panel receives over RPC')
   const rpcRing = new PackyCodeKeyRing(fakeCredentials())
   const handler = createPackyCodeRpc({
     ring: rpcRing,
@@ -244,7 +220,7 @@ async function main() {
   console.log(`   projections carry key material: ${JSON.stringify([projection, groupProjection]).includes(key) ? 'YES (bug)' : 'no'}`)
 
   if (process.argv.includes('--with-vision')) {
-    console.log('\n9) DeepSeek identifies images through the registered route')
+    console.log('\n8) DeepSeek identifies images through the registered route')
     await checkVision('deepseek-flash')
   }
 }

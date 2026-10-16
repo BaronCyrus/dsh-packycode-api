@@ -55,7 +55,7 @@ function host({ generation = '0.2', writable = true, failWrite = false, initial 
     inject(names, callback) {
       if (names.includes('settings')) return callback({ settings, effect: ctx.effect })
       if (names.includes('connection')) return callback({ effect: ctx.effect, connection: { rpc: { handle(_channel, handler) { seen.handler = handler; return () => {} } } } })
-      // These fixtures intentionally mount no search or CLI tool service.
+      // These fixtures intentionally mount no search or image tool service.
     },
     effect(callback) { return callback() },
   }

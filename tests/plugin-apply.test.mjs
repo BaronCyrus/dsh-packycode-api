@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { apply, inject, name } from '../src/index.js'
+import { apply, Config, inject, name } from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
+import { PackyCodeKeyRing } from '../src/key-ring.js'
+import { anthropicStream } from './fixtures/anthropic.mjs'
 
 /**
  * A context that records what the plugin registers. Every service this plugin
@@ -79,20 +81,32 @@ test('registers one route and one directory entry, and defers the browser surfac
   // `webServer` rides with `connection`: channel registration writes through
   // `owner.webServer`, so a scope holding only `connection` cannot register.
   // `web` carries the search providers; a profile without it still boots.
-  assert.deepEqual(ctx.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools'], ['tools', 'attachments']])
+  assert.deepEqual(ctx.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools', 'attachments']])
   assert.equal(registered.rpc.length, 1)
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))
 
-  // The Claude Code bridge registers one tool with a bounded schema.
-  assert.equal(registered.tools.length, 1)
-  const tool = registered.tools[0]
-  assert.equal(tool.name, 'claude_code')
-  // defineTool converts the field spec into JSON Schema before registration.
-  assert.deepEqual(Object.keys(tool.parameters.properties), ['prompt', 'mode', 'model', 'cwd'])
-  assert.deepEqual(tool.parameters.required, ['prompt'])
-  assert.deepEqual([...tool.parameters.properties.mode.enum], ['read-only', 'edit', 'full'])
-  assert.equal(typeof tool.execute, 'function')
+  // There is no delegated tool or installer, even when the tools service exists.
+  assert.deepEqual(registered.tools, [])
+  assert.equal(registered.effects.some(label => /CLI|claude_code/u.test(label)), false)
+  for (const field of ['claudeCliPath', 'claudeCliMode', 'claudeCliCwd']) {
+    assert.equal(Object.hasOwn(Config.dict, field), false)
+  }
+  for (const endpoint of ['claude-cli/status', 'claude-cli/install']) {
+    const reply = await registered.rpc[0].handler(endpoint)
+    assert.equal(reply.ok, false)
+    assert.equal(reply.error.message, 'Unknown PackyCode endpoint')
+  }
+})
+
+test('native image generation remains registered after CLI delegation is removed', async () => {
+  const { ctx, registered } = stubContext()
+  ctx.attachments = { saveImage() {}, readImage() {} }
+  apply(ctx)
+  const reply = await registered.rpc[0].handler('images/keys/add', { key: 'sk-image-fixture', label: 'images' })
+  assert.equal(reply.ok, true)
+  assert.deepEqual(registered.tools.map(tool => tool.name), ['packycode_image_generate'])
+  assert.equal(typeof registered.tools[0].execute, 'function')
 })
 
 test('a profile without a connection service still registers the route', () => {
@@ -106,6 +120,52 @@ test('a profile without a connection service still registers the route', () => {
   apply(ctx)
   assert.equal(registered.adapters.length, 1)
   assert.deepEqual(registered.rpc, [])
+})
+
+test('registered Claude turns use HTTP and ignore obsolete CLI settings from an older profile', async t => {
+  const { ctx, registered } = stubContext()
+  await new PackyCodeKeyRing(ctx.credentials).add('sk-native-apply-fixture', 'native')
+  apply(ctx, { claudeCliPath: '/nonexistent/packycode-native-fixture-cli', claudeCliMode: 'full', claudeCliCwd: '/nonexistent/workspace' })
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const request = new Request(input, init)
+    const body = await request.json()
+    requests.push(body)
+    return anthropicStream(body.model)
+  })
+  for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+    const prepared = await registered.adapters[0].adapter.prepareCall('packycode', model)
+    const chunks = []
+    for await (const chunk of prepared.stream({ provider: 'packycode', model, maxTokens: 2048, messages: [{ role: 'user', content: [{ type: 'text', text: 'ok' }] }] })) chunks.push(chunk)
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.equal(requests.at(-1).model, model)
+  }
+  assert.equal(requests.length, 3)
+})
+
+test('the registered route clarifies only the initiating session cwd and follows later directory changes', async t => {
+  const { ctx, registered } = stubContext()
+  const session = { id: 'cwd-session', header: { cwd: '/tmp/真实目录.' } }
+  ctx.get = name => name === 'agents' ? { currentInitiator: () => ({ session }) } : undefined
+  await new PackyCodeKeyRing(ctx.credentials).add('sk-cwd-apply-fixture', 'fixture')
+  apply(ctx)
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const body = await new Request(input, init).json(); requests.push(body)
+    return anthropicStream(body.model)
+  })
+  const call = await registered.adapters[0].adapter.prepareCall('packycode', 'claude-haiku-5-5')
+  for (const sessionId of ['cwd-session', 'unrelated-session', 'cwd-session']) {
+    const cwd = session.header.cwd
+    for await (const _ of call.stream({ provider: 'packycode', model: 'claude-haiku-5-5', sessionId,
+      system: `Your working directory is ${cwd}.`, maxTokens: 2048,
+      messages: [{ role: 'user', content: [{ type: 'text', text: '统计当前目录的文件。' }] }],
+    })) { /* Drain the real adapter stream. */ }
+    const system = requests.at(-1).system.map(block => block.text ?? '').join('\n')
+    assert.equal(system.includes('Current working directory (exact JSON string):'), sessionId === session.id)
+    if (sessionId === session.id) assert.ok(system.includes(JSON.stringify(cwd)))
+    session.header.cwd = 'C:\\Users\\测试\\Other Project'
+  }
 })
 
 test('the RPC surface refuses key material and answers status without one', async () => {

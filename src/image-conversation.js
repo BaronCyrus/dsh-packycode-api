@@ -1,5 +1,6 @@
 /** Project this plugin's durable image results into chat without duplicating context. */
 export const IMAGE_CHAT_KIND = 'packycode-image-output'
+// Legacy claude_code records remain readable; no CLI tool is registered or run.
 const IMAGE_TOOLS = new Set(['packycode_image_generate', 'claude_code'])
 const hasImage = content => Array.isArray(content) && content.some(part => part.type === 'image' && part.attachment)
 
@@ -22,7 +23,8 @@ function successfulImages(event) {
   const source = event?.data?.message?.source
   if (event?.type !== 'assistant/message' || source?.kind !== 'model' || source.provider !== 'packycode'
     || !/^claude-/u.test(source.model ?? '')) return []
-  // A view projection of real assistant image blocks, never a logged fake
+  // Older CLI-backed sessions saved assistant image blocks. Keep their view
+  // projection and stable IDs readable, never create a logged fake
   // tool invocation. Replay/ownership uses the durable assistant reference.
   return (event.data.message.content ?? []).flatMap((block, index) => block.type === 'image' && block.attachment
     ? [{ type: 'tool-result', toolCallId: `packycode-cli-image-${event.seq}-${index}`, content: [block] }] : [])

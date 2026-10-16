@@ -120,6 +120,6 @@ test('a profile without a settings provider still serves its route', () => {
   apply(ctx)
   assert.equal(seen.installed, undefined)
   assert.equal(seen.adapters.length, 1)
-  assert.deepEqual(seen.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools'], ['tools', 'attachments']])
+  assert.deepEqual(seen.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools', 'attachments']])
   assert.equal(seen.channel, '/packycode-api')
 })

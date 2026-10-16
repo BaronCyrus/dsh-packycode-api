@@ -93,6 +93,18 @@ test('an unrelated stream passes through untouched', () => {
   assert.equal(guardKeyRotation('nope'), 'nope')
 })
 
+test('reflected credentials are redacted before a terminal error or thrown failure reaches DSH', async () => {
+  const key = 'sk-reflected-provider-fixture-1234'
+  const stream = guardKeyRotation(fakeStream([{ type: 'error', error: { errorMessage: `upstream echoed ${key}` } }]), { key })
+  for await (const event of stream) assert.ok(!JSON.stringify(event).includes(key))
+  const thrown = guardKeyRotation({ async *[Symbol.asyncIterator]() { throw new Error(`upstream echoed ${key}`) } }, { key })
+  await assert.rejects(async () => { for await (const _event of thrown) void _event }, error => {
+    assert.ok(!error.message.includes(key))
+    assert.ok(!error.cause?.message?.includes(key))
+    return true
+  })
+})
+
 test('a client-policy refusal is explained without touching the key ring', async () => {
   const failures = []
   const policy = '403 {"error":{"type":"packy_api_error","message":"This API endpoint is only accessible via the official Claude CLI (request id: 01M4Q6FJ0)"}}'
@@ -131,4 +143,12 @@ test('a thrown client-policy refusal is explained too', async () => {
   await assert.rejects(async () => {
     for await (const _item of guarded) void _item
   }, /boom/u)
+})
+
+test('a thrown test-message refusal leaves the key intact and has a distinct explanation', async () => {
+  const failures = []
+  const stream = { async *[Symbol.asyncIterator]() { throw new Error('403 Your client is already connected and authorized. There is no need to send test messages to verify the connection.') } }
+  const guarded = guardKeyRotation(stream, { onKeyFailure: (...args) => failures.push(args) })
+  await assert.rejects(async () => { for await (const _item of guarded) void _item }, /GATEWAY_TEST_MESSAGE/u)
+  assert.deepEqual(failures, [])
 })

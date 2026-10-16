@@ -9,14 +9,15 @@
  */
 
 import { createProvider } from '@earendil-works/pi-ai'
-import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 
 import { PACKYCODE_MODELS } from './catalog.js'
+import { createClaudeApi } from './claude-api.js'
 import { DEFAULT_API_HOST, DISPLAY_NAME, PROVIDER } from './constants.js'
 import { createGeminiApi } from './gemini-api.js'
-import { classifyClientPolicy, classifyGatewayFailure, explainClientPolicyFailure, normalizeFailureMessage } from './failures.js'
+import { redactSecrets } from './secret-redactor.js'
+import { classifyClientPolicy, classifyGatewayFailure, classifyTestMessagePolicy, explainClientPolicyFailure, explainTestMessagePolicyFailure, normalizeFailureMessage } from './failures.js'
 
 const TERMINAL_EVENTS = new Set(['error', 'done'])
 
@@ -47,7 +48,7 @@ export function createPackyCodeProvider() {
     api: {
       'openai-completions': openAICompletionsApi(),
       'openai-responses': openAIResponsesApi(),
-      'anthropic-messages': anthropicMessagesApi(),
+      'anthropic-messages': createClaudeApi(),
       'google-generative-ai': createGeminiApi(),
     },
   })
@@ -86,9 +87,20 @@ export function guardKeyRotation(stream, { onKeyFailure, key } = {}) {
 
   const inspect = value => {
     if (value === null || typeof value !== 'object' || !TERMINAL_EVENTS.has(value.type)) return value
+    // An upstream can echo credentials in its error body. Redact the whole
+    // message before classification, host rendering or diagnostic truncation.
+    for (const carrierKey of ['error', 'message']) {
+      const carrier = value[carrierKey]
+      if (typeof carrier?.errorMessage !== 'string') continue
+      const safe = redactSecrets(carrier.errorMessage, key === undefined ? [] : [key])
+      if (safe !== carrier.errorMessage) value = { ...value, [carrierKey]: { ...carrier, errorMessage: safe } }
+    }
     for (const carrierKey of ['error', 'message']) {
       const carrier = value[carrierKey]
       if (carrier === null || typeof carrier !== 'object') continue
+      if (classifyTestMessagePolicy(carrier.errorMessage)) {
+        return { ...value, [carrierKey]: { ...carrier, errorMessage: explainTestMessagePolicyFailure() } }
+      }
       // A client-policy refusal is about this client, not this key: explain it
       // and leave the ring alone.
       if (classifyClientPolicy(carrier.errorMessage)) {
@@ -116,17 +128,23 @@ export function guardKeyRotation(stream, { onKeyFailure, key } = {}) {
                 const value = inspect(item.value)
                 return value === item.value ? item : { ...item, value }
               } catch (error) {
-                const text = error instanceof Error ? error.message : String(error)
+                const original = error instanceof Error ? error.message : String(error)
+                const text = redactSecrets(original, key === undefined ? [] : [key])
+                const cause = text === original ? error : new Error(text)
+                if (classifyTestMessagePolicy(text)) {
+                  throw new Error(explainTestMessagePolicyFailure(), { cause })
+                }
                 // The policy refusal is worth explaining even mid-stream; a
                 // key fault is only the key's when nothing was answered yet.
                 if (classifyClientPolicy(text)) {
-                  throw new Error(explainClientPolicyFailure(), { cause: error })
+                  throw new Error(explainClientPolicyFailure(), { cause })
                 }
                 const kind = observed ? undefined : classifyGatewayFailure(text)
                 if (kind !== undefined) {
                   report(kind, text)
-                  throw new Error(normalizeFailureMessage(text, kind), { cause: error })
+                  throw new Error(normalizeFailureMessage(text, kind), { cause })
                 }
+                if (text !== original) throw cause
                 throw error
               }
             },

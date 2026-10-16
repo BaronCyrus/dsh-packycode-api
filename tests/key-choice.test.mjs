@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { apply } from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
+import { anthropicStream } from './fixtures/anthropic.mjs'
 
 const KEY_CODEX = 'sk-codex-only-key-AAAA'
 const KEY_DEEPSEEK = 'sk-deepseek-key-BBBB'
@@ -39,6 +37,11 @@ function fakeGateway() {
     const url = typeof input === 'string' ? input : input.url
     const headers = new Headers(init.headers ?? (typeof input === 'string' ? undefined : input.headers))
     const key = headers.get('authorization')?.replace(/^Bearer /u, '')
+    if (new URL(url).pathname === '/v1/messages') {
+      const body = JSON.parse(init.body)
+      chatKeys.push(key)
+      return anthropicStream(body.model)
+    }
     if (url.endsWith('/api/pricing')) return Response.json(PRICING)
     if (url.endsWith('/v1/models')) return Response.json({ data: [] })
     if (url.endsWith('/v1/chat/completions')) {
@@ -116,39 +119,24 @@ test('an HTTP turn runs on a key whose groups reach its model, without moving th
   assert.doesNotMatch(JSON.stringify(groups), /sk-(codex|deepseek)/u)
 })
 
-test('a Claude CLI turn after "use this key" runs on that key, and otherwise on one with a Claude group', async t => {
+test('a native Claude turn after "use this key" uses that key, otherwise one with Claude coverage', async t => {
   const gateway = fakeGateway()
   t.after(gateway.restore)
-  const dir = await mkdtemp(join(tmpdir(), 'packycode-key-choice-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
-  // A stand-in CLI: records the key it was started with, prints one result.
-  const out = join(dir, 'keys.log')
-  const cli = join(dir, 'claude')
-  await writeFile(cli, `#!/usr/bin/env node
-const { appendFileSync } = require('node:fs')
-appendFileSync(${JSON.stringify(out)}, process.env.ANTHROPIC_AUTH_TOKEN.slice(-4) + '\\n')
-process.stdin.resume()
-process.stdin.on('end', () => {
-  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } }))
-})
-`)
-  await chmod(cli, 0o755)
-
   const { ctx, seen } = context()
-  apply(ctx, { claudeCliPath: cli, claudeCliMode: 'read-only', claudeCliCwd: dir })
+  apply(ctx, {})
   await seen.handler('keys/add', { key: KEY_CODEX, label: 'codex' })
   await seen.handler('keys/add', { key: KEY_CLAUDE, label: 'claude' })
 
-  // Active key without a Claude group: the run uses the cc key and says so.
+  // Active key without Claude coverage: the native bearer uses the cc key.
   const passedOver = await turn(seen.adapter, 'claude-opus-5-5')
-  const notes = passedOver.filter(chunk => chunk.type === 'reasoning-delta').map(chunk => chunk.text).join('')
-  assert.match(notes, /当前 Key「codex」的分组不能用 claude-opus-5-5，本轮改用 Key「claude」（分组：cc）/u)
+  assert.equal(passedOver.at(-1).reason.kind, 'stop')
+  assert.deepEqual(gateway.chatKeys, [KEY_CLAUDE])
 
   // "Use this key" on the cc key: the very next run uses it, named plainly.
   const status = await seen.handler('status', {})
   await seen.handler('keys/select', { id: status.value.keys.find(key => key.label === 'claude').id })
   const selected = await turn(seen.adapter, 'claude-opus-5-5')
-  assert.match(selected.filter(chunk => chunk.type === 'reasoning-delta').map(chunk => chunk.text).join(''), /▸ 使用 Key「claude」（分组：cc）/u)
+  assert.equal(selected.at(-1).reason.kind, 'stop')
 
-  assert.deepEqual((await readFile(out, 'utf8')).trim().split('\n'), ['CCCC', 'CCCC'])
+  assert.deepEqual(gateway.chatKeys, [KEY_CLAUDE, KEY_CLAUDE])
 })

@@ -35,7 +35,9 @@ async function accountsFixture(t, { keys = [], statusFails = false, removeAllFai
       return (chat = { ...chat, activeId: undefined, keys: [] })
     },
   }
+  const endpoints = []
   const rpc = { async call(channel, endpoint, payload) {
+    endpoints.push(endpoint)
     assert.equal(channel, '/packycode-api')
     const answer = answers[endpoint]
     if (answer === undefined) return { ok: false, error: { code: 'packycode/request-failed', message: 'PackyCode fixture: not under test', details: {} } }
@@ -71,6 +73,8 @@ async function accountsFixture(t, { keys = [], statusFails = false, removeAllFai
     && node.findAll(child => child.type === 'h3' && text(child) === zh.accountsTitle).length === 1)
   return {
     accounts,
+    endpoints,
+    headings: () => root.root.findAll(node => node.type === 'h3').map(text),
     invites: () => root.root.findAll(node => node.type === 'a' && node.props.href === INVITE_URL),
     alerts: () => accounts().findAll(node => node.props.role === 'alert').map(text),
     async removeAll() {
@@ -87,6 +91,15 @@ async function accountsFixture(t, { keys = [], statusFails = false, removeAllFai
     },
   }
 }
+
+test('the built settings page retains native controls without a CLI card or detection requests', async t => {
+  const page = await accountsFixture(t)
+  for (const endpoint of ['status', 'images/status', 'models/status', 'search/status', 'plugin/version']) {
+    assert.ok(page.endpoints.includes(endpoint), endpoint)
+  }
+  assert.equal(page.endpoints.some(endpoint => endpoint.startsWith('claude-cli/')), false)
+  assert.equal(page.headings().some(heading => /Claude Code|CLI|委派/u.test(heading)), false)
+})
 
 test('a profile with no stored key is offered the registration invite, opening outside DSH', async t => {
   const page = await accountsFixture(t)

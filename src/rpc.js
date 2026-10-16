@@ -2,11 +2,10 @@
  * The loopback RPC surface behind the settings panel and the composer chip.
  *
  * Every reply carries only what this plugin owns: key labels and state, the
- * balance and group projections the host built, host overrides, whether this
- * device has the Claude Code CLI, the plugin version, and the web search
- * preference and model visibility, bounded session-authorized original PNG
- * chunks, or a numbers-only session diagnosis. Key material never crosses this
- * boundary.
+ * balance and group projections the host built, host overrides, the plugin
+ * version, web search preferences and model visibility, bounded session-authorized
+ * original PNG chunks, or a numbers-only session diagnosis. Key material never
+ * crosses this boundary.
  *
  * @module dsh-packycode-api/rpc
  */
@@ -28,16 +27,15 @@ const keyId = payload => String(payload?.id ?? '')
 /**
  * Build the RPC handler.
  * @param options - the key ring, the balance and group readers, the host
- *   preference, and the optional Claude Code CLI manager, plugin manager, and
- *   web search controller (without one, its endpoints refuse).
+ *   preference, and the optional plugin manager and web search controller
+ *   (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claudeCli, pluginManager, search, modelSelection, images, imageOriginals, diagnostics }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, pluginManager, search, modelSelection, images, imageOriginals, diagnostics }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
   }
-  const cli = () => need(claudeCli, 'PackyCode Claude Code CLI support is unavailable in this runtime')
   const manager = () => need(pluginManager, 'PackyCode plugin version is unavailable')
   const webSearch = () => need(search, 'PackyCode web search is unavailable in this runtime')
   const groupReader = () => need(groups, 'PackyCode key groups are unavailable in this runtime')
@@ -83,13 +81,6 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       groups?.invalidate()
       images?.invalidateBalance?.()
       return status()
-    },
-    'claude-cli/status': payload => cli().status({ force: payload?.force === true }),
-    // Starts the install and answers at once; the panel polls the status
-    // instead of holding one request open for minutes.
-    'claude-cli/install': () => {
-      cli().install()
-      return cli().status()
     },
     'plugin/version': (payload, signal) => manager().read({ force: payload?.force === true, signal }),
     'plugin/update': (_payload, signal) => manager().update({ signal }),

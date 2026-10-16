@@ -99,12 +99,18 @@ for (const host of hosts) {
       assert.equal(parsed.rpcId, 'fixture-request')
       assert.equal(parsed.result.ok, true, method)
     }
-    // Check the other cards without spawning the CLI or querying npm. Native
+    // Check the version card without querying npm. Native
     // envelope rejection proves these paths reached Connection, not a 405.
-    for (const method of ['claude-cli/status', 'plugin/version']) {
+    for (const method of ['plugin/version']) {
       const response = await env.request(method, { body: {} })
       assert.equal(response.status, 200, method)
       assert.equal(host.responseSchema.parse(await response.json()).result.error.code, 'gateway/bad-request')
+    }
+    for (const method of ['claude-cli/status', 'claude-cli/install']) {
+      const response = await env.request(method)
+      const parsed = host.responseSchema.parse(await response.json())
+      assert.equal(parsed.result.ok, false)
+      assert.equal(parsed.result.error.message, 'Unknown PackyCode endpoint')
     }
     env.assertUnrestarted()
     await fiber.dispose()

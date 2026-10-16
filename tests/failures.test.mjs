@@ -7,11 +7,11 @@ import {
   CLIENT_POLICY_FAILURE,
   INVALID_KEY_FAILURE,
   QUOTA_FAILURE,
-  classifyCapacity,
   classifyClientPolicy,
   classifyGatewayFailure,
+  classifyTestMessagePolicy,
+  explainTestMessagePolicyFailure,
   explainClientPolicyFailure,
-  explainCliCapacityFailure,
   normalizeFailureMessage,
 } from '../src/failures.js'
 
@@ -27,6 +27,19 @@ const OTHER_CLASSES = [
   /stream ended (?:before|without)\b/iu,
   /\b(?:network|connection|socket|fetch)\b|\bECONN[A-Z]+\b|\bterminated\b|premature close/iu,
 ]
+
+test('the already-authorized test-message refusal is a narrow content-policy category', () => {
+  const raw = "403 Your client is already connected and authorized. Please use it normally. There is no need to send test messages such as 'hi' or 'hello' to verify the connection."
+  assert.equal(classifyTestMessagePolicy(raw), true)
+  assert.equal(classifyGatewayFailure(raw), undefined)
+  assert.equal(classifyClientPolicy(raw), false)
+  const explanation = explainTestMessagePolicyFailure()
+  assert.equal(classifyTestMessagePolicy(explanation), true)
+  for (const pattern of OTHER_CLASSES) assert.equal(pattern.test(explanation), false)
+  for (const other of ['403 invalid API key', '403 insufficient quota', '429 rate limit', 'Your client is already connected and authorized.', 'There is no need to send test messages.', undefined]) {
+    assert.equal(classifyTestMessagePolicy(other), false)
+  }
+})
 
 test('recognizes an exhausted key from the gateway wording', () => {
   assert.equal(classifyGatewayFailure('402 {"error":{"message":"当前令牌额度已用完"}}'), QUOTA_FAILURE)
@@ -86,7 +99,11 @@ test('the policy explanation reaches the user instead of an API-key error', () =
   const normalized = normalizeFailureMessage(raw, CLIENT_POLICY_FAILURE)
   assert.equal(normalized, explainClientPolicyFailure())
   assert.match(normalized, /这不是 API Key 失效/u)
-  assert.match(normalized, /cc-sale/u)
+  assert.match(normalized, /模型广场确认该模型可用/u)
+  assert.doesNotMatch(normalized, /cc-sale|gpt-6\.1-sol|deepseek-flash/u)
+  // The same anomaly refusal has also been observed with accepted requests;
+  // classification must not promise that every future attempt will fail.
+  assert.doesNotMatch(normalized, /重试也不会成功|retrying cannot help/iu)
   // It must not read as any category the retry policy re-runs.
   assert.equal(isQuotaExceededError(normalized), false)
   for (const pattern of OTHER_CLASSES) {
@@ -98,16 +115,4 @@ test('the upstream wording for a Claude Code-only route is a client-policy refus
   const raw = '403 {"error":{"type":"packy_<nil>","message":"Request blocked: this endpoint only accepts requests from the official Claude Code CLI. (request id: x)"}}'
   assert.equal(classifyClientPolicy(raw), true)
   assert.equal(classifyGatewayFailure(raw), undefined)
-})
-
-test('a busy gateway is told apart from key, quota, and client faults', () => {
-  assert.equal(classifyCapacity('API Error: 503 {"error":{"type":"packy_concurrency_queue_full","message":"账号并发排队已满，请稍后重试。"}}'), true)
-  assert.equal(classifyCapacity('API Error: 429 rate_limit_error'), true)
-  assert.equal(classifyCapacity('API Error: 529 overloaded_error'), true)
-  assert.equal(classifyCapacity('API Error: 401 无效的令牌'), false)
-  assert.equal(classifyCapacity('Request blocked: official Claude Code CLI only'), false)
-  const text = explainCliCapacityFailure('Claude Code CLI failed: API Error: 503 queue full', 10)
-  assert.match(text, /已自动重试 10 次/u)
-  assert.match(text, /Gateway said: API Error: 503 queue full$/u)
-  assert.equal(explainCliCapacityFailure('x', 0).includes('已自动重试'), false)
 })

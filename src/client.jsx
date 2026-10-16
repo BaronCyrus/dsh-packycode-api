@@ -23,7 +23,6 @@ const CHANNEL = '/packycode-api'
 const REFRESH_MS = 60_000
 /** PackyCode registration through the author's invite link, offered only until a key is stored. */
 const INVITE_URL = 'https://www.packyapi.ai/register?aff=Im3l'
-const INSTALL_POLL_MS = 2_000
 /** How long after a search change the panel re-reads what DSH applied (the patch hot-reloads). */
 const SEARCH_SETTLE_MS = 1_500
 const OWN_SEARCH_IDS = { auto: 'packycode-api-auto', packycode: 'packycode-api' }
@@ -471,7 +470,6 @@ function SearchCard({ call, t }) {
   return (
     <Card title={t('searchTitle')} aside={<span className="pkc-chip" data-tone="neutral">{t('searchScope')}</span>}>
       <p className="pkc-note">{t('searchIntro')}</p>
-      <p className="pkc-note">{t('searchCliHint')}</p>
       {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('searchChecking')}</p>}
       {state !== undefined && (
         <>
@@ -523,120 +521,6 @@ function SearchCard({ call, t }) {
         </>
       )}
       {error !== undefined && <p className="pkc-error" role="alert">{`${t('searchLoadFailed')}: ${error}`}</p>}
-    </Card>
-  )
-}
-
-// ── Claude Code CLI ─────────────────────────────────────────────────────────
-
-const INSTALL_FAILURES = {
-  'npm-missing': () => 'cliNpmMissing',
-  permission: cli => (cli.platform === 'win32' ? 'cliPermissionWindows' : 'cliPermission'),
-  network: () => 'cliNetwork',
-  timeout: () => 'cliTimeout',
-  'not-found-after-install': () => 'cliNotFoundAfterInstall',
-}
-
-/** The sentence explaining a failed install, by the code the host classified. */
-function installFailure(cli, t) {
-  const key = INSTALL_FAILURES[cli.install?.code]?.(cli)
-  return key === undefined ? undefined : fill(t(key), { command: cli.command ?? '' })
-}
-
-/**
- * Whether this device has the Claude Code CLI, which version, and — when it
- * has none — a button that installs it with npm.
- */
-function ClaudeCliCard({ call, t }) {
-  const [cli, setCli] = react.useState()
-  const [checking, setChecking] = react.useState(false)
-  const [error, setError] = react.useState()
-
-  const check = react.useCallback((force = false) => {
-    setChecking(true)
-    setError(undefined)
-    return call('claude-cli/status', { force })
-      .then(setCli)
-      .catch(failure => setError(clearMessage(failure)))
-      .finally(() => setChecking(false))
-  }, [call])
-
-  react.useEffect(() => {
-    check(false)
-  }, [check])
-
-  const running = cli?.install?.state === 'running'
-  react.useEffect(() => {
-    if (!running) return undefined
-    let live = true
-    const timer = window.setInterval(() => {
-      call('claude-cli/status').then(value => {
-        if (live) setCli(value)
-      }).catch(() => undefined)
-    }, INSTALL_POLL_MS)
-    return () => {
-      live = false
-      window.clearInterval(timer)
-    }
-  }, [call, running])
-
-  const install = () => {
-    setError(undefined)
-    call('claude-cli/install').then(setCli).catch(failure => setError(clearMessage(failure)))
-  }
-
-  const usable = cli?.installed === true && cli.version !== undefined
-  const failed = cli?.install?.state === 'failed'
-  const failure = cli === undefined ? undefined : installFailure(cli, t)
-  return (
-    <Card
-      title={t('cliTitle')}
-      aside={<Button disabled={checking || running} onClick={() => check(true)}>{checking ? t('refreshing') : t('cliRecheck')}</Button>}
-    >
-      {cli === undefined && error === undefined && <p className="pkc-note">{t('cliChecking')}</p>}
-      {usable && (
-        <>
-          <div className="pkc-status">
-            <span className="pkc-dot" data-tone="success" />
-            <span>{t('cliInstalled')}</span>
-            <b>{`${t('cliVersion')} ${cli.version}`}</b>
-          </div>
-          <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
-          {cli.install?.state === 'succeeded' && <p className="pkc-note">{t('cliInstallSucceeded')}</p>}
-        </>
-      )}
-      {cli !== undefined && !usable && (
-        <div className="pkc-callout">
-          <div className="pkc-status">
-            <span className="pkc-dot" data-tone={cli.installed ? 'danger' : 'warn'} />
-            <b>{cli.installed ? t('cliBroken') : t('cliMissing')}</b>
-          </div>
-          {cli.installed && (
-            <>
-              <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
-              {cli.error !== undefined && <pre className="pkc-detail">{cli.error}</pre>}
-            </>
-          )}
-          {cli.configuredPath !== undefined && <p className="pkc-note">{fill(t('cliConfiguredMissing'), { path: cli.configuredPath })}</p>}
-          <p className="pkc-note">{t('cliMissingHint')}</p>
-          <div className="pkc-split">
-            <Button variant="primary" size="md" disabled={running || checking} onClick={install}>
-              {running ? t('cliInstalling') : cli.installed ? t('cliReinstall') : t('cliInstall')}
-            </Button>
-          </div>
-          <p className="pkc-note">
-            {fill(t('cliInstallCommand'), { command: cli.command ?? '' })}
-            {cli.platform === 'win32' && ` ${t('cliWindowsNote')}`}
-          </p>
-        </div>
-      )}
-      {failed && !usable && (
-        <>
-          <p className="pkc-error">{failure === undefined ? t('cliInstallFailed') : `${t('cliInstallFailed')} · ${failure}`}</p>
-          {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="pkc-detail">{cli.install.detail}</pre>}
-        </>
-      )}
-      {error !== undefined && <p className="pkc-error">{`${t('error')}: ${error}`}</p>}
     </Card>
   )
 }
@@ -735,7 +619,6 @@ function PackyCodeSection({ rpc, t }) {
       <PackyCodeImagesCard call={call} t={t} />
       <ModelsCard call={call} t={t} />
       <SearchCard call={call} t={t} />
-      <ClaudeCliCard call={call} t={t} />
       <VersionCard call={call} t={t} />
       <DiagnosticsCard call={call} t={t} />
     </div>

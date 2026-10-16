@@ -48,8 +48,7 @@ const DEEPSEEK_LEVELS = Object.freeze({
 
 /**
  * Claude 5.5 models, GPT-6.1 Sol, and GPT-6 Astra cannot disable reasoning, so `off` is
- * pinned unsupported. The Claude models run through the CLI, which picks its
- * own effort, so for them these levels only shape the picker.
+ * pinned unsupported. Claude effort is sent through the native Messages API.
  */
 const ALWAYS_THINKING_LEVELS = Object.freeze({
   off: null,
