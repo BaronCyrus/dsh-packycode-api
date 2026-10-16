@@ -28,7 +28,7 @@
 | **自选显示的模型** | 设置页的模型列表默认全选；取消勾选后，切换列表立即隐藏该模型，已有会话仍可继续使用 |
 | **多 Key 按顺序使用** | 额度用尽或 Key 被拒绝时自动切到下一个可用 Key；失败的那一步由重试接手 |
 | **按分组选 Key** | 每个 Key 后面列出它所在的 PackyCode 分组和能用的模型；当前 Key 的分组用不了所选模型（例如没有 cc 分组却选了 Claude）时，这一轮自动改用分组合适的 Key |
-| **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条，并给出这些 Key 的合计；输入框右侧显示当前 Key 的剩余额度 |
+| **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条；输入框右侧显示当前 Key 的剩余额度 |
 | **Claude 插件内直连** | 三个 Claude 模型通过 HTTP Messages 调用，使用 DSH 的工具、权限和完整对话历史，无需本机 CLI |
 | **网页搜索可走 PackyCode** | 可选：DSH 的 `web_search` 改用 PackyCode 搜索，后端在 DeepSeek 与 GPT 之间切换；可只对 PackyCode 模型生效 |
 | **图片生成与编辑** | 独立图片 Key，支持 GPT Image 2 / 2.5 Flare / 2.5 Sunburst、型号与质量设置、参考图编辑和 PNG 原图保存；已通过网关生图与编辑实测 |
@@ -47,10 +47,10 @@
 打开桌面应用的**插件**页，点击**添加插件**，在**包名或地址**中填入**带版本号**的包名：
 
 ```text
-dsh-packycode-api@1.3.1
+dsh-packycode-api@1.3.2
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。`1.3.1` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
+在**安装源**中选择**官方源**，然后点击**安装**。`1.3.2` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
 
 > **一定要带版本号。** 只填 `dsh-packycode-api` 时，安装前的提示显示的是 npm 上的最新版，但 DSH 自带的 pnpm 默认只安装发布满 24 小时的版本，实际装上的可能是好几个版本之前的旧版，而安装提示里看不出这一点。填写精确版本时，pnpm 会直接安装这个版本，并自动把它加入 profile 的 `minimumReleaseAgeExclude`。装好后可以在 **设置 → PackyCode → 插件版本** 核对「当前版本」。
 
@@ -64,14 +64,14 @@ dsh-packycode-api@1.3.1
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。九个模型都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十个模型都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.3.1`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.3.2`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -87,7 +87,7 @@ dsh-packycode-api@1.3.1
 
 **看分组。** 「账户与 Key」里每个 Key 下面列出它所在的 PackyCode 分组（鼠标悬停可看分组说明），以及能用哪些模型：✓ 可用、◐ 部分可用、✕ 不可用。分组由网关自己报出（对一个不存在的模型 id 的拒绝里会写明「已选分组」，不产生费用），再对照 PackyCode 公开的模型分组表。Claude 的分组覆盖要按具体模型确认，不能假定 `cc-sale` 支持全部三个型号；GPT 需要 `codex` / `codex-sale`；DeepSeek 需要 `deepseek-officially` / `deepseek-sale`。
 
-**看余额。** 「账户与 Key」顶部的合计是**已列出的这些 Key** 的剩余、已用与额度，不是 PackyCode 账号下全部令牌的账单。读失败的 Key 不计入合计，并会注明个数；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
+**看余额。** 「账户与 Key」里每个 Key 显示它自己的剩余、已用与额度（额度 = 剩余 + 已用），不限额的 Key 显示「不限额度」；多个 Key 不相加成合计。API Key 只能读到自己的额度，读不到 PackyCode 账号的总余额，账号余额请到 PackyCode 控制台查看。读失败的 Key 会在它那一行注明原因；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
 
 **用 Claude。** 直接选择三个 Claude 模型之一即可，无需安装 CLI。思考档位会发送给模型；对话历史、附件、工具调用、计划模式和权限均由 DSH 管理。
 
@@ -135,7 +135,7 @@ PackyCode 没有专用搜索接口：一次搜索就是一次带服务端搜索�
 
 在 **设置 → PackyCode → 图片生成与编辑 → 添加图片 Key** 填入专用 Key。它与「账户与 Key」里的对话 Key 分开保存；图片请求只用此处选择的 Key。添加 Key 不会自动发起付费测试。
 
-图片卡片会显示每个图片 Key 的剩余、已用、限额（接口有提供时）、重置周期和使用进度，并单独汇总图片额度。余额每分钟更新，也可点卡片右上角的「刷新」；读取失败时保留上次余额并标出时间。图片 Key 变更或生图成功后会清理图片余额缓存。仅查询专用图片 Key 的额度，不叠加账户级账单，也不混入对话 Key 的合计。
+图片卡片会显示每个图片 Key 的剩余、已用、额度、重置周期和使用进度，不汇总合计。余额每分钟更新，也可点卡片右上角的「刷新」；读取失败时保留上次余额并标出时间。图片 Key 变更或生图成功后会清理图片余额缓存。仅查询专用图片 Key 的额度，与对话 Key 的余额分开显示。
 
 选择请求型号与质量后，可在 PackyCode 对话里点 **创建图片** 补充描述，或明确要求使用 `packycode_image_generate`。上传参考图后描述修改要求会调用 `/v1/images/edits`；新图调用 `/v1/images/generations`。图片型号独立于对话型号，其他插件的图片工具仍可并存。
 
@@ -160,6 +160,7 @@ Claude 与其它模型一样，通过 DSH 的 `packycode_image_generate` 工具�
 | `deepseek-flash` | HTTP，chat/completions，可带图 | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
 | `gpt-6-astra` | 同上 | 同上 | 同上 |
+| `gpt-5.6-sol` | 同上 | 同上 | 同上 |
 | `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
 | `gemini-4-argon`（Gemini 4 Argon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `gemini-3.8-flash`（Gemini 3.8 Flash） | HTTP，Gemini 原生流式，可带图；1,048,576 输入，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
@@ -169,7 +170,7 @@ Claude 与其它模型一样，通过 DSH 的 `packycode_image_generate` 工具�
 
 列表里看得到模型，不代表当前令牌分组一定放行。换分组时不要把对应分组一起去掉。
 
-当前目录中的 9 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 chat/completions 请求发送。
+当前目录中的 10 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 chat/completions 请求发送。
 
 Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
 
@@ -182,7 +183,7 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 <details>
 <summary>协议、分组与客户端兼容性</summary>
 
-- 九个模型均在插件内通过 HTTP 调用。Claude 使用 `anthropic-messages`，base URL 不带 `/v1`；SDK 会拼出 `/v1/messages`。模型、协议、上下文和档位映射保持不变。
+- 十个模型均在插件内通过 HTTP 调用。Claude 使用 `anthropic-messages`，base URL 不带 `/v1`；SDK 会拼出 `/v1/messages`。模型、协议、上下文和档位映射保持不变。
 - Claude 请求带上实测通过的 CLI 兼容请求头、Bearer 认证、会话元数据和身份系统提示前缀，并保留原始 DSH 系统说明、工具 schema、附件及签名回放。兼容版本固定为 `2.1.295`，无需检测或启动本机 CLI。
 - Bearer 只来自插件保存并按模型选中的 Key；不读取 CLI 登录状态、外部配置或环境 Key，不切换其它提供商。
 - 这组兼容处理不代表服务端取消了分组的客户端限制。当前 Key 仍需覆盖 Claude；客户端政策拒绝会直接说明原因，不禁用 Key，也不自动改用 CLI。服务端规则变化可能使兼容处理失效，详见 [PackyCode 分组政策](https://docs.packyapi.ai/docs/token/)。
@@ -190,7 +191,7 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 - Claude 流收到 `message_stop` 后即可完成，不再等网关关闭 HTTP 连接；跨分片的 CRLF 换行保持完整。流内错误与取消仍会返回，未收到响应头的等待也不会被当作成功。
 - DSH 的 bash/read/write/edit/glob/grep 在 HTTP 请求中使用已声明的 CLI 标准名称（如 `Bash`、`Read`），其它工具使用 MCP 命名；回到 DSH 时仅还原本次实际提供的工具名称，未知名称不会获得执行权限。工具参数、调用 id、结果和历史签名不变。思考展示采用 CLI 默认：Haiku 为 `omitted`，Sonnet / Opus 为 `updates`（附带相应 beta）。所选推理强度和输出上限不变，空思考块的签名仍完整回传；明确指定的显示模式优先。
 - Claude 请求中的旧工作目录句式会在与当前会话元数据一致时转换为单独的 JSON 路径，避免把提示语的句号复制进路径。真实目录名中的点、Windows 盘符、UNC、空格和反斜杠保持不变；命令参数不会被自动修剪。命令工具优先使用当前目录或 `workdir`，Windows 的 PowerShell 工具保持其原有语法。
-- 普通 Claude 对话保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题改由 `claude-haiku-5-5` 通过 HTTP 生成；Astra 标题仍交给 Sol。
+- 普通 Claude 对话保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题改由 `claude-haiku-5-5` 通过 HTTP 生成；GPT-6 Astra 与 GPT-5.6 Sol 的标题交给 GPT-6.1 Sol。
 - 已移除旧 `claude_code` 委派工具、CLI 运行器、检测与安装界面、配置字段及本机 MCP 桥。旧配置中的 `claudeCliPath`、`claudeCliMode` 和 `claudeCliCwd` 不再生效；用户独立安装的 Claude Code 不受影响。
 - Codex 的 Responses 请求仍需要 `prompt_cache_key`；插件补上缺失的会话标识，其它 Responses 模型省略该字段。
 - 构建后可用 `node scripts/claude-check.mjs` 验证三个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注和中文标题，并核对业务答案。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。
@@ -200,7 +201,7 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 
 ## 更新与卸载
 
-**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.3.1`），否则装上的可能是发布满 24 小时的旧版。
+**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.3.2`），否则装上的可能是发布满 24 小时的旧版。
 
 **从本地路径安装切回官方源时，必须先卸载。** 「更新」是 `pnpm add`，它只重写包目录里的文件，不会删除更早一次本地路径安装留在包目录内的 `node_modules`；那份旧依赖会继续挡住 DSH 自带的包，插件行加载失败且看不出原因。「卸载」执行的是 `pnpm remove`，会删掉整个包目录，重装才是干净的。用 `node scripts/install-check.mjs` 可以确认当前 profile 是否处于这个状态。
 
@@ -216,7 +217,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 有输出就是残留：从 npm 安装的包不会自带 `node_modules`，这一份通常来自更早一次「本地路径」安装（`file:` 或直接写路径，而不是 `link:`）。它位于 profile 目录内部，而 DSH 解析插件导入时优先使用 profile 内的副本，所以插件拿到的仍是那份旧依赖 —— 例如 `@deepseek-ai/schemastery` 3.18.2 没有 `Schema.volatile()`，模块在导入阶段就抛错。导入失败时 Loader 不会为这一行创建 fiber，客户端 bundle 也不会被组合，于是模型路由、RPC 通道和设置页全都不会出现。
 
-修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.3.1`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
+修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.3.2`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
 
 **首次安装后，设置页每张卡片都显示 `transport failure for /packycode-api/…: HTTP 405`？** 实际装上的是 1.1.6 或更早的版本，通常是因为安装时只填了包名：安装提示显示的是最新版，pnpm 实际装的却是发布满 24 小时的旧版（见「安装插件」）。这些旧版要等 DSH 重启、重建它的 `connection` 服务之后，才能注册设置通道。所以首次安装后 `/packycode-api` 通道还不存在，请求落到静态页面，返回 405；模型路由和设置页本身照常加载。1.1.7 起首次安装不需要重启。先确认装上的版本：
 
@@ -230,7 +231,7 @@ grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.
 
 **Claude 报「只接受官方 Claude Code CLI」或「客户端存在异常」？** 这是网关的客户端政策拒绝，不等于 Key 失效。先在「账户与 Key」和 PackyCode 模型广场确认所选模型的分组覆盖；确认覆盖后仍被拒绝，可用诊断信息定位。插件不会因此禁用 Key、切换提供商或启动 CLI。
 
-**余额对不上账号账单？** 设置页合计的是这里列出的 Key，不含同账号下没添加到本插件的其它令牌。个别 Key 读失败时会单独注明，不会被算成 0。
+**余额对不上账号账单？** 设置页只显示这里列出的每个 Key 自己的额度，不含同账号下没添加到本插件的其它令牌。API Key 读不到账号的总余额，请到 PackyCode 控制台查看。个别 Key 读失败时会在它那一行注明。
 
 **余额显示 `读取失败: https://www.packyapi.com: fetch failed`？** 这是 1.0.4 及更早版本的默认余额接口在国内网络下被 DNS 污染，开了代理才能连上，所以有时正常、有时失败。新版本默认改用 `https://www.packyapi.ai`。模型列表是插件内置的，不需要向 PackyCode 查询，不受影响。
 

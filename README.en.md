@@ -28,7 +28,7 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | **Choose visible models** | All models are selected by default in Settings. Unchecking a model immediately hides it from the picker; existing sessions can keep using it |
 | **Keys used in order** | An exhausted or rejected key is disabled and the next usable key takes over; the failed step is retried on that key |
 | **Keys chosen by group** | Each key lists its PackyCode groups and the models they reach; when the active key's groups cannot reach the selected model (no `cc` group for Claude, say), that turn runs on a stored key whose groups can |
-| **Visible balance** | Settings lists each key's remaining, used, limit, reset period, and a usage bar, plus a total of those keys. The composer shows the active key's remaining balance |
+| **Visible balance** | Settings lists each key's remaining, used, limit, reset period, and a usage bar. The composer shows the active key's remaining balance |
 | **Claude inside the plugin** | All three Claude models use HTTP Messages with DSH tools, permissions and conversation history; no local CLI is needed |
 | **Web search through PackyCode** | Optional: DSH's `web_search` searches through PackyCode, with a DeepSeek or GPT backend, for every request or for PackyCode models only |
 | **Image generation and editing** | Separate image keys, GPT Image 2 / 2.5 Flare / 2.5 Sunburst, model and quality settings, reference edits and original PNG storage; generation and editing verified against the gateway |
@@ -47,10 +47,10 @@ You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH se
 Open the desktop application's **Plugins** page, click **Add plugin**, and enter the package name **with a version** as the **package name or address**:
 
 ```text
-dsh-packycode-api@1.3.1
+dsh-packycode-api@1.3.2
 ```
 
-Choose the **official** install source, then click **Install**. `1.3.1` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
+Choose the **official** install source, then click **Install**. `1.3.2` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
 
 > **Always include the version.** With a bare `dsh-packycode-api`, the install prompt shows the newest version on npm, but DSH's bundled pnpm by default installs only versions published at least 24 hours ago, so you can end up several releases behind with no sign of it in the prompt. With an exact version, pnpm installs that version and adds it to the profile's `minimumReleaseAgeExclude` itself. Afterwards, check **Current version** under **Settings → PackyCode → Plugin version**.
 
@@ -64,14 +64,14 @@ Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label 
 
 ### 3. Select a model
 
-Choose a model from the `PackyCode` group. All nine models use the plugin’s HTTP route. Your key’s groups must cover the selected model.
+Choose a model from the `PackyCode` group. All ten models use the plugin’s HTTP route. Your key’s groups must cover the selected model.
 
 <details>
 <summary>Verify the install / other profiles / a local checkout</summary>
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.3.1`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.3.2`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -87,7 +87,7 @@ A profile without a browser can still use the model route. It just has no settin
 
 **See groups.** Under **Accounts and keys**, each key lists its PackyCode groups (hover for the group's description) and which models they reach: ✓ yes, ◐ partly, ✕ no. The groups come from the gateway itself (its refusal of a model id it cannot route names the token's groups; nothing is billed), matched against PackyCode's public model-group table. Check Claude group coverage per model; do not assume `cc-sale` serves all three models; GPT needs `codex` / `codex-sale`; DeepSeek needs `deepseek-officially` / `deepseek-sale`.
 
-**Read the balance.** The total at the top of **Accounts and keys** is the remaining, used, and limit of **the keys listed here**, not the bill for every token on the PackyCode account. A key that could not be read is left out of the total and counted in a note; a key whose read failed this time but succeeded before keeps showing its last balance with the time it was read (the composer shows it as `≈US$…`) until DSH restarts. The composer shows the active key's remaining balance only while a PackyCode model is selected. **Refresh** bypasses the roughly 60-second cache. The default model host is `https://cf.api.fan` and the balance host is `https://www.packyapi.ai`; both can be changed under **Advanced: endpoints**. The old default, `https://www.packyapi.com`, is DNS-poisoned on mainland networks and answers `fetch failed` without a proxy; even when settings still name it, `.ai` is tried first.
+**Read the balance.** Each key under **Accounts and keys** shows its own remaining, used, and limit (limit = remaining + used); an unlimited key shows **No quota limit**. Keys are not added up into a total. An API key can read only its own quota, not the PackyCode account's balance, so check the account balance in the PackyCode console. A key that could not be read says why on its own row; a key whose read failed this time but succeeded before keeps showing its last balance with the time it was read (the composer shows it as `≈US$…`) until DSH restarts. The composer shows the active key's remaining balance only while a PackyCode model is selected. **Refresh** bypasses the roughly 60-second cache. The default model host is `https://cf.api.fan` and the balance host is `https://www.packyapi.ai`; both can be changed under **Advanced: endpoints**. The old default, `https://www.packyapi.com`, is DNS-poisoned on mainland networks and answers `fetch failed` without a proxy; even when settings still name it, `.ai` is tried first.
 
 **Use Claude.** Select any Claude model directly; no CLI installation is needed. Reasoning effort is sent to the model. DSH owns the history, attachments, tool loop, plan mode and permissions.
 
@@ -135,7 +135,7 @@ PackyCode has no dedicated search endpoint: one search is one model call with a 
 
 Add the dedicated key under **Settings → PackyCode → Image generation and editing → Add an image key**. This credential record is separate from conversation keys. Image calls use only the selected image key. Adding one does not start a paid test.
 
-The image card shows each image key's remaining/used quota, limits when supplied, reset period, usage bar and separate totals. It refreshes every minute or with **Refresh**, preserving a dated last-good reading when a refresh fails. Image key changes and successful generation invalidate the independent balance cache. Only image key quotas are queried; account-wide billing and conversation key totals are kept separate.
+The image card shows each image key's remaining, used and limit, its reset period and a usage bar, without adding the keys up. It refreshes every minute or with **Refresh**, preserving a dated last-good reading when a refresh fails. Image key changes and successful generation invalidate the independent balance cache. Only image key quotas are queried, shown apart from conversation key balances.
 
 Choose the image model and quality, then click **Create image** in a PackyCode conversation or explicitly request `packycode_image_generate`. Attach references and describe changes to use `/v1/images/edits`; new images use `/v1/images/generations`. The image model is independent of the conversation model and other image plugins can coexist.
 
@@ -160,6 +160,7 @@ Live checks on 2026-10-15 passed generation and editing at `low` on all three en
 | `deepseek-flash` | HTTP, chat/completions, images allowed | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
 | `gpt-6-astra` | Same | Same | Same |
+| `gpt-5.6-sol` | Same | Same | Same |
 | `grok-4.7` (Grok 4.7) | HTTP, Responses, text/image input; 500K context | Cannot be off; `low` / `medium` / `high` / `xhigh` | The Grok coverage read from the gateway in Settings |
 | `gemini-4-argon` (Gemini 4 Argon) | HTTP, native Gemini streaming, text/image input; 1,048,576 context, 65,536 output | Cannot be off; `low` / `medium` / `high` | `gemini-slb` |
 | `gemini-3.8-flash` (Gemini 3.8 Flash) | HTTP, native Gemini streaming, text/image input; 1,048,576 input, 65,536 output | Cannot be off; `low` / `medium` / `high` | `gemini-slb` |
@@ -169,7 +170,7 @@ Live checks on 2026-10-15 passed generation and editing at `low` on all three en
 
 A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
 
-All nine models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Chat Completions request.
+All ten models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Chat Completions request.
 
 Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon), [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). Both models use the native Gemini protocol through `/v1beta/models/{model}:streamGenerateContent`, streaming text, thinking and tool calls; images are read through DSH's attachment service. Thinking levels are sent with `thinkingLevel`. Both routes use the single-stream output limit without automatic continuation beyond 65,536 tokens. Available endpoints and groups follow the [PackyAPI live model catalog](https://www.packyapi.com/api/pricing).
 
@@ -182,7 +183,7 @@ Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit
 <details>
 <summary>Protocol, group and client compatibility</summary>
 
-- All nine models use HTTP inside the plugin. Claude keeps `anthropic-messages`, with a base URL without `/v1`; the SDK appends `/v1/messages`. Model ids, protocols, context limits and effort mappings are unchanged.
+- All ten models use HTTP inside the plugin. Claude keeps `anthropic-messages`, with a base URL without `/v1`; the SDK appends `/v1/messages`. Model ids, protocols, context limits and effort mappings are unchanged.
 - Claude requests use the live-verified CLI-compatible headers, bearer authentication, session metadata and identity system prefix while preserving DSH instructions, tool schemas, images and signed replay. The compatibility version is pinned to `2.1.295`; no local CLI is detected or started for a model turn.
 - The bearer comes only from the plugin’s stored key chosen for the model. No CLI login, external configuration, ambient key or alternate provider is used.
 - This compatibility envelope does not remove the gateway’s group restrictions. The key still needs Claude coverage. Client-policy refusals are explained without disabling a key or falling back to a CLI. Server changes may invalidate the envelope; see [PackyCode group policy](https://docs.packyapi.ai/docs/token/).
@@ -190,7 +191,7 @@ Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit
 - Claude streams finish at `message_stop` without waiting for the gateway to close the HTTP body, and CRLF delimiters remain intact across network chunks. Stream errors and cancellation still surface; waiting for response headers is not counted as success.
 - Offered DSH bash/read/write/edit/glob/grep tools use canonical CLI names such as `Bash` and `Read` over HTTP; other tools use MCP names. Only aliases declared for the current request regain their original names before DSH dispatch; unknown names never grant execution. Arguments, call IDs, results and signed history remain intact. Thinking display follows the CLI defaults: `omitted` for Haiku and `updates` with its required beta for Sonnet and Opus. Reasoning effort and output limits remain unchanged, signatures on empty thinking blocks survive replay, and explicit display options take precedence.
 - When the legacy working-directory sentence agrees with the initiating session metadata, Claude receives the exact path as a separate JSON string. Sentence punctuation stays outside the path; real trailing dots, Windows drive/UNC paths, spaces and backslashes remain intact. Commands are never trimmed or rewritten. Shell guidance prefers the current directory or `workdir`, preserving PowerShell syntax for Windows tools.
-- Native Claude turns retain the full DSH tool loop, permissions and plan mode, using host search and image tools. Claude titles use Haiku over HTTP; Astra titles still use Sol.
+- Native Claude turns retain the full DSH tool loop, permissions and plan mode, using host search and image tools. Claude titles use Haiku over HTTP; GPT-6 Astra and GPT-5.6 Sol titles use GPT-6.1 Sol.
 - The old `claude_code` delegation tool, CLI runner, detection/installation UI, configuration fields and local MCP bridges have been removed. Old `claudeCliPath`, `claudeCliMode` and `claudeCliCwd` settings no longer affect requests. Separately installed Claude Code remains untouched.
 - Codex Responses requests still need `prompt_cache_key`; the plugin supplies a missing session identity. Other Responses families omit it.
 - After building, `node scripts/claude-check.mjs` checks all three Claude models on order totals, support triage, replenishment, read-only inventory tool roundtrips, product color labels and Chinese titles, validating the business answers. `node scripts/claude-stability.mjs --start --hours 6 --key-label <label>` starts a deadline- and request-budget-limited window. Invoke the same script on a schedule to sample again; `--status` reads the record. Each round records its build and scenario version. A test-message policy refusal fails that check while the other scheduled checks continue; real credential or quota failures still stop the window. Checks never change stored credentials or start DSH.
@@ -200,7 +201,7 @@ Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit
 
 ## Update and uninstall
 
-**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.3.1`); without it you may get a version that is merely the newest one published at least 24 hours ago.
+**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.3.2`); without it you may get a version that is merely the newest one published at least 24 hours ago.
 
 **Coming back from a local-path install, uninstall first.** An update is a `pnpm add`: it rewrites the files inside the package directory and leaves a `node_modules` that an earlier local-path install left there. That older tree keeps shadowing the packages the DSH installation provides, so the plugin row fails to load with no visible reason. **Uninstall** runs `pnpm remove`, which deletes the package directory outright — only a reinstall after that is clean. `node scripts/install-check.mjs` reports whether a profile is in that state.
 
@@ -216,7 +217,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 Output means a leftover tree: a registry install ships no `node_modules`, so this one usually comes from an earlier local-path install (`file:`, or a bare path instead of `link:`). It sits inside the profile directory, and DSH resolves a plugin's imports from inside the profile first, so the plugin gets those old copies — for example `@deepseek-ai/schemastery` 3.18.2, which has no `Schema.volatile()`, so the module throws while it is imported. When an import fails the Loader creates no fiber for that row and no client bundle is composed either, so the model route, the RPC channel, and the settings panel all stay absent.
 
-Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.3.1`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.3.2`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
 
 **Right after a first install, every card in Settings shows `transport failure for /packycode-api/…: HTTP 405`?** The installed version is 1.1.6 or earlier, usually because only the bare package name was entered: the install prompt shows the newest version, but pnpm installs the newest one published at least 24 hours ago (see **Install the plugin**). Those older versions can register their settings channel only after DSH restarts and rebuilds its `connection` service. So right after a first install `/packycode-api` does not exist yet, requests fall through to the static page, and it answers 405; the model route and the settings panel itself load normally. From 1.1.7 on, a first install needs no restart. Check which version was installed:
 
@@ -232,7 +233,7 @@ Recovery: quit and reopen the desktop application, and the old version works. Th
 
 **Claude reports an official-client-only or client-anomaly refusal?** This is a gateway client-policy refusal, not proof of an invalid key. Check the selected model’s group coverage under **Accounts and keys** and in PackyCode’s model catalog, then collect diagnostics if a covered model is still refused. The plugin does not disable the key, switch providers or start a CLI for this refusal.
 
-**The balance does not match the account bill?** Settings totals only the keys stored here, not other tokens on the same PackyCode account. A key that failed to read is noted separately and is not treated as zero.
+**The balance does not match the account bill?** Settings shows only each key stored here, with its own quota, not other tokens on the same PackyCode account. An API key cannot read the account's balance; check it in the PackyCode console. A key that failed to read says so on its own row.
 
 **The balance reads `fetch failed` from `https://www.packyapi.com`?** That host, the default through 1.0.4, is DNS-poisoned on mainland networks and only answers through a proxy, so it works on and off. The default is now `https://www.packyapi.ai`. The model list is built into the plugin and never queried from PackyCode, so it is unaffected.
 

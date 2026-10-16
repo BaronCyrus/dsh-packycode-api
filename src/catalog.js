@@ -12,9 +12,9 @@
  *
  * Effort levels come from each vendor's documentation, because an effort the
  * model does not support is refused before the request is sent: Claude Opus
- * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol and GPT-6 Astra
- * `reasoning.effort` (developers.openai.com model pages), DeepSeek thinking
- * mode (`thinking` toggle plus `low|high|max` effort), Grok 4.7
+ * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol, GPT-6 Astra and GPT-5.6
+ * Sol `reasoning.effort` (developers.openai.com model pages), DeepSeek
+ * thinking mode (`thinking` toggle plus `low|high|max` effort), Grok 4.7
  * (docs.x.ai/developers/grok-4-7), and Gemini 4 Argon
  * (ai.google.dev/gemini-api/docs/models/gemini-4-argon and docs/openai).
  *
@@ -48,7 +48,8 @@ const DEEPSEEK_LEVELS = Object.freeze({
 
 /**
  * Claude 5.5 models, GPT-6.1 Sol, and GPT-6 Astra cannot disable reasoning, so `off` is
- * pinned unsupported. Claude effort is sent through the native Messages API.
+ * pinned unsupported; GPT-5.6 Sol is kept on the same levels. Claude effort is
+ * sent through the native Messages API.
  */
 const ALWAYS_THINKING_LEVELS = Object.freeze({
   off: null,
@@ -107,6 +108,23 @@ export const PACKYCODE_MODELS = Object.freeze([
     // `reasoning.effort` low | medium | high | xhigh | max (no `none`).
     id: 'gpt-6-astra',
     name: 'GPT-6 Astra',
+    api: 'openai-responses',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+  }),
+  Object.freeze({
+    // developers.openai.com/api/docs/models/gpt-5.6-sol: Responses and Chat
+    // Completions; text and image input; 1,050,000 context, 128,000 output;
+    // `reasoning.effort` none | low | medium | high | xhigh | max. `none` is
+    // deliberately not offered, so it takes the same levels as GPT-6.1 Sol.
+    id: 'gpt-5.6-sol',
+    name: 'GPT-5.6 Sol',
     api: 'openai-responses',
     provider: PROVIDER,
     baseUrl: RESPONSES_BASE,

@@ -9,7 +9,7 @@ import { DEFAULT_API_HOST, DEFAULT_REASONING_LEVEL, PROVIDER } from '../src/cons
 const byId = id => PACKYCODE_MODELS.find(model => model.id === id)
 
 test('ships the configured model ids in picker order', () => {
-  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'grok-4.7', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol', 'grok-4.7', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
   for (const model of PACKYCODE_MODELS) assert.equal(model.provider, PROVIDER)
 })
 
@@ -30,6 +30,11 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
   assert.equal(byId('gpt-6-astra').baseUrl, `${DEFAULT_API_HOST}/v1`)
   assert.deepEqual([...byId('gpt-6-astra').input], ['text', 'image'])
   assert.equal(byId('gpt-6-astra').contextWindow, 1_050_000)
+  // developers.openai.com: GPT-5.6 Sol serves Responses with text and image input, 1,050,000 context and 128,000 output.
+  assert.equal(byId('gpt-5.6-sol').api, 'openai-responses')
+  assert.equal(byId('gpt-5.6-sol').baseUrl, `${DEFAULT_API_HOST}/v1`)
+  assert.equal(byId('gpt-5.6-sol').contextWindow, 1_050_000)
+  assert.equal(byId('gpt-5.6-sol').maxTokens, 128_000)
   // platform.claude.com: every Claude 5.5 model, Haiku included, has a 1M context and 128K output.
   for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).contextWindow, 1_000_000, id)
@@ -65,6 +70,8 @@ test("offers each vendor's documented effort levels", () => {
   assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6.1-sol')), ['low', 'medium', 'high', 'xhigh', 'max'])
   // developers.openai.com: GPT-6 Astra `reasoning.effort` is low | medium | high | xhigh | max.
   assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6-astra')), ['low', 'medium', 'high', 'xhigh', 'max'])
+  // GPT-5.6 Sol documents `none` too, but it is not offered: through PackyCode it answered at medium.
+  assert.deepEqual(getSupportedThinkingLevels(byId('gpt-5.6-sol')), ['low', 'medium', 'high', 'xhigh', 'max'])
   assert.deepEqual(getSupportedThinkingLevels(byId('grok-4.7')), ['low', 'medium', 'high', 'xhigh'])
   assert.deepEqual(getSupportedThinkingLevels(byId('gemini-4-argon')), ['low', 'medium', 'high'])
   assert.deepEqual(getSupportedThinkingLevels(byId('gemini-3.8-flash')), ['low', 'medium', 'high'])
@@ -93,4 +100,5 @@ test('declares the wire dialect each protocol needs', () => {
   }
   assert.equal(byId('gpt-6.1-sol').compat, undefined)
   assert.equal(byId('gpt-6-astra').compat, undefined)
+  assert.equal(byId('gpt-5.6-sol').compat, undefined)
 })

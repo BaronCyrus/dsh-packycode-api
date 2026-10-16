@@ -13,7 +13,7 @@ const settle = () => act(async () => { await new Promise(resolve => setImmediate
 const text = node => typeof node === 'string' ? node : node.children.map(text).join('')
 
 /** The built settings page against a channel that answers with the host's projections. */
-async function settingsFixture(t) {
+async function settingsFixture(t, { chatRows = [], imageRows = [] } = {}) {
   const calls = [], events = [], slots = new Map()
   let chat = { activeId: 'chat-a', writable: true, hosts: {}, defaults: {},
     keys: [{ id: 'chat-a', label: 'Chat main', addedAt: 1, active: true, disabled: false }] }
@@ -26,11 +26,11 @@ async function settingsFixture(t) {
   const relabel = (state, { id, label }) => ({ ...state, keys: state.keys.map(entry => entry.id === id ? { ...entry, label: label.trim() } : entry) })
   const answers = {
     status: () => chat,
-    balance: () => ({ activeId: chat.activeId, fetchedAt: 1, keys: [] }),
+    balance: () => ({ activeId: chat.activeId, fetchedAt: 1, keys: chatRows }),
     groups: () => ({ keys: [], descriptions: {} }),
     'keys/rename': payload => (chat = relabel(chat, payload)),
     'images/status': () => images,
-    'images/balance': () => ({ activeId: images.activeId, fetchedAt: 1, keys: [] }),
+    'images/balance': () => ({ activeId: images.activeId, fetchedAt: 1, keys: imageRows }),
     'images/keys/rename': payload => (images = relabel(images, payload)),
   }
   const rpc = { async call(channel, endpoint, payload) {
@@ -65,7 +65,7 @@ async function settingsFixture(t) {
   const card = title => root.root.find(node => node.type === 'section'
     && node.findAll(child => child.type === 'h3' && text(child) === title).length === 1)
   return {
-    calls, events,
+    calls, events, card,
     rows: title => card(title).findAll(node => node.type === 'div' && node.props.className === 'pkc-row'),
     buttons: (scope, label) => scope.findAll(node => node.type === 'button' && text(node) === label),
     fields: scope => scope.findAll(node => node.type === 'input'),
@@ -136,4 +136,23 @@ test('the image card renames with the same field and buttons as the conversation
   assert.match(text(fx.rows(zh.accountsTitle)[0]), /Chat renamed/u)
   assert.equal(fx.rows(zh.accountsTitle)[0].findAll(node => node.type === 'form').length, 0)
   assert.equal(fx.fields(fx.rows(zh.imagesTitle)[0])[0].props.value, 'Poster key')
+})
+
+test('neither card adds its keys up: each key row carries its own balance', async t => {
+  const usd = value => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value)
+  const fx = await settingsFixture(t, {
+    chatRows: [{ id: 'chat-a', label: 'Chat main', usage: { availableUsd: 42.5, usedUsd: 7.5 } }],
+    imageRows: [
+      { id: 'image-a', label: 'Poster key', usage: { availableUsd: 80, usedUsd: 20 } },
+      { id: 'image-b', label: 'Key 2', usage: { unlimitedQuota: true, usedUsd: 0 } },
+    ],
+  })
+  for (const title of [zh.accountsTitle, zh.imagesTitle]) {
+    assert.equal(fx.card(title).findAll(node => node.props.className === 'pkc-stats').length, 0, title)
+    assert.doesNotMatch(text(fx.card(title)), /合计/u, title)
+  }
+  const chat = text(fx.rows(zh.accountsTitle)[0])
+  for (const figure of [`${zh.keyRemaining}${usd(42.5)}`, `${zh.keyUsed}${usd(7.5)}`, `${zh.accountLimit}${usd(50)}`]) assert.ok(chat.includes(figure), figure)
+  assert.ok(text(fx.rows(zh.imagesTitle)[0]).includes(`${zh.accountLimit}${usd(100)}`))
+  assert.ok(text(fx.rows(zh.imagesTitle)[1]).includes(`${zh.keyRemaining}${zh.keyUnlimited}`))
 })

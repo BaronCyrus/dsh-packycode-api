@@ -1,7 +1,7 @@
 import * as react from 'react'
 
 import { IMAGE_CHAT_KIND, imageConversationNode } from './image-conversation.js'
-import { BalanceTotals, KeyBalance } from './client-balance.jsx'
+import { KeyBalance } from './client-balance.jsx'
 import { ImageShortcutBalance } from './client-image-balance.jsx'
 import { readOriginalImage } from './client-image-download.js'
 import { createImageViewer, PackyCodeImageViewer } from './client-image-viewer.jsx'
@@ -89,10 +89,7 @@ export function PackyCodeImagesCard({ call, t }) {
         </select>
       </label>
       <p className="pkc-note">{t('imagesQualityHint')}</p>
-      {(state.keys ?? []).length > 0 && <>
-        <BalanceTotals rows={rows} t={t} />
-        <p className="pkc-note">{balanceLoading ? t('imagesBalanceLoading') : t('imagesBalanceHint')}</p>
-      </>}
+      {(state.keys ?? []).length > 0 && <p className="pkc-note">{balanceLoading ? t('imagesBalanceLoading') : t('imagesBalanceHint')}</p>}
       <div className="pkc-list">
         {(state.keys ?? []).map(entry => <div className="pkc-row" key={entry.id}>
           <div className="pkc-row-top"><span className="pkc-row-name">

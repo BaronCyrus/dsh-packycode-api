@@ -1,6 +1,6 @@
 import * as react from 'react'
 
-import { quotaTotalUsd, sumBalances } from './totals.js'
+import { quotaTotalUsd } from './totals.js'
 
 export const fill = (text, values) => text.replace(/\{(\w+)\}/gu, (match, name) => values[name] === undefined ? match : String(values[name]))
 
@@ -84,24 +84,4 @@ export function QuotaHover({ row, fetchedAt, loading = false, failed = false, em
     </span>
     <span className="pkc-quota-tooltip" id={tooltipId} role="tooltip">{details}</span>
   </span>
-}
-
-/** Only this card's keys contribute; account-wide billing is never added. */
-export function BalanceTotals({ rows, t }) {
-  const totals = sumBalances(rows)
-  const stale = rows.filter(row => row.stale !== undefined).length
-  const known = field => rows.some(row => row.usage?.unlimitedQuota !== true && Number.isFinite(row.usage?.[field]))
-  return <>
-    <div className="pkc-stats">
-      <div className="pkc-stat"><span className="pkc-stat-label">{t('totalRemaining')}</span><span className="pkc-stat-value">
-        {known('availableUsd') ? formatUsd(totals.remainingUsd) : totals.unlimited > 0 ? t('keyUnlimited') : '—'}{known('availableUsd') && totals.unlimited > 0 && ` + ${t('keyUnlimited')}`}
-      </span></div>
-      <div className="pkc-stat"><span className="pkc-stat-label">{t('totalUsed')}</span><span className="pkc-stat-value">{known('usedUsd') ? formatUsd(totals.usedUsd) : '—'}</span></div>
-      <div className="pkc-stat"><span className="pkc-stat-label">{t('totalLimit')}</span><span className="pkc-stat-value">{totals.unlimited > 0 ? t('keyUnlimited') : known('availableUsd') && known('usedUsd') ? formatUsd(totals.limitUsd) : '—'}</span></div>
-    </div>
-    {(totals.unread > 0 || stale > 0) && <p className="pkc-note">{[
-      totals.unread > 0 ? fill(t('totalPartial'), { count: totals.unread }) : undefined,
-      stale > 0 ? fill(t('totalStale'), { count: stale }) : undefined,
-    ].filter(Boolean).join(' ')}</p>}
-  </>
 }

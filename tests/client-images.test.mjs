@@ -105,21 +105,26 @@ test('built image settings persist quality choices, constrain menus by model and
   assert.ok(endpoints.includes('images/balance'))
   const rendered = () => deepNodes(render(card.type, card.props, state))
   const text = () => rendered().filter(node => typeof node.props?.children === 'string').map(node => node.props.children).join(' ')
+  /** One figure of a key row: its label followed by the value in bold. */
+  const figure = label => rendered().find(node => node.type === 'span' && Array.isArray(node.props?.children) && node.props.children[0] === label)?.props.children[1]?.props.children
   assert.match(text(), /\$9\.50/u)
+  // The card lists each key's own figures and adds nothing across keys.
+  assert.equal(rendered().some(node => node.props?.className === 'pkc-stats'), false)
+  assert.equal(figure(zh.keyRemaining), '$9.50')
   assert.match(text(), /Image fixture/u)
   assert.match(text(), /每月重置/u)
   const refresh = () => show().find(node => node.type === 'button' && node.props.children === zh.refresh)
   balanceMode = 'no-limit'
   refresh().props.onClick(); await tick()
   assert.match(text(), /不重置/u)
-  assert.equal(rendered().filter(node => node.props?.className === 'pkc-stat-value').at(-1).props.children, '$10.00')
+  assert.equal(figure(zh.accountLimit), '$10.00')
   assert.equal(rendered().some(node => node.props?.className === 'pkc-bar'), true)
   balanceMode = 'unknown-total'
   refresh().props.onClick(); await tick()
-  assert.equal(rendered().filter(node => node.props?.className === 'pkc-stat-value').at(-1).props.children, '$10.00')
+  assert.equal(figure(zh.accountLimit), '$10.00')
   balanceMode = 'partial-usage'
   refresh().props.onClick(); await tick()
-  assert.equal(rendered().filter(node => node.props?.className === 'pkc-stat-value').at(-1).props.children, '—')
+  assert.equal(figure(zh.accountLimit), undefined)
   assert.equal(rendered().some(node => node.props?.className === 'pkc-bar'), false)
   balanceMode = 'stale'
   refresh().props.onClick(); await tick()

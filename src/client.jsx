@@ -13,7 +13,7 @@ import * as react from 'react'
 import { en, zh } from './client-copy.js'
 import { STYLE } from './client-style.js'
 import { installImagePresentation, PackyCodeImagesCard, PackyCodeImageShortcut } from './client-images.jsx'
-import { BalanceTotals, fill, KeyBalance, QuotaHover } from './client-balance.jsx'
+import { fill, KeyBalance, QuotaHover } from './client-balance.jsx'
 import { KeyRenameForm, useKeyRename } from './client-key-rename.jsx'
 import { DiagnosticsCard } from './client-diagnostics.jsx'
 
@@ -30,7 +30,7 @@ const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
 /** The catalog's models by family, for the "reaches" line under each key. */
 const MODEL_FAMILIES = [
   ['DeepSeek', ['deepseek-flash']],
-  ['GPT', ['gpt-6.1-sol', 'gpt-6-astra']],
+  ['GPT', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol']],
   ['Grok', ['grok-4.7']],
   ['Gemini', ['gemini-4-argon', 'gemini-3.8-flash']],
   ['Claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
@@ -281,7 +281,6 @@ function AccountsCard({ call, t }) {
         )
         : (
           <>
-            <BalanceTotals rows={rows} t={t} />
             <div className="pkc-list">
               {keys.map(entry => (
                 <KeyRow
