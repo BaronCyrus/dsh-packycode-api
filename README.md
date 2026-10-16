@@ -184,7 +184,7 @@ Claude Code CLI → 本机临时 MCP web_search → 插件选定的 DeepSeek/GPT
 
 Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
 
-**Flash 原生工具续聊：** 网关偶尔会拒绝原样回传的有效签名，返回 `Corrupted thought signature` / `Invalid thought signature`。插件仅在当前工具续聊、HTTP 400 且尚未输出任何流事件时，等待 1 秒，用相同 Key、签名及请求原样重发一次；再次失败时仍返回原错误，不更换协议或模型。文字、图片和工具续聊均已实测；该处理缓解网关的间歇性拒绝，不能保证修复持续性的上游签名错误。
+**Gemini 工具续聊的思维签名：** PackyCode 的 Gemini 原生通道在工具调用场景下不能正确处理思维签名，会返回 HTTP 400 `Invalid thought signature` / `Corrupted thought signature`，原样重发也无济于事（PackyCode 客服的答复）。因此插件对 Gemini 4 Argon 和 Gemini 3.8 Flash 不再回传模型返回的签名，而是按 [Google 文档](https://ai.google.dev/gemini-api/docs/thought-signatures) 在需要签名的位置填入跳过校验的值 `skip_thought_signature_validator`。协议、端点和模型都不变，DSH 的回放记录仍保留原始签名。Google 提示跳过签名可能削弱多步工具调用之间的推理连贯性。Flash 仍保留原有兜底：HTTP 400 签名拒绝且尚未输出任何流事件时，等待 1 秒原样重发一次。这类 400 不会被当作 Key 失效。
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 

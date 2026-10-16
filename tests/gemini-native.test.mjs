@@ -4,6 +4,7 @@ import test from 'node:test'
 import { BlockAssembler, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { createVisionFixture } from '../scripts/vision-fixture.mjs'
+import { SKIP_THOUGHT_SIGNATURE, skipThoughtSignatures } from '../src/gemini-api.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeProvider } from '../src/provider.js'
 import { createRouteAdapter } from '../src/route.js'
@@ -54,8 +55,35 @@ test('the durable host replay resends the exact same signed request and key once
   assert.deepEqual(requests[1].body, requests[2].body)
   assert.equal(requests[1].key, KEY)
   assert.equal(requests[2].key, KEY)
-  assert.equal(requests[2].body.contents.flatMap(item => item.parts).find(part => part.functionCall).thoughtSignature, TOOL_SIGNATURE)
+  assert.equal(requests[2].body.contents.flatMap(item => item.parts).find(part => part.functionCall).thoughtSignature, SKIP_THOUGHT_SIGNATURE)
+  assert.ok(!JSON.stringify(requests.map(request => request.body)).includes(TOOL_SIGNATURE), 'no real signature goes over the wire')
+  assert.ok(JSON.stringify(first.replayState).includes(TOOL_SIGNATURE), 'DSH replay state keeps the returned signature')
   assert.equal((await ring.activeKey()).key, KEY)
+})
+
+test('requests carry Google\'s skip value instead of any real thought signature', () => {
+  const contents = [
+    { role: 'user', parts: [{ text: 'Read both files.' }] },
+    { role: 'model', parts: [
+      { thought: true, text: 'Plan.', thoughtSignature: TEXT_SIGNATURE },
+      { functionCall: { name: 'read', args: { path: 'a' } }, thoughtSignature: TOOL_SIGNATURE },
+      { functionCall: { name: 'read', args: { path: 'b' } } },
+    ] },
+    { role: 'user', parts: [{ functionResponse: { name: 'read', response: { output: 'A' } } }, { functionResponse: { name: 'read', response: { output: 'B' } } }] },
+    { role: 'model', parts: [{ text: 'Next.' }, { functionCall: { name: 'read', args: { path: 'c' } } }] },
+    { role: 'user', parts: [{ functionResponse: { name: 'read', response: { output: 'C' } } }] },
+    { role: 'model', parts: [{ text: 'Done.', thoughtSignature: TEXT_SIGNATURE }] },
+  ]
+  const before = JSON.stringify(contents)
+  const sent = skipThoughtSignatures(contents)
+  assert.equal(JSON.stringify(contents), before, 'the input is not mutated')
+  assert.deepEqual(sent[1].parts.map(part => part.thoughtSignature), [SKIP_THOUGHT_SIGNATURE, SKIP_THOUGHT_SIGNATURE, undefined], 'only the first call of a parallel step needs one')
+  assert.deepEqual(sent[3].parts.map(part => part.thoughtSignature), [undefined, SKIP_THOUGHT_SIGNATURE], 'a step whose call came back unsigned gets one')
+  assert.equal(sent[5].parts[0].thoughtSignature, SKIP_THOUGHT_SIGNATURE)
+  assert.deepEqual(sent[0], contents[0])
+  assert.deepEqual(sent[2], contents[2])
+  assert.ok(!JSON.stringify(sent).includes(TOOL_SIGNATURE) && !JSON.stringify(sent).includes(TEXT_SIGNATURE))
+  assert.equal(skipThoughtSignatures(undefined), undefined)
 })
 
 function capture(t, respond = (_request, _count, model) => nativeStream(undefined, model)) {
@@ -147,7 +175,7 @@ for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
     assert.equal(requests[0].key, KEY)
   })
 
-  test(`${id} replays native tool calls with their thought signatures and tool results`, async t => {
+  test(`${id} replays native tool calls with the skip signature and their tool results`, async t => {
     const requests = capture(t, (_request, count, model) => count === 1
       ? nativeStream([{ functionCall: { name: 'echo', args: { text: 'ok' } }, thoughtSignature: TOOL_SIGNATURE }], model)
       : nativeStream([{ text: 'ok' }], model))
@@ -167,7 +195,14 @@ for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
     assert.equal(second.stopReason, 'stop', second.errorMessage)
     assert.equal(requests[0].body.tools[0].functionDeclarations[0].name, 'echo')
     const replayed = requests[1].body.contents.flatMap(message => message.parts)
-    assert.equal(replayed.find(part => part.functionCall).thoughtSignature, TOOL_SIGNATURE)
+    assert.equal(replayed.find(part => part.functionCall).thoughtSignature, SKIP_THOUGHT_SIGNATURE)
     assert.equal(replayed.find(part => part.functionResponse).functionResponse.name, 'echo')
+    assert.equal(second.api, 'google-generative-ai')
+    const direct = await provider.stream(model, {
+      tools,
+      messages: [user, first, { role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 2 }],
+    }, { apiKey: KEY }).result()
+    assert.equal(direct.stopReason, 'stop', direct.errorMessage)
+    assert.equal(requests[2].body.contents.flatMap(message => message.parts).find(part => part.functionCall).thoughtSignature, SKIP_THOUGHT_SIGNATURE, 'the direct stream path skips it too')
   })
 }
