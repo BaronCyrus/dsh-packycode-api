@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The release job receives the published tarball.** The v1.2.10 tag run published to npm, then its hand-off step found no tarball: `actions/upload-artifact@v4` skips files under a dot directory such as `.artifacts/` unless `include-hidden-files` is set. The release job was therefore skipped, and the v1.2.10 Release was made by hand with the tarball npm serves (its SHA-512 matched `dist.integrity`). The hand-off now sets `include-hidden-files: true`; its glob still matches only the published tarball.
+
 ## 1.2.10
 
 - **OpenAI's transient server error is retried instead of failing the turn.** On the Codex group, a `gpt-6.1-sol` turn sometimes ended in 本轮运行失败 "An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists." with `PI_AI_ERROR`. The gateway had already answered HTTP 200 and started the stream when the upstream failed: an SSE `error` event carrying a 503 `server_error`, then `response.failed`, before any output. The OpenAI SDK raises that without an HTTP status, so DSH's adapter, which reads a failure's category from status words, filed it as `PI_AI_ERROR`, a code no retry policy re-runs. The same failure sent as an HTTP 500 is `SERVER` and was already retried. The route now files OpenAI's `server_error` (its sentence, or pi-ai's `server_error:` prefix) as `SERVER` when the adapter left it unclassified, on prepared and direct calls alike, so the route's existing policy (up to 20 retries with backoff) resends the request. Only the code changes: if every retry fails, the upstream sentence still reaches the user, after up to about three minutes, as for an HTTP 500. The key stays enabled and is not rotated. The official Codex client also retries this failure (`ApiError::Retryable`).

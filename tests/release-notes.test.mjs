@@ -81,6 +81,9 @@ test('the tag checks its notes before npm publishes, then hands the published ta
   assert.equal(handOff.if, NOT_ON_DISPATCH)
   assert.equal(handOff.uses, 'actions/upload-artifact@v4')
   assert.equal(handOff.with.path, '.artifacts/dsh-packycode-api-*.tgz')
+  // v1.2.10's run published to npm, then found no tarball here: the action
+  // skips files under a dot directory such as .artifacts by default.
+  assert.equal(handOff.with['include-hidden-files'], true)
   assert.equal(handOff.with['if-no-files-found'], 'error')
 })
 

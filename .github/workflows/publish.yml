@@ -129,6 +129,9 @@ jobs:
         with:
           name: published-tarball
           path: .artifacts/dsh-packycode-api-*.tgz
+          # upload-artifact@v4 skips anything under a dot directory unless
+          # told otherwise; the glob matches only the published tarball.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
