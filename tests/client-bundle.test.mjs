@@ -57,8 +57,8 @@ test('every channel call carries a payload object', () => {
 })
 
 test('the balance card does not show the account-level billing line', () => {
-  // PackyCode's account billing counts every token on the account, including
-  // keys not stored here, so it reads as a wrong total beside the key sums.
+  // An API key cannot read the account balance: PackyCode's billing endpoints
+  // answer per key, so an account line could only repeat a key's own quota.
   const source = readFileSync(path.join(root, 'src', 'client.jsx'), 'utf8')
   assert.doesNotMatch(source, /balance\?\.account\b/u)
   assert.doesNotMatch(source, /siteAccount|含同账号/u)

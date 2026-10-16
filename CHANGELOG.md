@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The balance read no longer requests PackyCode's billing endpoints.** Every conversation balance refresh called `/v1/dashboard/billing/subscription` and `/v1/dashboard/billing/usage` and treated the answers as account-wide billing. PackyCode answers them per key: a live check on 2026-10-17 returned each key's own grant as `hard_limit_usd`, its own spend in cents as `total_usage` (`1387.9536` for $13.8795 used), and the placeholder `hard_limit_usd: 100000000` for an unlimited key. Nothing has displayed these figures since the account line was removed — its large negative remaining came from reading cents as dollars — so the requests only delayed each refresh. An API key cannot read the account's own balance at all; that sits behind the dashboard API, which takes a login session. An unlimited key therefore still shows only its own used amount.
+- The `balance` RPC no longer returns an `account` field. `createBalanceReader` drops its `includeAccount` option, and `parseBillingSubscription`, `parseBillingUsage` and `accountHostOrder` are no longer exported. A 402/403 on a key's balance read now says the gateway refused that read rather than naming the account. `scripts/live-check.mjs` prints the key's own used amount instead of the account line.
+
 ## 1.3.0
 
 - **Claude runs directly inside the plugin.** Opus, Sonnet and Haiku now use the native Anthropic Messages HTTP route with DSH tools, attachments, permissions, plan mode and durable history. Claude session titles use Haiku over HTTP. No Claude Code installation, login or subprocess is required.

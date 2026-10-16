@@ -2,10 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  accountHostOrder,
   createBalanceReader,
-  parseBillingSubscription,
-  parseBillingUsage,
   parseTokenUsage,
   statusHostOrder,
 } from '../src/balance.js'
@@ -47,13 +44,10 @@ test('treats the no-period-limit sentinel as absent and honors unlimited quota',
   assert.equal(usage.availableUsd, 0.002)
 })
 
-test('parses the account endpoints', () => {
-  assert.deepEqual(
-    parseBillingSubscription({ hard_limit_usd: 500, soft_limit_usd: 500, system_hard_limit_usd: 500, access_until: 0 }),
-    { softLimitUsd: 500, hardLimitUsd: 500, systemHardLimitUsd: 500 },
-  )
-  assert.deepEqual(parseBillingUsage({ object: 'list', total_usage: 74.7116 }), { totalUsageUsd: 74.7116 })
+test('does not mistake another payload for token usage', () => {
   assert.equal(parseTokenUsage({ nothing: true }), undefined)
+  // The billing family's shape is not a key's usage, even from the same key.
+  assert.equal(parseTokenUsage({ object: 'billing_subscription', hard_limit_usd: 100 }), undefined)
 })
 
 function jsonResponse(payload, status = 200) {
@@ -79,9 +73,11 @@ function routedFetch(routes) {
 const KEYS = [{ id: 'a', label: 'primary', key: 'sk-aaaaaaaaaaaaaaaa', disabled: false }]
 const HOSTS = { apiHost: 'https://cf.api.fan', statusHost: 'https://www.packyapi.ai' }
 
-test('quota-only readers make no account-wide billing requests', async () => {
+test('a balance read requests only per-key usage, never the billing family', async () => {
+  // PackyCode answers `/v1/dashboard/billing/*` per key too (its grant, its
+  // spend in cents), so those requests could only repeat this row.
   const requests = []
-  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, includeAccount: false,
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS,
     fetchImpl: async (url, init) => {
       requests.push(url)
       assert.equal(new URL(url).pathname, '/api/usage/token/')
@@ -94,14 +90,15 @@ test('quota-only readers make no account-wide billing requests', async () => {
   assert.equal(value.keys[0].usage.availableUsd, 499.252884)
   assert.equal(Object.hasOwn(value, 'account'), false)
   assert.equal(requests.length, 1)
+  assert.match(requests[0], /^https:\/\/www\.packyapi\.ai/u)
   await reader.read()
   assert.equal(requests.length, 1)
   await reader.read({ force: true })
   assert.equal(requests.length, 2)
 })
 
-test('quota-only readers with no image keys make no authenticated request', async () => {
-  const reader = createBalanceReader({ listKeys: async () => [], getHosts: () => HOSTS, includeAccount: false,
+test('a read without keys makes no authenticated request', async () => {
+  const reader = createBalanceReader({ listKeys: async () => [], getHosts: () => HOSTS,
     fetchImpl: async () => { assert.fail('must not fall back to another credential') },
   })
   const value = await reader.read()
@@ -112,7 +109,7 @@ test('quota-only readers with no image keys make no authenticated request', asyn
 test('quota projections redact credentials echoed in names, reset periods and transport diagnostics', async () => {
   let failing = false
   const key = KEYS[0].key
-  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, includeAccount: false,
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS,
     fetchImpl: async () => {
       if (failing) throw new Error(`connection failed with Bearer ${key}`)
       return jsonResponse({ data: { name: `image account ${key}`, total_available: 500000, quota_reset_period: key } })
@@ -129,7 +126,7 @@ test('quota projections redact credentials echoed in names, reset periods and tr
 })
 
 test('an invalid JSON balance response never exposes a secret from its parse error', async () => {
-  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, includeAccount: false,
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS,
     fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError(`invalid JSON near ${KEYS[0].key}`) } }),
   })
   const value = await reader.read()
@@ -137,56 +134,30 @@ test('an invalid JSON balance response never exposes a secret from its parse err
   assert.equal(JSON.stringify(value).includes(KEYS[0].key), false)
 })
 
-test('reads per-key quota from the status host and the account from the model host', async () => {
-  const { fetchImpl, calls } = routedFetch([
-    { prefix: 'https://www.packyapi.ai/api/usage/token/', reply: TOKEN_USAGE },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 74.7116 } },
-  ])
-  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, fetchImpl })
-  const value = await reader.read()
-  assert.equal(value.keys[0].usage.availableUsd, 499.252884)
-  assert.equal(value.account.remainingUsd, 425.2884)
-  assert.equal(calls.length, 3)
-  assert.match(calls[0], /^https:\/\/www\.packyapi\.ai/u)
-})
-
 test('falls back to the other host when the configured one cannot answer', async () => {
-  const { fetchImpl } = routedFetch([
+  const { fetchImpl, calls } = routedFetch([
     { prefix: 'https://cf.api.fan/api/usage/token/', reply: { error: 'not found' }, status: 404 },
     { prefix: 'https://www.packyapi.ai/api/usage/token/', reply: TOKEN_USAGE },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 0 } },
   ])
-  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, fetchImpl })
+  const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => ({ apiHost: 'https://cf.api.fan', statusHost: 'https://cf.api.fan' }), fetchImpl })
   const value = await reader.read()
   assert.equal(value.keys[0].error, undefined)
   assert.equal(value.keys[0].usage.limitUsd, 500)
+  assert.deepEqual(calls, ['https://cf.api.fan/api/usage/token/', 'https://www.packyapi.ai/api/usage/token/'])
 })
 
 test('a rejected key reports its own error without failing the whole read', async () => {
   const { fetchImpl } = routedFetch([
     { prefix: 'https://www.packyapi.ai/api/usage/token/', reply: { error: { message: '无效的令牌' } }, status: 401 },
     { prefix: 'https://cf.api.fan/api/usage/token/', reply: { error: { message: '无效的令牌' } }, status: 401 },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 1 } },
   ])
   const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, fetchImpl })
   const value = await reader.read()
   assert.equal(value.keys[0].usage, undefined)
   assert.match(value.keys[0].error, /rejected \(401\)/u)
-  assert.equal(value.account.remainingUsd, 499)
 })
 
-test('a read without keys still returns the account error instead of throwing', async () => {
-  const { fetchImpl } = routedFetch([])
-  const reader = createBalanceReader({ listKeys: async () => [], getHosts: () => HOSTS, fetchImpl })
-  const value = await reader.read()
-  assert.deepEqual(value.keys, [])
-  assert.match(value.account.error, /add a PackyCode API key/u)
-})
-
-test('the account read falls back to a key the gateway accepts', async () => {
+test('each key reports with its own credential, so a rejected key leaves the others intact', async () => {
   const keys = [
     { id: 'bad', label: 'bad', key: 'sk-invalid-000000', disabled: false },
     { id: 'good', label: 'good', key: 'sk-valid-000000', disabled: false },
@@ -197,22 +168,14 @@ test('the account read falls back to a key the gateway accepts', async () => {
       prefix: 'https://www.packyapi.ai/api/usage/token/',
       reply: (_url, options) => (isBad(options) ? jsonResponse({ error: { message: '无效的令牌' } }, 401) : jsonResponse(TOKEN_USAGE)),
     },
+    { prefix: 'https://www.packyapi.com/api/usage/token/', reply: { error: { message: '无效的令牌' } }, status: 401 },
     { prefix: 'https://cf.api.fan/api/usage/token/', reply: { error: 'not found' }, status: 404 },
-    {
-      prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription',
-      reply: (_url, options) => (isBad(options) ? jsonResponse({ error: 'unauthorized' }, 401) : jsonResponse({ hard_limit_usd: 500 })),
-    },
-    { prefix: 'https://www.packyapi.ai/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 74.7116 } },
-    { prefix: 'https://www.packyapi.ai/v1/dashboard/billing/usage', reply: { total_usage: 74.7116 } },
   ])
   const reader = createBalanceReader({ listKeys: async () => keys, getHosts: () => HOSTS, fetchImpl })
   const value = await reader.read()
   assert.match(value.keys[0].error, /rejected \(401\)/u)
   assert.equal(value.keys[1].usage.availableUsd, 499.252884)
-  // The total must come from the key that answered, not from whichever is first.
-  assert.equal(value.account.hardLimitUsd, 500)
-  assert.equal(value.account.keyId, 'good')
+  assert.equal(value.keys[1].error, undefined)
 })
 
 test('caches a read, shares one in flight, and forgets on invalidate', async () => {
@@ -225,8 +188,6 @@ test('caches a read, shares one in flight, and forgets on invalidate', async () 
         return jsonResponse(TOKEN_USAGE)
       },
     },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 0 } },
   ])
   const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, fetchImpl, now: () => 1000 })
   const [first, second] = await Promise.all([reader.read(), reader.read()])
@@ -242,8 +203,6 @@ test('caches a read, shares one in flight, and forgets on invalidate', async () 
 test('a saved legacy status host is tried after the current default, never first', async () => {
   const { fetchImpl, calls } = routedFetch([
     { prefix: 'https://www.packyapi.ai/api/usage/token/', reply: TOKEN_USAGE },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 0 } },
   ])
   const legacy = { apiHost: 'https://cf.api.fan', statusHost: 'https://www.packyapi.com' }
   const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => legacy, fetchImpl })
@@ -253,7 +212,6 @@ test('a saved legacy status host is tried after the current default, never first
   assert.deepEqual(statusHostOrder(legacy), ['https://www.packyapi.ai', 'https://www.packyapi.com', 'https://cf.api.fan'])
   // An explicit non-legacy override still goes first.
   assert.equal(statusHostOrder({ apiHost: 'https://cf.api.fan', statusHost: 'https://status.example' })[0], 'https://status.example')
-  assert.deepEqual(accountHostOrder(legacy).slice(0, 2), ['https://cf.api.fan', 'https://www.packyapi.ai'])
 })
 
 test('an unreachable host is reported with the transport cause, and the legacy host still answers', async () => {
@@ -261,8 +219,6 @@ test('an unreachable host is reported with the transport cause, and the legacy h
   const { fetchImpl } = routedFetch([
     { prefix: 'https://www.packyapi.ai/', reply: () => { throw dnsFailure } },
     { prefix: 'https://www.packyapi.com/api/usage/token/', reply: TOKEN_USAGE },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription', reply: { hard_limit_usd: 500 } },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 0 } },
   ])
   const reader = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, fetchImpl })
   assert.equal((await reader.read()).keys[0].usage.limitUsd, 500)
@@ -270,12 +226,10 @@ test('an unreachable host is reported with the transport cause, and the legacy h
   const { fetchImpl: down } = routedFetch([
     { prefix: 'https://www.packyapi.', reply: () => { throw dnsFailure } },
     { prefix: 'https://cf.api.fan/api/usage/token/', reply: { error: 'not found' }, status: 404 },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/', reply: {}, status: 429 },
   ])
   const failing = createBalanceReader({ listKeys: async () => KEYS, getHosts: () => HOSTS, fetchImpl: down })
   const value = await failing.read()
   assert.match(value.keys[0].error, /fetch failed \(ENOTFOUND\)/u)
-  assert.match(value.account.error, /rate limiting balance reads \(429\)/u)
 })
 
 test('a failed read keeps the last balance each key reported, marked stale', async () => {
@@ -288,18 +242,11 @@ test('a failed read keeps the last balance each key reported, marked stale', asy
     },
     { prefix: 'https://www.packyapi.com/api/usage/token/', reply: () => jsonResponse({ error: 'busy' }, 429) },
     { prefix: 'https://cf.api.fan/api/usage/token/', reply: { error: 'not found' }, status: 404 },
-    {
-      prefix: 'https://cf.api.fan/v1/dashboard/billing/subscription',
-      reply: () => (up ? jsonResponse({ hard_limit_usd: 500 }) : jsonResponse({ error: 'busy' }, 429)),
-    },
-    { prefix: 'https://www.packyapi.', reply: () => jsonResponse({ error: 'busy' }, 429) },
-    { prefix: 'https://cf.api.fan/v1/dashboard/billing/usage', reply: { total_usage: 74.7116 } },
   ])
   let keys = KEYS
   const reader = createBalanceReader({ listKeys: async () => keys, getHosts: () => HOSTS, fetchImpl, now: () => clock })
   const first = await reader.read()
   assert.equal(first.keys[0].stale, undefined)
-  assert.equal(first.account.remainingUsd, 425.2884)
 
   up = false
   clock = 99_000
@@ -308,14 +255,11 @@ test('a failed read keeps the last balance each key reported, marked stale', asy
   assert.equal(second.keys[0].stale.fetchedAt, 1_000)
   assert.match(second.keys[0].stale.error, /429/u)
   assert.equal(second.keys[0].error, undefined)
-  assert.equal(second.account.remainingUsd, 425.2884)
-  assert.equal(second.account.stale.fetchedAt, 1_000)
 
   // A key that is no longer stored takes its last balance with it.
   keys = [{ id: 'b', label: 'other', key: 'sk-bbbbbbbbbbbbbbbb', disabled: false }]
   const third = await reader.read({ force: true })
   assert.equal(third.keys[0].usage, undefined)
   assert.equal(third.keys[0].stale, undefined)
-  assert.equal(third.account.stale, undefined)
-  assert.ok(third.account.error)
+  assert.ok(third.keys[0].error)
 })

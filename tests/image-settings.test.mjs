@@ -42,7 +42,7 @@ test('image balance RPC reads only image keys, skips account billing and follows
   const requests = []
   let currentHosts = { statusHost: 'https://status.invalid', apiHost: 'https://api.invalid' }
   const { ring, images } = setup({ createImageBalance: imageRing => createBalanceReader({
-    listKeys: () => imageRing.secrets(), getHosts: () => currentHosts, includeAccount: false,
+    listKeys: () => imageRing.secrets(), getHosts: () => currentHosts,
     fetchImpl: async (url, init) => {
       requests.push({ url, auth: init.headers.Authorization })
       assert.equal(new URL(url).pathname, '/api/usage/token/')
@@ -172,7 +172,7 @@ test('image RPC replies contain only projections and do not invalidate conversat
 
 test('image keys rename through RPC with projection-only replies, a fresh balance label and the chat ring untouched', async () => {
   const { store, ring, imageRing, images } = setup({ createImageBalance: imageRing => createBalanceReader({
-    listKeys: () => imageRing.secrets(), getHosts: () => ({ statusHost: 'https://status.invalid' }), includeAccount: false,
+    listKeys: () => imageRing.secrets(), getHosts: () => ({ statusHost: 'https://status.invalid' }),
     fetchImpl: async () => ({ ok: true, json: async () => ({ data: { total_available: 4500000, total_used: 500000 } }) }),
   }) })
   await ring.add('sk-fixture-conversation', 'chat')

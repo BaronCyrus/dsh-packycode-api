@@ -101,7 +101,7 @@ export function apply(ctx, config) {
   }
 
   const balance = createBalanceReader({ listKeys: () => ring.secrets(), getHosts: hosts })
-  const imageBalance = createBalanceReader({ listKeys: () => imageRing.secrets(), getHosts: hosts, includeAccount: false })
+  const imageBalance = createBalanceReader({ listKeys: () => imageRing.secrets(), getHosts: hosts })
   /**
    * Which token groups each key is in, and so which models it can reach.
    * Nothing reads it at boot: the settings panel asks for it, and a request
@@ -316,8 +316,8 @@ export function apply(ctx, config) {
   })
 }
 
-export { createBalanceReader, parseBillingSubscription, parseBillingUsage, parseTokenUsage } from './balance.js'
-export { accountHostOrder, normalizeHost, statusHostOrder } from './hosts.js'
+export { createBalanceReader, parseTokenUsage } from './balance.js'
+export { normalizeHost, statusHostOrder } from './hosts.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
 export {
   CHANNEL,

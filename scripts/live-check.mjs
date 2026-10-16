@@ -142,8 +142,9 @@ async function main() {
   const balance = createBalanceReader({ listKeys: () => route.ring.secrets(), getHosts: () => HOSTS })
   const value = await balance.read()
   const row = value.keys[0]
-  console.log(`   account: remaining $${value.account.remainingUsd} of $${value.account.hardLimitUsd} (used $${value.account.totalUsageUsd})`)
-  console.log(`   key "${row.label}": available $${row.usage?.availableUsd} / limit $${row.usage?.limitUsd} (${row.usage?.resetPeriod ?? 'no period'})${row.error === undefined ? '' : ` ERROR ${row.error}`}\n`)
+  const remaining = row.usage?.unlimitedQuota === true ? 'unlimited' : `$${row.usage?.availableUsd}`
+  console.log(`   key "${row.label}": available ${remaining}, used $${row.usage?.usedUsd} (${row.usage?.resetPeriod ?? 'no period'})${row.error === undefined ? '' : ` ERROR ${row.error}`}`)
+  console.log(`   projection carries account billing: ${Object.hasOwn(value, 'account') ? 'YES (bug)' : 'no'}\n`)
 
   console.log('2) groups')
   const groups = await route.groups.read()
