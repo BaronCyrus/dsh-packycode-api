@@ -6,8 +6,12 @@ on:
       - 'v*'
   # A tag publishes to `next`; this moves `latest` once that version is past
   # the release-age window DSH's pnpm enforces (see the promote job).
+  # GitHub runs a schedule as the account that last committed a change to the
+  # cron value and runs nothing if that commit's email is linked to no account,
+  # so change it only from a linked address. `*/1` means `*`; it was rewritten
+  # for that reason.
   schedule:
-    - cron: '41 * * * *'
+    - cron: '41 */1 * * *'
   workflow_dispatch:
     inputs:
       promote:
