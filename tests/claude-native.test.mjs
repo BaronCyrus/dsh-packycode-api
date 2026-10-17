@@ -5,7 +5,7 @@ import { createPackyCodeProvider } from '../src/provider.js'
 import { createRouteAdapter } from '../src/route.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createVisionFixture } from '../scripts/vision-fixture.mjs'
-import { fakeCredentials } from './helpers.mjs'
+import { fakeCredentials, hostProvider } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 
 const KEY = 'sk-native-fixture-not-a-real-key'
@@ -26,7 +26,7 @@ function capture(t, reply = request => anthropicStream(request.body.model)) {
 
 test('the Claude session header matches the official client and metadata on every request', async t => {
   const requests = capture(t)
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(item => item.id === 'claude-haiku-5-5')
   await provider.streamSimple(model, { messages: [user] }, { apiKey: KEY, sessionId: 'dsh-session-for-cli-header', maxTokens: 2048,
     headers: { 'X-Claude-Code-Session-Id': 'wrong-session', 'X-Session-Affinity': 'wrong-route' },
@@ -38,7 +38,7 @@ test('the Claude session header matches the official client and metadata on ever
 
 test('normal Claude requests carry the attribution checksum observed in the current official client', async t => {
   const requests = capture(t)
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(item => item.id === 'claude-haiku-5-5')
   for (const [prompt, checksum] of [['读取 /private/var/folders/example/inventory.json 的库存记录。', 'c4a'], ['我们要整理库存📦，请说明处理顺序。', '7b2'], ['订单', '8a8']]) {
     await provider.streamSimple(model, { systemPrompt: 'Keep the original host instructions.', messages: [{ role: 'user', content: prompt, timestamp: 1 }, { role: 'user', content: '继续处理上面的任务。', timestamp: 2 }] }, { apiKey: KEY, maxTokens: 2048 }).result()
@@ -51,7 +51,7 @@ test('normal Claude requests carry the attribution checksum observed in the curr
 for (const id of MODELS) {
   test(`${id} sends native efforts with a plugin-key-only client envelope`, async t => {
     const requests = capture(t)
-    const provider = createPackyCodeProvider()
+    const provider = hostProvider(createPackyCodeProvider())
     const model = provider.getModels().find(item => item.id === id)
     for (const reasoning of ['low', 'medium', 'high', 'xhigh', 'max']) {
       const result = await provider.streamSimple(model, { systemPrompt: 'Original DSH system.', messages: [user] }, {
@@ -92,7 +92,7 @@ for (const id of MODELS) {
 
 test('raw and simple streams preserve async payload hooks and separate sessions', async t => {
   const requests = capture(t)
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(item => item.id === MODELS[0])
   const source = { systemPrompt: 'Do not lose DSH instructions.', messages: [user] }
   const snapshot = JSON.stringify(source)
@@ -118,7 +118,7 @@ test('ambient keys and a caller auth header cannot replace a missing explicit ke
   process.env.ANTHROPIC_API_KEY = 'sk-ambient-fixture'
   t.after(() => { if (previous === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previous })
   const requests = capture(t)
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(item => item.id === MODELS[0])
   const result = await provider.streamSimple(model, { messages: [user] }, { headers: { Authorization: 'Bearer sk-foreign-fixture', 'X-API-Key': 'sk-foreign-header-fixture' } }).result()
   assert.equal(result.stopReason, 'error')

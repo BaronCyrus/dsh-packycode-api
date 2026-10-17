@@ -7,8 +7,12 @@ import { PACKYCODE_MODEL_IDS } from '../src/catalog.js'
 import { apply, Config } from '../src/index.js'
 import { createModelSelectionController, readHiddenModels } from '../src/model-selection.js'
 import { fieldValue } from '../src/preferences.js'
+import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createRouteAdapter } from '../src/route.js'
-import { fakeCredentials } from './helpers.mjs'
+import { fakeCredentials, singleKeyRecord } from './helpers.mjs'
+
+/** DSH 0.2.1 lists a route's models only once its key resolves. */
+const KEY = 'sk-model-selection-fixture-not-a-real-key'
 
 /** Exercise both real settings seams and the registered model adapter/RPC. */
 function host({ generation = '0.2', writable = true, failWrite = false, initial = {} } = {}) {
@@ -35,7 +39,7 @@ function host({ generation = '0.2', writable = true, failWrite = false, initial 
     }
   }
   const ctx = {
-    credentials: fakeCredentials(),
+    credentials: fakeCredentials({ record: singleKeyRecord(KEY) }),
     logger: { warn() {} },
     fiber: { entry: { options: { id: 'packycode-api' } } },
     llm: {
@@ -174,7 +178,9 @@ test('the actual DSH LLM registry refreshes discovery atomically and keeps a pre
     isWritable: () => true,
     onChange: () => registration.replace(['packycode']),
   })
-  const adapter = createRouteAdapter({ ring: {}, keys: {}, isModelVisible: selection.isVisible })
+  const ring = new PackyCodeKeyRing(fakeCredentials({ record: singleKeyRecord(KEY) }))
+  const keys = { active: () => ring.activeKey(), forRequest: (_model, key) => key, onKeyFailure() {} }
+  const adapter = createRouteAdapter({ ring, keys, isModelVisible: selection.isVisible })
   registration = llm.registerAdapter(['packycode'], adapter)
   const prepared = await adapter.prepareCall('packycode', 'deepseek-flash')
   const before = notifications

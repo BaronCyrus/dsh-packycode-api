@@ -8,7 +8,7 @@ import { SKIP_THOUGHT_SIGNATURE, skipThoughtSignatures } from '../src/gemini-api
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeProvider } from '../src/provider.js'
 import { createRouteAdapter } from '../src/route.js'
-import { fakeCredentials } from './helpers.mjs'
+import { fakeCredentials, hostProvider } from './helpers.mjs'
 
 const KEY = 'sk-fixture-only-not-a-real-key'
 const TEXT_SIGNATURE = Buffer.from('fixture text signature').toString('base64')
@@ -100,7 +100,7 @@ function capture(t, respond = (_request, _count, model) => nativeStream(undefine
 for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
   test(`${id} streams its three thinking levels through the native SDK without thinkingBudget`, async t => {
     const requests = capture(t)
-    const provider = createPackyCodeProvider()
+    const provider = hostProvider(createPackyCodeProvider())
     const model = provider.getModels().find(model => model.id === id)
     for (const reasoning of ['low', 'medium', 'high']) {
       const stream = provider.streamSimple(model, { systemPrompt: 'Be concise.', messages: [user] }, {
@@ -133,7 +133,7 @@ for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
 
   test(`${id} defaults to medium and preserves an async payload hook after level normalization`, async t => {
     const requests = capture(t)
-    const provider = createPackyCodeProvider()
+    const provider = hostProvider(createPackyCodeProvider())
     const model = provider.getModels().find(model => model.id === id)
     let callbacks = 0
     const result = await provider.streamSimple(model, { messages: [user] }, {
@@ -179,7 +179,7 @@ for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
     const requests = capture(t, (_request, count, model) => count === 1
       ? nativeStream([{ functionCall: { name: 'echo', args: { text: 'ok' } }, thoughtSignature: TOOL_SIGNATURE }], model)
       : nativeStream([{ text: 'ok' }], model))
-    const provider = createPackyCodeProvider()
+    const provider = hostProvider(createPackyCodeProvider())
     const model = provider.getModels().find(model => model.id === id)
     const tools = [{ name: 'echo', description: 'Echo a message.', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }]
     const options = { apiKey: KEY, reasoning: 'low' }

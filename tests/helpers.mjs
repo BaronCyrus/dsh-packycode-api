@@ -2,6 +2,25 @@
  * Test doubles shared across the suite.
  */
 
+import * as piAi from '@earendil-works/pi-ai'
+
+/**
+ * The route's pi-ai provider, called the way DSH's pi-ai `Models` calls it.
+ * pi-ai 1.x (DSH 0.2.1) folds a context's `systemPrompt` and `tools` into a
+ * leading system message before any provider sees the request; pi-ai 0.x
+ * passes the context through unchanged.
+ * @param provider - a provider built by `createPackyCodeProvider()`.
+ * @returns the same provider with its two stream methods called that way.
+ */
+export function hostProvider(provider) {
+  const normalize = context => (typeof piAi.normalizeContext === 'function' ? piAi.normalizeContext(context) : context)
+  return {
+    ...provider,
+    stream: (model, context, options) => provider.stream(model, normalize(context), options),
+    streamSimple: (model, context, options) => provider.streamSimple(model, normalize(context), options),
+  }
+}
+
 /**
  * DSH 0.2.0-rc.2 `credentials-local` refuses a grant payload holding anything
  * JSON cannot represent — `undefined` included — before it writes the file.

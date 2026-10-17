@@ -2,16 +2,16 @@ import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 import test from 'node:test'
 
-import { Context as LegacyContext } from '@deepseek-ai/cordis'
-import { HostConnectionService as LegacyConnection, serverResponseSchema as legacyResponse } from '@deepseek-ai/dsh-client-connection'
-import { Context as CurrentContext, HostConnectionService as CurrentConnection, serverResponseSchema as currentResponse } from 'packycode-host-v020-fixture'
+import { Context } from '@deepseek-ai/cordis'
+import { HostConnectionService, serverResponseSchema } from '@deepseek-ai/dsh-client-connection'
+import { Context as Context020, HostConnectionService as Connection020, serverResponseSchema as response020 } from 'packycode-host-v020-fixture'
 
 import * as packycode from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
 
 const hosts = [
-  { name: 'DSH 0.1.5', Context: LegacyContext, Connection: LegacyConnection, responseSchema: legacyResponse },
-  { name: 'DSH 0.2.0-rc.2', Context: CurrentContext, Connection: CurrentConnection, responseSchema: currentResponse },
+  { name: 'DSH 0.2.0-rc.2', Context: Context020, Connection: Connection020, responseSchema: response020 },
+  { name: 'DSH 0.2.1-rc.2', Context, Connection: HostConnectionService, responseSchema: serverResponseSchema },
 ]
 const COOKIE = 'fixture-session=authenticated'
 
@@ -42,7 +42,8 @@ async function runningHost(t, { Context, Connection }, { withWebServer = true } 
   let webFiber = withWebServer ? await ctx.plugin(webPlugin) : undefined
   const connectionFiber = await ctx.plugin({ name: 'existing-connection', inject: ['credentials'], apply(owner) {
     connectionStarts += 1
-    new Connection(owner, [], { isAuthenticated: request => request.headers.cookie === COOKIE })
+    // DSH 0.2.1 also asks browser auth for an API-token peer; this host has none.
+    new Connection(owner, [], { isAuthenticated: request => request.headers.cookie === COOKIE, authenticateApi: () => undefined })
   } })
   const server = createServer((req, res) => {
     const route = [...routes.values()].find(route => req.url.startsWith(`${route.path}/`))

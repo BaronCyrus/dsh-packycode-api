@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPackyCodeProvider } from '../src/provider.js'
+import { hostProvider } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 
 const key = 'sk-tool-envelope-fixture'
@@ -14,7 +15,7 @@ test('wire tools use CLI MCP names while streamed calls and result() retain nati
     requests.push(body)
     return anthropicStream(body.model, { type: 'tool_use', id: 'inventory_call', name: body.tools[0].name, input: { sku: 'KB-87' } })
   })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-sonnet-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-sonnet-5-5')
   const context = { messages: [user], tools: [tool('lookup_inventory')] }, before = JSON.stringify(context)
   const options = { apiKey: key, onPayload: payload => ({ ...payload, tool_choice: { type: 'tool', name: 'lookup_inventory' } }) }
   const events = []
@@ -40,7 +41,7 @@ test('tool replay preserves the wire alias, result id and signed thinking throug
       ? { type: 'tool_use', id: 'inventory_call', name: body.tools[0].name, input: { sku: 'KB-87' } }
       : { type: 'text', text: '35' })
   })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-sonnet-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-sonnet-5-5')
   const context = { messages: [user], tools: [tool('lookup_inventory')] }
   const first = await provider.streamSimple(model, context, { apiKey: key, reasoning: 'low' }).result()
   assert.equal(first.content[0].name, 'lookup_inventory')
@@ -61,7 +62,7 @@ test('long and similarly normalized native names remain distinct and unknown ali
     body = await new Request(input, init).json()
     return anthropicStream(body.model, { type: 'tool_use', id: 'unknown', name: 'mcp__dsh__unoffered_tool', input: {} })
   })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
   const result = await provider.streamSimple(model, { messages: [user], tools: names.map(tool) }, { apiKey: key }).result()
   const wireNames = body.tools.map(t => t.name)
   assert.equal(new Set(wireNames).size, names.length)
@@ -71,7 +72,7 @@ test('long and similarly normalized native names remain distinct and unknown ali
 
 test('offered DSH builtins declare canonical CLI names while retaining their exact schemas and arguments', async t => {
   const names = { bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', glob: 'Glob', grep: 'Grep' }
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
   const offered = Object.keys(names).map(tool)
   let selected, body, schemas
   t.mock.method(globalThis, 'fetch', async (input, init) => {
@@ -100,7 +101,7 @@ test('an unoffered Bash never becomes a host command, including PTC-only and his
     const body = await new Request(input, init).json(); requests.push(body)
     return anthropicStream(body.model, { type: 'tool_use', id: 'unoffered', name: 'Bash', input: { command: 'date' } })
   })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
   const history = { role: 'assistant', content: [{ type: 'toolCall', id: 'old-call', name: 'bash', arguments: { command: 'date' } }],
     api: 'anthropic-messages', provider: model.provider, model: model.id, stopReason: 'toolUse', timestamp: 1,
     usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }
@@ -119,7 +120,7 @@ test('canonical names never shadow another offered tool or inherited object prop
     body = await new Request(input, init).json()
     return anthropicStream(body.model, { type: 'tool_use', id: 'case-sensitive', name: 'Bash', input: {} })
   })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
   const result = await provider.streamSimple(model, { messages: [user], tools: names.map(tool) }, { apiKey: key }).result()
   assert.equal(new Set(body.tools.map(t => t.name)).size, names.length)
   for (const tool of body.tools) assert.match(tool.name, /^mcp__dsh__/u)
@@ -129,7 +130,7 @@ test('canonical names never shadow another offered tool or inherited object prop
 test('Haiku matches CLI omitted summaries while keeping effort, output limits and explicit display overrides', async t => {
   const requests = []
   t.mock.method(globalThis, 'fetch', async (input, init) => { const body = await new Request(input, init).json(); requests.push(body); return anthropicStream(body.model) })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-haiku-5-5')
   for (const thinkingDisplay of [undefined, 'summarized']) await provider.streamSimple(model, { messages: [user] }, { apiKey: key, reasoning: 'high', maxTokens: 2048, thinkingDisplay }).result()
   assert.deepEqual(requests.map(body => body.thinking.display), ['omitted', 'summarized'])
   for (const body of requests) { assert.equal(body.output_config.effort, 'high'); assert.equal(body.max_tokens, 2048) }
@@ -138,7 +139,7 @@ test('Haiku matches CLI omitted summaries while keeping effort, output limits an
 test('Anthropic server tools retain their defined names', async t => {
   let body
   t.mock.method(globalThis, 'fetch', async (input, init) => { body = await new Request(input, init).json(); return anthropicStream(body.model) })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === 'claude-sonnet-5-5')
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === 'claude-sonnet-5-5')
   await provider.streamSimple(model, { messages: [user], tools: [tool('lookup_inventory')] }, { apiKey: key, onPayload: payload => ({ ...payload, tools: [{ type: 'web_search_20250305', name: 'web_search' }, ...payload.tools], tool_choice: { type: 'tool', name: 'web_search' } }) }).result()
   assert.equal(body.tools[0].name, 'web_search')
   assert.equal(body.tool_choice.name, 'web_search')
@@ -148,7 +149,7 @@ test('Anthropic server tools retain their defined names', async t => {
 for (const id of ['claude-sonnet-5-5', 'claude-opus-5-5']) test(`${id} exposes CLI progress updates with the required beta and preserves explicit summary requests`, async t => {
   const requests = []
   t.mock.method(globalThis, 'fetch', async (input, init) => { const request = new Request(input, init); const body = await request.json(); requests.push({ body, headers: request.headers }); return anthropicStream(body.model) })
-  const provider = createPackyCodeProvider(), model = provider.getModels().find(m => m.id === id)
+  const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === id)
   for (const thinkingDisplay of [undefined, 'summarized']) await provider.streamSimple(model, { messages: [user] }, { apiKey: key, reasoning: 'low', maxTokens: 2048, thinkingDisplay }).result()
   assert.equal(requests[0].body.thinking.display, 'updates')
   assert.ok(requests[0].headers.get('anthropic-beta').includes('thinking-display-updates-2026-08-18'))

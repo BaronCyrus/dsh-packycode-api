@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClaudeReplayFetch } from '../src/claude-replay.js'
 import { createPackyCodeProvider } from '../src/provider.js'
+import { hostProvider } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 
 const KEY = 'sk-haiku-replay-fixture-not-a-real-key'
@@ -19,7 +20,7 @@ async function run(t, respond, { modelId = 'claude-haiku-5-5', context = { messa
     requests.push({ body: await request.text(), headers: Object.fromEntries(request.headers), signal: init?.signal })
     return respond(requests.length)
   })
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(item => item.id === modelId)
   const result = await provider.streamSimple(model, context, { apiKey: KEY, sessionId: 'haiku-replay-session', reasoning: 'low', maxTokens: 2048, maxRetries: 0, signal, onPayload }).result()
   return { result, requests }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPackyCodeProvider } from '../src/provider.js'
+import { hostProvider } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 
 test('a complete Claude message finishes even when the server keeps the HTTP body open', async t => {
@@ -16,7 +17,7 @@ test('a complete Claude message finishes even when the server keeps the HTTP bod
   }), { headers: { 'content-type': 'text/event-stream' } }))
   const timeout = setTimeout(() => controller.abort(), 1000)
   t.after(() => clearTimeout(timeout))
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(model => model.id === 'claude-haiku-5-5')
   const result = await provider.streamSimple(model, { messages: [{ role: 'user', content: '整理库存', timestamp: 1 }] }, { apiKey: 'sk-stream-fixture-not-real', signal: controller.signal }).result()
   assert.equal(result.stopReason, 'stop', result.errorMessage)
@@ -34,7 +35,7 @@ test('UTF-8 and CRLF delimiters split across network chunks preserve the complet
       else controller.enqueue(bytes.slice(offset, ++offset))
     },
   }), { headers: { 'content-type': 'text/event-stream' } }))
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(model => model.id === 'claude-haiku-5-5')
   const result = await provider.streamSimple(model, { messages: [{ role: 'user', content: '整理库存', timestamp: 1 }] }, { apiKey: 'sk-stream-fixture-not-real' }).result()
   assert.equal(result.stopReason, 'stop', result.errorMessage)
@@ -50,7 +51,7 @@ test('cancellation interrupts a stalled SSE body and cancels its reader', async 
   }), { headers: { 'content-type': 'text/event-stream' } }))
   const timer = setTimeout(() => controller.abort(), 30)
   t.after(() => clearTimeout(timer))
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(model => model.id === 'claude-haiku-5-5')
   const result = await provider.streamSimple(model, { messages: [{ role: 'user', content: '整理库存', timestamp: 1 }] }, { apiKey: 'sk-stream-fixture-not-real', signal: controller.signal }).result()
   assert.equal(result.stopReason, 'aborted')

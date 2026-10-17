@@ -5,8 +5,10 @@ import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
 import { PACKYCODE_MODEL_IDS } from '../src/catalog.js'
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PROVIDER } from '../src/constants.js'
-import { createPackyCodeProfile } from '../src/index.js'
+import { createPackyCodeProfile, createRouteAdapter } from '../src/index.js'
+import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeProvider } from '../src/provider.js'
+import { fakeCredentials } from './helpers.mjs'
 
 /**
  * The route composed exactly as `apply()` composes it, driven through the real
@@ -41,8 +43,25 @@ test('the real adapter advertises the route under its display name', async () =>
   assert.deepEqual(adapter.providerInfo(PROVIDER), { id: PROVIDER, name: DISPLAY_NAME })
   const models = await adapter.listModels(PROVIDER)
   assert.deepEqual(models.map(model => model.id), [...PACKYCODE_MODEL_IDS])
-  // Catalog reads never touch a credential.
-  assert.deepEqual(reads, [])
+  // DSH 0.2.1 lists a route only after its key resolves; that one check is
+  // the only credential read a catalog read makes.
+  assert.ok(reads.length <= 1, `listing read the credential ${reads.length} times`)
+})
+
+test('without a usable key the route lists no models instead of failing, where DSH lists only with a key', async () => {
+  // DSH 0.2.1 resolves the key before it lists and shows nothing without one;
+  // DSH 0.2.0 lists the catalog regardless.
+  const probe = route()
+  await probe.adapter.listModels(PROVIDER)
+  const listsOnlyWithKey = probe.reads.length > 0
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  const adapter = createRouteAdapter({ ring, keys: { active: () => ring.activeKey(), forRequest: (_model, key) => key, onKeyFailure() {} } })
+  const expected = listsOnlyWithKey ? [] : [...PACKYCODE_MODEL_IDS]
+  assert.deepEqual((await adapter.listModels(PROVIDER)).map(model => model.id), expected, 'no key stored')
+  const { keys: [stored] } = await ring.add('sk-listing-fixture-not-a-real-key', 'fixture')
+  assert.deepEqual((await adapter.listModels(PROVIDER)).map(model => model.id), [...PACKYCODE_MODEL_IDS])
+  await ring.disable(stored.id, 'quota')
+  assert.deepEqual((await adapter.listModels(PROVIDER)).map(model => model.id), expected, 'every key moved aside')
 })
 
 test('resolved metadata carries context, modalities, and the vendor efforts', async () => {

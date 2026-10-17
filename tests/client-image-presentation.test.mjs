@@ -5,7 +5,7 @@ import vm from 'node:vm'
 
 import { zh } from '../src/client-copy.js'
 import { IMAGE_CHAT_KIND } from '../src/image-conversation.js'
-import { assembler } from './image-conversation-fixture.mjs'
+import { assembler, HOST_VERSIONS } from './image-conversation-fixture.mjs'
 import savedResult from './fixtures/image-result-event.json' with { type: 'json' }
 
 /** Run the built client with deterministic Hook lifetimes and the public image-loader seam. */
@@ -63,7 +63,7 @@ function clientFixture() {
   return { slots, reads, opened, render, preview, definition: () => definition }
 }
 
-for (const protocol of ['native', 'ptc', 'cli']) test(`built ${protocol} main-chat gallery uses the same session image loader/viewer as tool details`, async () => {
+for (const protocol of ['native', 'ptc', 'cli']) for (const version of HOST_VERSIONS) test(`DSH ${version}: built ${protocol} main-chat gallery uses the same session image loader/viewer as tool details`, async () => {
   const fx = clientFixture()
   assert.equal(fx.definition().kind, IMAGE_CHAT_KIND)
   const gallery = fx.slots.get(`conversation.chat.node:${IMAGE_CHAT_KIND}`)
@@ -84,7 +84,7 @@ for (const protocol of ['native', 'ptc', 'cli']) test(`built ${protocol} main-ch
     output,
     { ...end, data: { turn: 1, reason: { kind: 'stop' } } },
   ]
-  const runtime = assembler('0.2.0', true, fx.definition())
+  const runtime = assembler(version, true, fx.definition())
   runtime.activateTarget('chat')
   runtime.replaceWindow(JSON.parse(JSON.stringify(entries)).map(event => ({ type: 'event', event })), false)
   runtime.flush()

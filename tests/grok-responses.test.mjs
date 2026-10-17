@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createPackyCodeProvider } from '../src/provider.js'
+import { hostProvider } from './helpers.mjs'
 
 /** An actual Responses SSE stream, parsed by pi-ai's real OpenAI SDK path. */
 function responseStream() {
@@ -20,7 +21,7 @@ function responseStream() {
 }
 
 test('Grok uses Responses and its four efforts without the cache key this gateway rejects', async () => {
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(model => model.id === 'grok-4.7')
   for (const reasoning of ['low', 'medium', 'high', 'xhigh']) {
     const requests = []
@@ -53,7 +54,7 @@ test('Grok uses Responses and its four efforts without the cache key this gatewa
 })
 
 test('GPT keeps the session cache key its gateway route requires', async () => {
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   const model = provider.getModels().find(model => model.id === 'gpt-6.1-sol')
   let payload
   const stream = provider.streamSimple(model, { messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
@@ -65,7 +66,7 @@ test('GPT keeps the session cache key its gateway route requires', async () => {
 })
 
 test('a future non-GPT Responses model also defaults to omitting the GPT cache key', async () => {
-  const provider = createPackyCodeProvider()
+  const provider = hostProvider(createPackyCodeProvider())
   // A descriptor from another family catches a Grok-only special case.
   const model = { ...provider.getModels().find(model => model.id === 'grok-4.7'), id: 'another-responses-model', name: 'Another model' }
   let payload

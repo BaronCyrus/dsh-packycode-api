@@ -7,21 +7,28 @@ import vm from 'node:vm'
 import * as react from 'react'
 import * as jsx from 'react/jsx-runtime'
 import { IMAGE_CHAT_KIND } from '../src/image-conversation.js'
-import { chatRuntime, conversationServiceSource, slotRegistrySource } from './image-conversation-fixture.mjs'
+import { chatRuntime, conversationServiceSource, HOST_VERSIONS, hostResolve, slotRegistrySource } from './image-conversation-fixture.mjs'
 import savedResult from './fixtures/image-result-event.json' with { type: 'json' }
 
-const host020 = createRequire(import.meta.resolve('packycode-host-v020-fixture'))
-const cordis = await import(host020.resolve('@deepseek-ai/cordis'))
-const stores = await import(host020.resolve('@deepseek-ai/dsh-client-store'))
-const slotCore = await import(host020.resolve('@deepseek-ai/dsh-client-ui-slots'))
-const { UiConversation, SlotRegistry } = vm.runInNewContext(`${conversationServiceSource()}\n${slotRegistrySource()}\n({UiConversation, SlotRegistry})`, {
-  _deepseek_ai_cordis: cordis,
-  _deepseek_ai_dsh_client_store: stores,
-  _deepseek_ai_dsh_client_ui_slots: slotCore,
-  queueMicrotask, URL, Blob, Uint8Array,
-})
+/** One host's real Cordis, client stores, Slot core and the UI registries built on them. */
+async function hostClient(version) {
+  const cordis = await import(hostResolve(version, '@deepseek-ai/cordis'))
+  const stores = await import(hostResolve(version, '@deepseek-ai/dsh-client-store'))
+  const slotCore = await import(hostResolve(version, '@deepseek-ai/dsh-client-ui-slots'))
+  // DSH 0.2.1's conversation service validates with zod, which its package brings along.
+  const zod = createRequire(hostResolve(version, '@deepseek-ai/dsh-client-ui-conversation/client'))('zod')
+  const { UiConversation, SlotRegistry } = vm.runInNewContext(`${conversationServiceSource(version)}\n${slotRegistrySource(version)}\n({UiConversation, SlotRegistry})`, {
+    zod,
+    _deepseek_ai_cordis: cordis,
+    _deepseek_ai_dsh_client_store: stores,
+    _deepseek_ai_dsh_client_ui_slots: slotCore,
+    queueMicrotask, URL, Blob, Uint8Array,
+  })
+  return { cordis, UiConversation, SlotRegistry }
+}
 
-test('built image plugin registers and replays through real Cordis, UI registries, bound feed and session image cache', async t => {
+for (const version of HOST_VERSIONS) test(`DSH ${version}: built image plugin registers and replays through real Cordis, UI registries, bound feed and session image cache`, async t => {
+  const { cordis, UiConversation, SlotRegistry } = await hostClient(version)
   const ctx = new cordis.Context()
   t.after(() => ctx.fiber.dispose())
   let slots, conversation, sessionOwner
@@ -48,7 +55,7 @@ test('built image plugin registers and replays through real Cordis, UI registrie
   await ctx.plugin({ name: 'existing-conversation', inject: ['sessions'], apply(owner) {
     conversation = new UiConversation(owner, owner.get('sessions'))
   } })
-  const chat = chatRuntime()
+  const chat = chatRuntime(version)
   await ctx.plugin({ name: 'existing-chat-and-tool-outlets', inject: ['slots', 'uiConversation'], apply(owner) {
     owner.slots.register({ name: 'root', children: {
       'conversation.chat.node': { kind: 'keyed', scope: 'session' },

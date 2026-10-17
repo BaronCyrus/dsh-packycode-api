@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import savedResult from './fixtures/image-result-event.json' with { type: 'json' }
 
-import { assembler, chatRoots } from './image-conversation-fixture.mjs'
+import { assembler, chatRoots, HOST_VERSIONS } from './image-conversation-fixture.mjs'
 
 const attachment = { attachmentId: `sha256:${'a'.repeat(64)}`, mediaType: 'image/png', bytes: 100, width: 1152, height: 2048 }
 const event = (seq, type, data) => ({ type: 'event', event: { seq, type, data } })
@@ -23,20 +23,20 @@ const chatNodes = runtime => {
   return snapshot.order.map(key => snapshot.nodes.get(key))
 }
 
-test('raw image records stay with their own turns across live updates, history reload and older-page prepend', () => {
+for (const version of HOST_VERSIONS) test(`DSH ${version}: raw image records stay with their own turns across live updates, history reload and older-page prepend`, () => {
   const second = events.map(entry => ({ type: 'event', event: { ...entry.event, seq: entry.event.seq + 10,
     data: entry.event.type === 'tool/result' ? { ...entry.event.data, message: { ...entry.event.data.message, source: { kind: 'tool', callId: 'second-image' }, toolCallId: 'second-image' } }
       : { ...entry.event.data, turn: 2 },
   } }))
   for (const replay of [false, true]) {
-    const runtime = assembler('0.2.0', true)
+    const runtime = assembler(version, true)
     runtime.activateTarget('chat')
     if (replay) runtime.replaceWindow([...events, ...second], false)
     else for (const entry of [...events, ...second]) { runtime.append(entry); runtime.flush() }
     assert.deepEqual([...chatNodes(runtime)].map(node => node.data.turn), [1, 2])
     assert.deepEqual([...chatNodes(runtime)].map(node => node.data.blocks[0].toolCallId), ['generated', 'second-image'])
   }
-  const paged = assembler('0.2.0', true)
+  const paged = assembler(version, true)
   paged.activateTarget('chat')
   paged.replaceWindow(second, true)
   const key = chatNodes(paged)[0].key
@@ -45,8 +45,8 @@ test('raw image records stay with their own turns across live updates, history r
   assert.equal(chatNodes(paged)[1].key, key)
 })
 
-test('shared image definition never mixes independent sessions with identical call IDs', () => {
-  const first = assembler('0.2.0', true), second = assembler('0.2.0', true)
+for (const version of HOST_VERSIONS) test(`DSH ${version}: shared image definition never mixes independent sessions with identical call IDs`, () => {
+  const first = assembler(version, true), second = assembler(version, true)
   first.activateTarget('chat'); second.activateTarget('chat')
   const other = { ...attachment, attachmentId: `sha256:${'b'.repeat(64)}` }
   for (const entry of events) {
@@ -59,8 +59,8 @@ test('shared image definition never mixes independent sessions with identical ca
   assert.deepEqual(chatNodes(second)[0].data.blocks[0].content[0].attachment, other)
 })
 
-test('history whose image arrives before its opening boundary can refine Location without losing the card', () => {
-  const runtime = assembler('0.2.0', true)
+for (const version of HOST_VERSIONS) test(`DSH ${version}: history whose image arrives before its opening boundary can refine Location without losing the card`, () => {
+  const runtime = assembler(version, true)
   runtime.activateTarget('chat')
   runtime.replaceWindow([events[2]], true)
   assert.equal(chatNodes(runtime).length, 1)
@@ -71,7 +71,7 @@ test('history whose image arrives before its opening boundary can refine Locatio
   assert.equal(chatNodes(runtime)[0].data.turn, 1)
 })
 
-for (const version of ['0.1.5', '0.2.0']) test(`DSH ${version} keeps a generated image in main chat after tool details are collapsed and history is reopened`, () => {
+for (const version of HOST_VERSIONS) test(`DSH ${version} keeps a generated image in main chat after tool details are collapsed and history is reopened`, () => {
   for (const replay of [false, true]) {
     const runtime = assembler(version)
     runtime.activateTarget('chat')
@@ -81,13 +81,13 @@ for (const version of ['0.1.5', '0.2.0']) test(`DSH ${version} keeps a generated
     const nodes = runtime.snapshot('chat')
     assert.equal(nodes.length, 1, 'main chat must have an image card independently of the tool detail panel')
     assert.deepEqual(nodes[0].data.blocks[0].content[0].attachment, attachment)
-    assert.deepEqual(chatRoots(nodes), [{ kind: 'node', key: nodes[0].key }], 'image output must stay out of closed process groups')
+    assert.deepEqual(chatRoots(nodes, version), [{ kind: 'node', key: nodes[0].key }], 'image output must stay out of closed process groups')
   }
 })
 
-test('DSH 0.2 real Chat snapshot and grouping render flat native ToolMessages without fabricated turn fields', () => {
+for (const version of HOST_VERSIONS) test(`DSH ${version} real Chat snapshot and grouping render flat native ToolMessages without fabricated turn fields`, () => {
   for (const replay of [false, true]) {
-    const runtime = assembler('0.2.0', true)
+    const runtime = assembler(version, true)
     runtime.activateTarget('chat')
     if (replay) runtime.replaceWindow(events, false)
     else for (const entry of events) { runtime.append(entry); runtime.flush() }
@@ -100,11 +100,11 @@ test('DSH 0.2 real Chat snapshot and grouping render flat native ToolMessages wi
   }
 })
 
-test('a sanitized actual DSH stored native result appears in main chat without opening tool details', () => {
+for (const version of HOST_VERSIONS) test(`DSH ${version}: a sanitized actual DSH stored native result appears in main chat without opening tool details`, () => {
   // Preserve the recorded ToolMessage structure. Only identifiers, text and the
   // attachment digest/name were replaced; no pi-ai tool-result wrapper exists.
   for (const replay of [false, true]) {
-    const runtime = assembler('0.2.0', true)
+    const runtime = assembler(version, true)
     runtime.activateTarget('chat')
     const record = { type: 'event', event: structuredClone(savedResult) }
     if (replay) runtime.replaceWindow([record], false)
@@ -126,13 +126,19 @@ test('an image rendered by a nested native tool also appears in main chat after 
     log.push(entry)
     return entry.event
   } }
-  const agent = { id: session.id, session }
+  const agent = { id: session.id, session, ctx }
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
   ctx.provide('systemPrompt', { tools() {}, section() {}, getSectionOrder: () => 1 })
   ctx.provide('agents', { currentInitiator: () => agent })
-  ctx.provide('codeRuntime', { language: 'typescript', async run({ program, bindings }) {
+  // DSH 0.2.0 runs PTC programs on `codeRuntime`; 0.2.1 renamed it
+  // `ptcRuntime`, resolves each request first, releases an agent's retained
+  // environment through `agent.ctx`, and gives run_code the agent's cwd.
+  const ptc = { language: 'typescript', resolve: request => request, release() {}, async run({ program, bindings }) {
     return { logs: [], value: await new AsyncFunction('tools', program)(bindings[0].functions) }
-  } })
+  } }
+  ctx.provide('codeRuntime', ptc)
+  ctx.provide('ptcRuntime', ptc)
+  ctx.provide('workingDirectory', { ensure: async () => process.cwd() })
   const tools = new ToolRuntime(ctx, { mode: 'ptc' })
   tools.register(defineTool({ name: 'packycode_image_generate', description: 'Fixture of the actual image output contract.', parameters: {},
     output: { schema: { type: 'object', additionalProperties: false, properties: {} }, render: () => [{ type: 'image', attachment }], presentationMeta: () => ({ kind: 'packycode-image' }) },
