@@ -63,7 +63,7 @@ test('tag publication uses the verified versioned tarball, not a separately pack
   const workflow = await readFile(new URL('../.github/workflows/publish.yml', import.meta.url), 'utf8')
   assert.ok(workflow.includes('run: pnpm pack --pack-destination .artifacts'))
   assert.ok(workflow.includes('artifact=".artifacts/dsh-packycode-api-${version:?}.tgz"'))
-  assert.ok(workflow.includes('npm publish "${artifact:?}" --access public --tag next'))
+  assert.ok(workflow.includes('npm publish "${artifact:?}" --access public\n'))
   assert.ok(workflow.includes('if [ ! -f "$artifact" ]; then'))
 })
 

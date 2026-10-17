@@ -59,13 +59,17 @@ test('versions order numerically, not as text', () => {
   assert.equal(compareVersions('1.3', '1.3.3'), undefined)
 })
 
-test('a tag publishes to next, and only the promote job ever moves latest', async () => {
+test('a tag publishes to latest, and the promote job only finishes the staged versions', async () => {
   const workflow = parse(await readFile(new URL('../.github/workflows/publish.yml', import.meta.url), 'utf8'))
   const steps = job => workflow.jobs[job].steps.map(step => step.run ?? '').join('\n')
-  assert.match(steps('publish'), /npm publish "\$\{artifact:\?\}" --access public --tag next/u)
-  assert.doesNotMatch(steps('publish'), /dist-tag/u)
-  assert.match(steps('release'), /gh release create .*--latest=false/u)
+  assert.match(steps('publish'), /^npm publish "\$\{artifact:\?\}" --access public$/mu)
+  assert.doesNotMatch(steps('publish'), /--tag|dist-tag/u)
+  assert.match(steps('release'), /gh release create .* --latest --title/u)
+  assert.doesNotMatch(steps('release'), /--latest=false/u)
   assert.equal(workflow.jobs.release.if, "github.event_name == 'push'")
+
+  // 1.3.3 and 1.3.4 still reach `latest` from `next`; after them the job is a no-op.
+  assert.deepEqual(decidePromotion({ distTags: { latest: '1.3.5', next: '1.3.4' }, time: {} }, Date.now()), { skip: 'next 1.3.4 is not newer than latest 1.3.5' })
 
   // Hourly, or by hand with `promote`; never on a tag push.
   assert.ok(workflow.on.schedule.length > 0)

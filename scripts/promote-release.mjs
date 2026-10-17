@@ -5,7 +5,12 @@
  *
  *   node scripts/promote-release.mjs [--dry-run]
  *
- * A tag publishes to `next`. pnpm (11 by default) refuses to install a version
+ * Transitional. Tags publish straight to `latest` again; this only finishes
+ * moving `latest` to 1.3.3 and 1.3.4, which were staged on `next` before
+ * that. Once `latest` is 1.3.4 or newer, `next` is never newer than `latest`
+ * and every run is a no-op, so remove this with the promote job.
+ *
+ * While tags published to `next`, pnpm (11 by default) refuses to install a version
  * younger than `minimumReleaseAge`, 24 hours, and refuses every later install
  * in a profile whose lockfile already holds one. The plugin's update button and
  * DSH's Plugins page both install what `latest` names, so `latest` only ever

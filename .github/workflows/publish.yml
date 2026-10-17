@@ -4,8 +4,11 @@ on:
   push:
     tags:
       - 'v*'
-  # A tag publishes to `next`; this moves `latest` once that version is past
-  # the release-age window DSH's pnpm enforces (see the promote job).
+  # Tags publish straight to `latest`. 1.3.3 and 1.3.4 were staged on `next`
+  # first; this schedule only lets the promote job move `latest` to them once
+  # each is past the release-age window DSH's pnpm enforces. Remove it, the
+  # promote and mark-latest jobs and scripts/promote-release.mjs once `latest`
+  # is 1.3.4 or newer.
   # GitHub runs a schedule as the account that last committed a change to the
   # cron value and runs nothing if that commit's email is linked to no account,
   # so change it only from a linked address. `*/1` means `*`; it was rewritten
@@ -136,10 +139,12 @@ jobs:
             echo "The verified release artifact is missing"
             exit 1
           fi
-          # `next`, not `latest`: pnpm refuses a version younger than its
-          # minimumReleaseAge, and a profile holding one refuses every later
-          # plugin install. The promote job moves `latest` once it is old enough.
-          npm publish "${artifact:?}" --access public --tag next
+          # Straight to `latest`. Update buttons up to 1.3.2 still install
+          # whatever `latest` names past pnpm's minimumReleaseAge, and a profile
+          # that then holds a version younger than that refuses every later
+          # plugin install, so releases stay at least 24 hours apart while
+          # users remain on them (AGENTS.md, Release cadence).
+          npm publish "${artifact:?}" --access public
       - name: Hand the published tarball to the release job
         if: github.event_name != 'workflow_dispatch'
         uses: actions/upload-artifact@v4
@@ -193,14 +198,17 @@ jobs:
           fi
           notes="$RUNNER_TEMP/release-notes.md"
           title="$(node scripts/release-notes.mjs "$version" --body-file "$notes")"
-          # Marked Latest only when npm's `latest` moves to it (mark-latest job).
-          gh release create "$GITHUB_REF_NAME" "$artifact" --verify-tag --latest=false --title "$title" --notes-file "$notes"
+          # npm's `latest` names this version from now on, and so does Latest here.
+          gh release create "$GITHUB_REF_NAME" "$artifact" --verify-tag --latest --title "$title" --notes-file "$notes"
 
   promote:
     name: Promote a matured release to latest
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.promote)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Transitional: moves `latest` to 1.3.3 and then 1.3.4, staged on `next`
+    # before tags published to `latest`, once each is 25 hours old; after that
+    # `next` is never newer than `latest` and it does nothing.
     # Reads public registry metadata and moves one dist-tag with the OIDC
     # identity; it installs no dependencies. The trusted publisher for this
     # workflow must allow npm dist-tag.

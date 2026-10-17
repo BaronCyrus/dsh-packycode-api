@@ -105,8 +105,8 @@ test('only the release jobs may write, and they run no dependency code', () => {
   assert.equal(create.env.GH_TOKEN, '${{ github.token }}')
   assert.match(create.run, /artifact="\.artifacts\/dsh-packycode-api-\$\{version:\?\}\.tgz"/u)
   assert.match(create.run, /title="\$\(node scripts\/release-notes\.mjs "\$version" --body-file "\$notes"\)"/u)
-  // Latest follows npm's `latest`, which the promote job moves a day later.
-  assert.match(create.run, /gh release create "\$GITHUB_REF_NAME" "\$artifact" --verify-tag --latest=false --title "\$title" --notes-file "\$notes"/u)
+  // Latest follows npm's `latest`, which the tag moves at once.
+  assert.match(create.run, /gh release create "\$GITHUB_REF_NAME" "\$artifact" --verify-tag --latest --title "\$title" --notes-file "\$notes"/u)
   assert.match(create.run, /if gh release view "\$GITHUB_REF_NAME"/u, 'a release made by hand is left unchanged')
 
   // Marking the promoted release Latest is the only other write, with no checkout at all.
