@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Move `latest` to the `next` version once that version is older than the
+ * Move `latest` to the newest staged version that is older than the
  * release-age window DSH's pnpm enforces.
  *
  *   node scripts/promote-release.mjs [--dry-run]
@@ -11,6 +11,13 @@
  * DSH's Plugins page both install what `latest` names, so `latest` only ever
  * names a version past that window — including for update buttons already
  * shipped, which cannot be changed.
+ *
+ * Releases can follow each other faster than the window: `next` then names a
+ * version that is still too young, while an earlier staged one is old enough.
+ * The newest version after `latest`, up to `next`, that has aged past the
+ * window is promoted, so `latest` trails the newest release by about a day
+ * instead of waiting for a quiet day. A version deprecated on npm is never
+ * promoted; deprecating is how a broken release is held back.
  *
  * Reading the registry needs no credentials. In GitHub Actions the npm CLI
  * moves the tag with the workflow's OIDC identity; the trusted publisher must
@@ -41,25 +48,28 @@ export function compareVersions(left, right) {
 }
 
 /**
- * Decide whether `next` may become `latest` now.
- * @param registry - the package's `dist-tags` and `time` from the registry.
+ * Decide which staged version may become `latest` now.
+ * @param registry - from the registry: `distTags`, publish `time` per version,
+ *   the `versions` it still serves, and the `deprecated` ones.
  * @param now - the current time in milliseconds.
  * @returns `{ version }` to promote, or `{ skip }` with the reason.
  */
-export function decidePromotion({ distTags, time }, now, promoteAfterMs = PROMOTE_AFTER_MS) {
+export function decidePromotion({ distTags, time, versions, deprecated = [] }, now, promoteAfterMs = PROMOTE_AFTER_MS) {
   const next = distTags?.next
   const latest = distTags?.latest
   if (next === undefined) return { skip: 'no next tag' }
   const order = compareVersions(next, latest)
   if (order === undefined) return { skip: `next ${next} or latest ${latest} is not a plain version` }
   if (order <= 0) return { skip: `next ${next} is not newer than latest ${latest}` }
-  const published = Date.parse(time?.[next])
-  if (!Number.isFinite(published)) return { skip: `the registry gives no publish time for ${next}` }
-  const age = now - published
-  if (age < promoteAfterMs) {
-    return { skip: `next ${next} is ${(age / 3_600_000).toFixed(1)}h old; it may become latest after ${new Date(published + promoteAfterMs).toISOString()}` }
-  }
-  return { version: next }
+  const staged = (versions ?? Object.keys(time ?? {}))
+    .filter(version => compareVersions(version, latest) === 1 && compareVersions(version, next) <= 0 && !deprecated.includes(version))
+    .map(version => ({ version, published: Date.parse(time?.[version]) }))
+    .filter(entry => Number.isFinite(entry.published))
+  if (staged.length === 0) return { skip: `no undeprecated version after latest ${latest}, up to next ${next}, has a publish time` }
+  const ready = staged.filter(entry => now - entry.published >= promoteAfterMs)
+  if (ready.length > 0) return { version: ready.reduce((newest, entry) => (compareVersions(entry.version, newest.version) === 1 ? entry : newest)).version }
+  const first = staged.reduce((oldest, entry) => (entry.published < oldest.published ? entry : oldest))
+  return { skip: `${first.version} is ${((now - first.published) / 3_600_000).toFixed(1)}h old; it may become latest after ${new Date(first.published + promoteAfterMs).toISOString()}` }
 }
 
 /** The full registry document; `npm view --json` changes its shape between CLI versions. */
@@ -71,7 +81,13 @@ async function readRegistry() {
   })
   if (!response.ok) throw new Error(`the registry answered HTTP ${response.status}`)
   const document = await response.json()
-  return { distTags: document['dist-tags'], time: document.time }
+  const manifests = Object.entries(document.versions ?? {})
+  return {
+    distTags: document['dist-tags'],
+    time: document.time,
+    versions: manifests.map(([version]) => version),
+    deprecated: manifests.filter(([, manifest]) => manifest?.deprecated).map(([version]) => version),
+  }
 }
 
 async function main() {

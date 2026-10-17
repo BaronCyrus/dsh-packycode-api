@@ -23,7 +23,32 @@ test('only a newer next version is promoted', () => {
   assert.match(decidePromotion(registry({ latest: '1.3.3', next: '1.3.3' }), later).skip, /not newer/u)
   assert.match(decidePromotion(registry({ latest: '1.4.0', next: '1.3.3' }), later).skip, /not newer/u)
   assert.match(decidePromotion(registry({ latest: '1.3.2', next: '1.3.3-rc.1' }), later).skip, /not a plain version/u)
-  assert.match(decidePromotion({ distTags: { latest: '1.3.2', next: '1.3.3' }, time: {} }, later).skip, /no publish time/u)
+  assert.match(decidePromotion({ distTags: { latest: '1.3.2', next: '1.3.3' }, time: {} }, later).skip, /has a publish time/u)
+})
+
+test('releases faster than the window still reach latest, one matured version at a time', () => {
+  const T = PUBLISHED
+  const time = {
+    created: new Date(T - 100 * HOUR).toISOString(),
+    '1.3.2': new Date(T - 50 * HOUR).toISOString(),
+    '1.3.3': new Date(T).toISOString(),
+    '1.3.4': new Date(T + 10 * HOUR).toISOString(),
+    '1.3.5': new Date(T + 20 * HOUR).toISOString(),
+    '1.3.6-rc.1': new Date(T - 40 * HOUR).toISOString(),
+  }
+  const registry = latest => ({ distTags: { latest, next: '1.3.5' }, time, versions: Object.keys(time).filter(key => key !== 'created') })
+  // `next` keeps moving, yet each release is promoted once it alone has aged 25 hours.
+  assert.match(decidePromotion(registry('1.3.2'), T + 24 * HOUR).skip, /^1\.3\.3 is 24\.0h old/u)
+  assert.deepEqual(decidePromotion(registry('1.3.2'), T + 26 * HOUR), { version: '1.3.3' })
+  assert.deepEqual(decidePromotion(registry('1.3.3'), T + 36 * HOUR), { version: '1.3.4' })
+  // The newest matured version wins when the job was down for a while.
+  assert.deepEqual(decidePromotion(registry('1.3.2'), T + 46 * HOUR), { version: '1.3.5' })
+  // A deprecated release is held back; a newer good one goes when it matures.
+  const held = { ...registry('1.3.3'), deprecated: ['1.3.4'] }
+  assert.match(decidePromotion(held, T + 36 * HOUR).skip, /^1\.3\.5 is 16\.0h old/u)
+  assert.deepEqual(decidePromotion(held, T + 46 * HOUR), { version: '1.3.5' })
+  // A version npm no longer serves is never promoted.
+  assert.match(decidePromotion({ ...registry('1.3.2'), versions: ['1.3.2'] }, T + 46 * HOUR).skip, /no undeprecated version/u)
 })
 
 test('versions order numerically, not as text', () => {

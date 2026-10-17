@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Back-to-back releases no longer hold `latest` back.** The promote job only looked at the version `next` names, so a release published before the previous one was 25 hours old reset the wait, and a day of iteration left `latest` where it was. It now promotes the newest version after `latest`, up to `next`, that has aged 25 hours, so `latest` trails the newest release by about a day. A version deprecated on npm is never promoted, which is how a broken release is held back. AGENTS.md gains a "Staged releases" section so anyone iterating knows releases go through `next` and must not be published or moved to `latest` by hand.
+
 ## 1.3.3
 
 - **The update button no longer bypasses pnpm's release-age policy.** It ran `pnpm add --config.minimumReleaseAge=0`, which switched the policy off for that one install, so pnpm never recorded the early version as an exception. The next plugin install in that profile then failed with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` on the PackyCode entry until the version was 24 hours old; a user's `dsh-chat-manager` install was refused this way. Reproduced with DSH's bundled pnpm, which ran as 11.7.0 with a 24-hour default window. The button now installs the exact version under the profile's own policy. By default pnpm installs it at once and adds `dsh-packycode-api@<version>` to the profile's `minimumReleaseAgeExclude`, and later installs pass. Under a stricter policy pnpm refuses, and the button reports the version as pending, with the time it clears, instead of failing.

@@ -52,6 +52,15 @@ Live gateway behavior is verified with `node scripts/live-check.mjs` after a bui
 
 Never reuse, move, delete, or overwrite a published npm version or Git tag. If a published version needs a correction, create a new patch version.
 
+## Staged releases
+
+Releases are staged through npm's `next` dist-tag. A tag publishes there, and `latest` follows about 25 hours later (checklist step 7). Read this before iterating on new versions:
+
+- Release as often as needed. Each release joins `next`; the hourly promote job moves `latest` to the newest staged version that has aged 25 hours, so `latest` trails the newest release by about a day.
+- `latest` is what the in-plugin update button and DSH's Plugins page install. Update buttons up to 1.3.2 bypass pnpm's 24-hour release-age policy, so a younger version on `latest` blocks every later plugin install in those users' profiles. Never publish straight to `latest`, never move `latest` by hand, and never remove `--tag next` or the `promote` and `mark-latest` jobs unless the maintainer asks. The maintainer plans to switch back to direct `latest` releases around 2026-10-25, once 1.3.3 or later is `latest`.
+- To keep a broken release from reaching `latest`, deprecate that version on npm. The promote job never promotes a deprecated version.
+- Anyone who needs a staged version now installs its exact version from the DSH Plugins page (for example `dsh-packycode-api@1.3.4`). pnpm installs it and records it in the profile's `minimumReleaseAgeExclude`.
+
 ## Release checklist
 
 1. Synchronize and confirm a clean base:
@@ -93,7 +102,7 @@ Never reuse, move, delete, or overwrite a published npm version or Git tag. If a
 
 6. Confirm the package has a GitHub Actions trusted publisher before pushing the tag: repository `BaronCyrus/dsh-packycode-api`, workflow filename `publish.yml`, environment empty, with **Allow npm dist-tag** enabled so the promote job can move `latest`. Never request that a token, password, or one-time code be pasted into chat.
 
-7. Create the annotated tag and push it. That push publishes to npm's `next` dist-tag with GitHub OIDC. The workflow's `release` job then creates the GitHub Release from `docs/releases/v<version>.md`, attaches the tarball npm published, and leaves it without the Latest mark. `latest` moves later: the hourly `promote` job runs `scripts/promote-release.mjs`, which moves `latest` to the `next` version once that version is 25 hours old, and `mark-latest` then marks its GitHub Release Latest. pnpm refuses versions younger than 24 hours, and the update buttons already installed (up to 1.3.2) bypass that refusal, so `latest` must never name a younger version; never move it by hand earlier. `release` and `mark-latest` are the only jobs with `contents: write`, and neither runs dependency code. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
+7. Create the annotated tag and push it. That push publishes to npm's `next` dist-tag with GitHub OIDC. The workflow's `release` job then creates the GitHub Release from `docs/releases/v<version>.md`, attaches the tarball npm published, and leaves it without the Latest mark. `latest` moves later: the hourly `promote` job runs `scripts/promote-release.mjs`, which moves `latest` to the newest version after it, up to `next`, that is 25 hours old and not deprecated, and `mark-latest` then marks that version's GitHub Release Latest. pnpm refuses versions younger than 24 hours, and the update buttons already installed (up to 1.3.2) bypass that refusal, so `latest` must never name a younger version; never move it by hand earlier. `release` and `mark-latest` are the only jobs with `contents: write`, and neither runs dependency code. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
 
    ```sh
    git tag -a v<version> -m "dsh-packycode-api v<version>"
