@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
+import { PACKYCODE_MODEL_IDS } from '../src/catalog.js'
 import { apply } from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
@@ -32,6 +33,7 @@ const sse = chunks => new Response(chunks.map(chunk => `data: ${JSON.stringify(c
  */
 function fakeGateway() {
   const chatKeys = []
+  const probes = []
   const original = globalThis.fetch
   globalThis.fetch = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.url
@@ -47,6 +49,7 @@ function fakeGateway() {
     if (url.endsWith('/v1/chat/completions')) {
       const body = JSON.parse(typeof init.body === 'string' ? init.body : await new Response(init.body).text())
       if (body.model === 'dsh-packycode-group-probe') {
+        probes.push(key)
         return Response.json({ error: { code: 'model_not_found', message: `当前令牌未覆盖供应商 ""（模型=${body.model}，已选分组=[${(GROUPS[key] ?? []).join(' ')}]）` } }, { status: 400 })
       }
       chatKeys.push(key)
@@ -57,7 +60,7 @@ function fakeGateway() {
     }
     return new Response('{}', { status: 404 })
   }
-  return { chatKeys, restore: () => { globalThis.fetch = original } }
+  return { chatKeys, probes, restore: () => { globalThis.fetch = original } }
 }
 
 function context() {
@@ -117,6 +120,24 @@ test('an HTTP turn runs on a key whose groups reach its model, without moving th
   assert.equal(groups.ok, true)
   assert.deepEqual(groups.value.keys.map(key => key.groups), [['codex'], ['deepseek-officially']])
   assert.doesNotMatch(JSON.stringify(groups), /sk-(codex|deepseek)/u)
+})
+
+test('listing models neither waits for nor starts a group reading; the next turn still reads one', async t => {
+  const gateway = fakeGateway()
+  t.after(gateway.restore)
+  const { ctx, seen } = context()
+  apply(ctx, {})
+  await seen.handler('keys/add', { key: KEY_CODEX, label: 'codex' })
+  await seen.handler('keys/add', { key: KEY_DEEPSEEK, label: 'deepseek' })
+
+  // DSH 0.2.1 resolves a key before it lists the route's models.
+  assert.deepEqual((await seen.adapter.listModels('packycode')).map(model => model.id), [...PACKYCODE_MODEL_IDS])
+  assert.deepEqual(gateway.probes, [])
+
+  const chunks = await turn(seen.adapter, 'deepseek-flash')
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+  assert.deepEqual(gateway.chatKeys, [KEY_DEEPSEEK])
+  assert.deepEqual(gateway.probes.toSorted(), [KEY_CODEX, KEY_DEEPSEEK].toSorted())
 })
 
 test('a native Claude turn after "use this key" uses that key, otherwise one with Claude coverage', async t => {

@@ -38,8 +38,14 @@ async function isReplayableRefusal(response, { allowTestMessage }) {
   } finally { reader?.releaseLock() }
 }
 
+/**
+ * pi-ai 0.x carries the offered tools in `context.tools`; pi-ai 1.x (DSH
+ * 0.2.1) hands the provider a transcript whose system messages declare them
+ * as `toolsAdded`.
+ */
 function hasToolContext(context) {
   return (context.tools?.length ?? 0) > 0 || context.messages?.some(message => message.role === 'toolResult'
+    || (message.role === 'system' && (message.toolsAdded?.length ?? 0) > 0)
     || (Array.isArray(message.content) && message.content.some(block => block.type === 'toolCall')))
 }
 

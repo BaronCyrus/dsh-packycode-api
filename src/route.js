@@ -221,7 +221,11 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   })({
     profiles: () => profiles,
     resolveApiKey: async () => {
-      const active = await keys.active()
+      // DSH 0.2.1 also asks before listing models, outside any request. That
+      // only needs a usable key to exist; the group reading a request waits
+      // for decides which key serves a model, not which models are listed.
+      const request = currentRequest()
+      const active = request === undefined ? await ring.activeKey() : await keys.active()
       if (active === undefined) {
         throw new LlmError(
           'No usable PackyCode API key: add one under Settings → PackyCode, or re-enable the keys this plugin moved past.',
@@ -230,7 +234,7 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
       }
       // A Claude request's transport follows its key's groups; give the
       // first reading a moment so a cc key does not start out over HTTP.
-      if (claudeCli?.followsGroups?.() === true && isClaudeModel(currentRequest()?.model)) await keys.awaitGroups?.()
+      if (claudeCli?.followsGroups?.() === true && isClaudeModel(request?.model)) await keys.awaitGroups?.()
       return active.key
     },
     auth: Object.freeze({

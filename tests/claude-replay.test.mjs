@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createClaudeReplayFetch } from '../src/claude-replay.js'
 import { createPackyCodeProvider } from '../src/provider.js'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 
@@ -79,6 +80,26 @@ test('a historical tool result also qualifies when the current tool catalog is e
   const { result, requests } = await run(t, count => count === 1 ? anomaly() : anthropicStream('claude-haiku-5-5'), { context })
   assert.equal(result.stopReason, 'stop', result.errorMessage)
   assert.equal(requests.length, 2)
+})
+
+test('a pi-ai 1.x transcript qualifies by the tools its system message declares, before any tool history', async () => {
+  // DSH 0.2.1's pi-ai folds context.tools into the leading system message
+  // before the provider sees the request.
+  const send = (modelId, context, respond) => {
+    let requests = 0
+    const replaying = createClaudeReplayFetch(async () => respond(++requests), { model: { id: modelId }, context, delayMs: 0 })
+    return replaying('https://cf.api.fan/v1/messages', { method: 'POST', body: '{}' }).then(response => ({ response, requests }))
+  }
+  const declared = { messages: [{ role: 'system', content: 'DSH instructions', toolsAdded: tools, timestamp: 0 }, user] }
+  for (const [modelId, refusal] of [['claude-haiku-5-5', testMessageRefusal], ['claude-sonnet-5-5', anomaly]]) {
+    const { response, requests } = await send(modelId, declared, count => count === 1 ? refusal() : anthropicStream(modelId))
+    assert.equal(response.status, 200)
+    assert.equal(requests, 2)
+  }
+  const plain = { messages: [{ role: 'system', content: 'DSH instructions', timestamp: 0 }, user] }
+  const { response, requests } = await send('claude-sonnet-5-5', plain, () => anomaly())
+  assert.equal(response.status, 403)
+  assert.equal(requests, 1)
 })
 
 test('ordinary policy refusals, other models, plain requests and capacity failures are not replayed', async t => {
