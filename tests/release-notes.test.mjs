@@ -87,13 +87,13 @@ test('the tag checks its notes before npm publishes, then hands the published ta
   assert.equal(handOff.with['if-no-files-found'], 'error')
 })
 
-test('only the release job may write, and it runs no dependency code', () => {
+test('only the release jobs may write, and they run no dependency code', () => {
   const { permissions, jobs } = workflow()
   assert.deepEqual(permissions, { 'id-token': 'write', contents: 'read' }, 'the publish job keeps read-only contents')
   assert.equal(jobs.publish.permissions, undefined)
   const release = jobs.release
   assert.equal(release.needs, 'publish')
-  assert.equal(release.if, NOT_ON_DISPATCH, 'workflow_dispatch never creates a release')
+  assert.equal(release.if, "github.event_name == 'push'", 'only a tag push creates a release')
   assert.deepEqual(release.permissions, { contents: 'write' })
   assert.deepEqual(release.steps.filter(step => step.uses).map(step => step.uses), ['actions/checkout@v4', 'actions/setup-node@v4', 'actions/download-artifact@v4'])
   assert.equal(release.steps[0].with['persist-credentials'], false)
@@ -105,8 +105,17 @@ test('only the release job may write, and it runs no dependency code', () => {
   assert.equal(create.env.GH_TOKEN, '${{ github.token }}')
   assert.match(create.run, /artifact="\.artifacts\/dsh-packycode-api-\$\{version:\?\}\.tgz"/u)
   assert.match(create.run, /title="\$\(node scripts\/release-notes\.mjs "\$version" --body-file "\$notes"\)"/u)
-  assert.match(create.run, /gh release create "\$GITHUB_REF_NAME" "\$artifact" --verify-tag --title "\$title" --notes-file "\$notes"/u)
+  // Latest follows npm's `latest`, which the promote job moves a day later.
+  assert.match(create.run, /gh release create "\$GITHUB_REF_NAME" "\$artifact" --verify-tag --latest=false --title "\$title" --notes-file "\$notes"/u)
   assert.match(create.run, /if gh release view "\$GITHUB_REF_NAME"/u, 'a release made by hand is left unchanged')
+
+  // Marking the promoted release Latest is the only other write, with no checkout at all.
+  const mark = jobs['mark-latest']
+  assert.deepEqual(mark.permissions, { contents: 'write' })
+  assert.equal(mark.steps.some(step => step.uses), false)
+  for (const step of mark.steps) assert.doesNotMatch(step.run, /\bpnpm\b|\bnpm\b|\bnpx\b|\bnode\b/u, `${step.name}: only gh runs with a write token`)
+  const writers = Object.entries(jobs).filter(([, job]) => job.permissions?.contents === 'write').map(([name]) => name)
+  assert.deepEqual(writers, ['release', 'mark-latest'])
 })
 
 test('nothing in the workflow switches npm from OIDC to token auth', () => {

@@ -4,7 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+  # A tag publishes to `next`; this moves `latest` once that version is past
+  # the release-age window DSH's pnpm enforces (see the promote job).
+  schedule:
+    - cron: '41 * * * *'
   workflow_dispatch:
+    inputs:
+      promote:
+        description: Promote a matured next version to latest instead of printing the OIDC identity
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -13,6 +22,7 @@ permissions:
 jobs:
   publish:
     name: Publish to npm
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.promote)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -122,7 +132,10 @@ jobs:
             echo "The verified release artifact is missing"
             exit 1
           fi
-          npm publish "${artifact:?}" --access public
+          # `next`, not `latest`: pnpm refuses a version younger than its
+          # minimumReleaseAge, and a profile holding one refuses every later
+          # plugin install. The promote job moves `latest` once it is old enough.
+          npm publish "${artifact:?}" --access public --tag next
       - name: Hand the published tarball to the release job
         if: github.event_name != 'workflow_dispatch'
         uses: actions/upload-artifact@v4
@@ -138,7 +151,7 @@ jobs:
   release:
     name: Create the GitHub Release
     needs: publish
-    if: github.event_name != 'workflow_dispatch'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job that may write to the repository. It runs no dependency
@@ -176,4 +189,65 @@ jobs:
           fi
           notes="$RUNNER_TEMP/release-notes.md"
           title="$(node scripts/release-notes.mjs "$version" --body-file "$notes")"
-          gh release create "$GITHUB_REF_NAME" "$artifact" --verify-tag --title "$title" --notes-file "$notes"
+          # Marked Latest only when npm's `latest` moves to it (mark-latest job).
+          gh release create "$GITHUB_REF_NAME" "$artifact" --verify-tag --latest=false --title "$title" --notes-file "$notes"
+
+  promote:
+    name: Promote a matured release to latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.promote)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Reads public registry metadata and moves one dist-tag with the OIDC
+    # identity; it installs no dependencies. The trusted publisher for this
+    # workflow must allow npm dist-tag.
+    outputs:
+      version: ${{ steps.promote.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - name: Require an npm CLI that can move dist-tags with trusted publishing
+        run: |
+          node <<'EOF'
+          const { execSync } = require('node:child_process')
+          const version = () => execSync('npm --version', { encoding: 'utf8' }).trim()
+          // OIDC dist-tag operations need npm 11.21.0+ on 11.x, or 12.2.0+.
+          const supports = value => {
+            const [major, minor] = value.split('.').map(Number)
+            return major > 12 || (major === 12 && minor >= 2) || (major === 11 && minor >= 21)
+          }
+          if (!supports(version())) {
+            execSync('npm install -g npm@11', { stdio: 'inherit' })
+          }
+          const current = version()
+          if (!supports(current)) {
+            console.error(`npm ${current} cannot move dist-tags with a trusted publisher`)
+            process.exit(1)
+          }
+          console.log(`npm ${current}`)
+          EOF
+      - name: Move latest to next once it is past the release-age window
+        id: promote
+        run: |
+          # npm treats a present token variable as token auth and skips OIDC.
+          unset NODE_AUTH_TOKEN
+          node scripts/promote-release.mjs
+
+  mark-latest:
+    name: Mark the promoted GitHub Release as latest
+    needs: promote
+    if: needs.promote.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Mark the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.promote.outputs.version }}
+        run: gh release edit "v${VERSION:?}" --latest

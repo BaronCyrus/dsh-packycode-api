@@ -4,7 +4,11 @@
  * The running version comes from this package. The latest version comes from
  * the npm registry. An in-place update is only offered for a registry install,
  * and it installs that exact version with the host's own pnpm — never through
- * `dsh plugin --profile desktop`, which the desktop app refuses. Registry
+ * `dsh plugin --profile desktop`, which the desktop app refuses. The install
+ * runs under the profile's own `minimumReleaseAge`: a version installed past
+ * it would sit in the profile's lockfile, and pnpm then refuses every later
+ * plugin install in that profile until the version is old enough. A version
+ * pnpm still holds back is reported as pending, with when it clears. Registry
  * bodies and package-manager output stay host-side.
  *
  * @module dsh-packycode-api/plugin-version
@@ -28,8 +32,31 @@ export const DEFAULT_VERSION_TTL_MS = 5 * 60_000
 export const DEFAULT_VERSION_TIMEOUT_MS = 10_000
 export const DEFAULT_UPDATE_TIMEOUT_MS = 180_000
 export const DEFAULT_SETTLE_DELAY_MS = 250
-/** Zero minutes: install the exact requested version regardless of its age. */
-export const UPDATE_RELEASE_AGE_MINUTES = 0
+
+const RELEASE_AGE_ERROR = /ERR_PNPM_(?:NO_MATURE_MATCHING_VERSION|MINIMUM_RELEASE_AGE_VIOLATION)/u
+const RELEASE_AGE_ENTRY = /(\S+@\S+) was published at (\S+?), within the minimumReleaseAge cutoff \((\S+?)\)/gu
+
+/**
+ * Recognize pnpm refusing a version that is younger than its
+ * `minimumReleaseAge`, whether the version was requested or already sits in
+ * the lockfile. Each refused entry reads `<name>@<version> was published at
+ * <time>, within the minimumReleaseAge cutoff (<time>)`.
+ * @param output - the install's stdout and stderr.
+ * @param finishedAt - when the install ended; pnpm drew its cutoff then.
+ * @returns undefined when this is not a release-age refusal; otherwise
+ *   `{ availableAt }`, when the youngest refused entry clears, if pnpm said.
+ */
+export function releaseAgeRefusal(output, finishedAt) {
+  // A colour-forcing environment can wrap the entries in ANSI escapes.
+  const text = String(output ?? '').replace(/\u001b\[[0-9;]*m/gu, '')
+  if (!RELEASE_AGE_ERROR.test(text)) return undefined
+  let availableAt
+  for (const [, , published, cutoff] of text.matchAll(RELEASE_AGE_ENTRY)) {
+    const clears = Date.parse(published) + (finishedAt - Date.parse(cutoff))
+    if (Number.isFinite(clears) && (availableAt === undefined || clears > availableAt)) availableAt = clears
+  }
+  return availableAt === undefined ? {} : { availableAt }
+}
 
 /** Parse a strict `x.y.z[-pre][+build]` version; anything else is undefined. */
 export function parseSemver(value) {
@@ -292,18 +319,19 @@ export function createPackyCodePluginManager({
         try {
           result = await runCommand({
             command: launcher.command,
-            args: [
-              ...launcher.prefix,
-              'add', '--save-exact', `--config.minimumReleaseAge=${UPDATE_RELEASE_AGE_MINUTES}`,
-              `${PACKAGE_NAME}@${latest}`,
-            ],
+            args: [...launcher.prefix, 'add', '--save-exact', `${PACKAGE_NAME}@${latest}`],
             cwd: profileDir,
           }, { signal, timeoutMs: updateTimeoutMs })
         } catch (error) {
           if (signal?.aborted) throw error
           throw new Error('PackyCode plugin update failed')
         }
-        if (result.code !== 0) throw new Error('PackyCode plugin update failed')
+        if (result.code !== 0) {
+          // Not a failure to retry blindly: pnpm installs it once old enough.
+          const refusal = releaseAgeRefusal(`${result.stdout ?? ''}\n${result.stderr ?? ''}`, now())
+          if (refusal !== undefined) return { version: latest, profile: install.profile, pending: true, ...refusal }
+          throw new Error('PackyCode plugin update failed')
+        }
         await confirmInstalled({ profileDir, expected: latest, settleDelayMs })
         cache.invalidate()
         return { version: latest, profile: install.profile }

@@ -11,6 +11,7 @@ import {
   NPM_REGISTRY_LATEST_URL,
   PACKAGE_NAME,
   parseSemver,
+  releaseAgeRefusal,
   resolvePnpm,
 } from '../src/plugin-version.js'
 import { createPackyCodeRpc } from '../src/rpc.js'
@@ -189,7 +190,7 @@ const installRecorder = async ({ args, cwd }) => {
   return { code: 0, stdout: '', stderr: '' }
 }
 
-test('update installs the exact version into the owning profile, pinned and age-free', async () => {
+test('update installs the exact version into the owning profile, pinned and under the profile\'s release-age policy', async () => {
   const root = await mkdtemp(join(tmpdir(), 'packy-version-update-'))
   const ownPackageJsonUrl = await npmInstall(root)
   const calls = []
@@ -211,9 +212,9 @@ test('update installs the exact version into the owning profile, pinned and age-
   const updated = await manager.update()
   assert.deepEqual(updated, { version: '1.0.4', profile: 'web' })
   assert.equal(calls[0].command, 'pnpm')
-  assert.deepEqual(calls[0].args, [
-    'add', '--save-exact', '--config.minimumReleaseAge=0', `${PACKAGE_NAME}@1.0.4`,
-  ])
+  // No minimumReleaseAge override: a version installed past the policy would
+  // make pnpm refuse every later plugin install in the profile.
+  assert.deepEqual(calls[0].args, ['add', '--save-exact', `${PACKAGE_NAME}@1.0.4`])
   assert.equal(calls[0].cwd, join(root, 'profiles', 'web'))
   await manager.read()
   assert.equal(registryRequests, 2, 'a successful update invalidates the cached version')
@@ -239,9 +240,7 @@ test('desktop hosts install with the bundled pnpm, never by launching the deskto
   assert.deepEqual(await manager.update(), { version: '1.0.4', profile: 'web' })
   const [call] = calls
   assert.equal(call.command, '/Applications/DeepSeek Harness')
-  assert.deepEqual(call.args, [
-    runtime.pnpm, 'add', '--save-exact', '--config.minimumReleaseAge=0', `${PACKAGE_NAME}@1.0.4`,
-  ])
+  assert.deepEqual(call.args, [runtime.pnpm, 'add', '--save-exact', `${PACKAGE_NAME}@1.0.4`])
   const flattened = JSON.stringify(call)
   assert.equal(flattened.includes(runtime.hostEntry), false)
   assert.equal(flattened.includes('plugin'), false)
@@ -261,6 +260,48 @@ test('an update that installs nothing is a failure, not a reported success', asy
     () => manager.update(),
     /^Error: PackyCode plugin update did not install the requested version$/u,
   )
+})
+
+/** pnpm 11's refusal of a version requested before its release age, as captured on 2026-10-17. */
+const TOO_NEW = `[ERR_PNPM_NO_MATURE_MATCHING_VERSION] 1 version does not meet the minimumReleaseAge constraint:
+  dsh-packycode-api@1.3.2 was published at 2026-10-16T19:16:25.489Z, within the minimumReleaseAge cutoff (2026-10-16T03:19:30.745Z)`
+/** The lockfile check that refused an unrelated install in a profile holding a too-new version. */
+const LOCKFILE_VIOLATION = `✗ Lockfile failed supply-chain policy check (2 entries in 1.3s)
+[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 2 lockfile entries failed verification:
+  dsh-packycode-api@1.3.2 was published at 2026-10-16T19:15:26.000Z, within the minimumReleaseAge cutoff (2026-10-16T03:18:55.442Z)
+  dsh-chat-manager@1.5.13 was published at 2026-10-16T14:05:23.291Z, within the minimumReleaseAge cutoff (2026-10-16T03:18:55.442Z)`
+
+test('a release-age refusal says when pnpm will accept the youngest refused version', () => {
+  const finishedAt = Date.parse('2026-10-17T03:19:30.745Z')
+  assert.deepEqual(releaseAgeRefusal(TOO_NEW, finishedAt), { availableAt: Date.parse('2026-10-17T19:16:25.489Z') })
+  // Every refused entry must clear; the youngest one decides.
+  assert.deepEqual(releaseAgeRefusal(`\u001b[31m${LOCKFILE_VIOLATION}\u001b[39m`, Date.parse('2026-10-17T03:18:55.442Z')),
+    { availableAt: Date.parse('2026-10-17T19:15:26.000Z') })
+  assert.deepEqual(releaseAgeRefusal('[ERR_PNPM_NO_MATURE_MATCHING_VERSION] something unparseable', finishedAt), {})
+  assert.equal(releaseAgeRefusal('ERR_PNPM_FETCH_404 GET https://registry.npmjs.org/dsh-packycode-api: Not Found', finishedAt), undefined)
+  assert.equal(releaseAgeRefusal(undefined, finishedAt), undefined)
+})
+
+test('an update pnpm holds back for its release age is pending, not failed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packy-version-cooling-'))
+  const ownPackageJsonUrl = await npmInstall(root, '1.0.3')
+  let registryRequests = 0
+  const manager = createPackyCodePluginManager({
+    env: { DSH_HOME: root },
+    ownPackageJsonUrl,
+    now: () => Date.parse('2026-10-17T03:19:30.745Z'),
+    fetchImpl: () => {
+      registryRequests += 1
+      return registryOk('1.0.4')()
+    },
+    runCommand: async () => ({ code: 1, stdout: '', stderr: TOO_NEW.replaceAll('1.3.2', '1.0.4') }),
+  })
+  await manager.read()
+  assert.deepEqual(await manager.update(), {
+    version: '1.0.4', profile: 'web', pending: true, availableAt: Date.parse('2026-10-17T19:16:25.489Z'),
+  })
+  await manager.read()
+  assert.equal(registryRequests, 2, 'only the update itself re-read the registry; nothing was installed')
 })
 
 test('the package-manager resolver trusts only real pnpm entries and owned runtime roots', async () => {

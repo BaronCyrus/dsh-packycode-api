@@ -526,12 +526,20 @@ function SearchCard({ call, t }) {
 
 // ── plugin version ──────────────────────────────────────────────────────────
 
+/** A release-age wait can end tomorrow, so the date is part of the time. */
+function readDateTime(ms) {
+  try { return new Date(ms).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+  catch { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') }
+}
+
 function VersionCard({ call, t }) {
   const [info, setInfo] = react.useState()
   const [loading, setLoading] = react.useState(true)
   const [error, setError] = react.useState(false)
   const [updating, setUpdating] = react.useState(false)
   const [updateFailed, setUpdateFailed] = react.useState(false)
+  /** A version pnpm still holds back under the profile's release-age policy. */
+  const [pending, setPending] = react.useState()
   const [updated, setUpdated] = react.useState()
   const [restartHint, setRestartHint] = react.useState(false)
   const generation = react.useRef(0)
@@ -557,7 +565,12 @@ function VersionCard({ call, t }) {
   const update = () => {
     setUpdating(true)
     setUpdateFailed(false)
+    setPending(undefined)
     call('plugin/update').then(value => {
+      if (value?.pending === true) {
+        setPending(value)
+        return
+      }
       setUpdated(value)
       setRestartHint(false)
     }).catch(() => setUpdateFailed(true)).finally(() => setUpdating(false))
@@ -591,6 +604,9 @@ function VersionCard({ call, t }) {
       {showStatus && installKind === 'link' && <p className="pkc-note">{t('versionLinked')}</p>}
       {showStatus && info.updateAvailable && installKind === 'unknown' && <p className="pkc-note">{t('versionManual')}</p>}
       {updateFailed && <p className="pkc-error" role="alert">{t('versionUpdateFailed')}</p>}
+      {pending !== undefined && <p className="pkc-note" role="status">{typeof pending.availableAt === 'number'
+        ? fill(t('versionCoolingUntil'), { version: pending.version, time: readDateTime(pending.availableAt) })
+        : fill(t('versionCooling'), { version: pending.version })}</p>}
       {updated !== undefined && (
         <div className="pkc-callout" data-tone="info" role="status">
           <b className="pkc-title">{fill(t('versionUpdated'), { version: updated.version })}</b>

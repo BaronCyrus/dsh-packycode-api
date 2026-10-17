@@ -17,6 +17,7 @@ This file governs the entire `dsh-packycode-api` repository.
 - The route is self-contained: the plugin builds its own pi-ai provider, catalog, key ring, and balance reader. It must never require the user to edit `cordis.patch.yml` or `llm-pi-ai` provider YAML.
 - Never introduce a silent fallback to another provider, another credential source, or an ambient `PACKY_CODE_API_KEY`. Only keys the user added through this plugin may authenticate a request.
 - The catalog declares protocols and effort levels from vendor documentation. Changing a model's `api`, `baseUrl`, or `thinkingLevelMap` requires a note in `CHANGELOG.md` and a live check.
+- The in-plugin update installs under the profile's own pnpm release-age policy. Never pass `--config.minimumReleaseAge` or edit `minimumReleaseAgeExclude` from the plugin. Bypassing the policy leaves a lockfile entry pnpm later rejects, and pnpm then refuses every plugin install in that profile until the version is 24 hours old. pnpm records an exact version it accepts early itself; a version it holds back is reported as pending.
 
 ## Security requirements
 
@@ -90,17 +91,19 @@ Never reuse, move, delete, or overwrite a published npm version or Git tag. If a
 
 5. Commit the release and push `main` without force. [`.github/workflows/publish.yml`](.github/workflows/publish.yml) must already be on the commit that will be tagged. Do not push the tag in this step.
 
-6. Confirm the package has a GitHub Actions trusted publisher before pushing the tag: repository `BaronCyrus/dsh-packycode-api`, workflow filename `publish.yml`, environment empty. Never request that a token, password, or one-time code be pasted into chat.
+6. Confirm the package has a GitHub Actions trusted publisher before pushing the tag: repository `BaronCyrus/dsh-packycode-api`, workflow filename `publish.yml`, environment empty, with **Allow npm dist-tag** enabled so the promote job can move `latest`. Never request that a token, password, or one-time code be pasted into chat.
 
-7. Create the annotated tag and push it. That push publishes with GitHub OIDC. The workflow's `release` job then creates the GitHub Release from `docs/releases/v<version>.md` and attaches the tarball npm published. It is the only job with `contents: write`, and it runs no dependency code. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
+7. Create the annotated tag and push it. That push publishes to npm's `next` dist-tag with GitHub OIDC. The workflow's `release` job then creates the GitHub Release from `docs/releases/v<version>.md`, attaches the tarball npm published, and leaves it without the Latest mark. `latest` moves later: the hourly `promote` job runs `scripts/promote-release.mjs`, which moves `latest` to the `next` version once that version is 25 hours old, and `mark-latest` then marks its GitHub Release Latest. pnpm refuses versions younger than 24 hours, and the update buttons already installed (up to 1.3.2) bypass that refusal, so `latest` must never name a younger version; never move it by hand earlier. `release` and `mark-latest` are the only jobs with `contents: write`, and neither runs dependency code. Do not run `npm publish` locally for a release. A local publish cannot attach provenance. Do not set `NODE_AUTH_TOKEN` or a setup-node `registry-url` in the publish workflow; npm treats either as token auth and skips OIDC.
 
    ```sh
    git tag -a v<version> -m "dsh-packycode-api v<version>"
    git push origin v<version>
    ```
 
-   `workflow_dispatch` on the same workflow only prints the OIDC identity npm will match. It does not publish.
+   `workflow_dispatch` on the same workflow prints the OIDC identity npm will match and does not publish. With `promote` checked, it runs the promote job instead, which still waits out the 25 hours.
 
-8. Confirm that both jobs of the publish workflow succeeded for that tag before declaring the release public. Then check that npm serves the version and that `gh release view v<version>` shows the notes, the `dsh-packycode-api-<version>.tgz` asset and, for the newest version, the Latest mark. On an OIDC `package not found` error, fix the trusted publisher and re-run the same workflow. Do not move the tag. If the tagged tree itself must change, publish a new patch version.
+8. Confirm that both jobs of the tag's publish run succeeded. Then check that npm's `next` serves the version (`npm view dsh-packycode-api dist-tags --prefer-online`; without `--prefer-online` a cached 404 can linger) and that `gh release view v<version>` shows the notes and the `dsh-packycode-api-<version>.tgz` asset. On an OIDC `package not found` error, fix the trusted publisher and re-run the same workflow. Do not move the tag. If the tagged tree itself must change, publish a new patch version.
+
+   The release reaches the update button only when `latest` moves. About 25–26 hours after publishing, confirm that a scheduled `promote` run moved `latest` and that `gh release list --json tagName,isLatest` marks the version Latest. If the promote job fails on the dist-tag, enable **Allow npm dist-tag** on the trusted publisher and run the workflow with `promote`. If no run happened, check that the scheduled workflow is enabled (GitHub disables schedules in a repository without activity for 60 days).
 
    If npm published but the release job failed, re-run only that failed job. If the Release must be made by hand, attach the tarball npm serves, not a local `.artifacts` build: CI packs its own, so the local bytes differ. Fetch it with `npm pack dsh-packycode-api@<version>`, and compare its SHA-512 with the registry's `dist.integrity`. Then run `gh release create v<version> <tarball> --verify-tag --title "<the notes' title>" --notes-file <the notes' body>`. The release job leaves an existing Release unchanged.
