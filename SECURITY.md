@@ -13,12 +13,21 @@
 - Balance requests carry a timeout (`AbortSignal.timeout`) and `redirect: 'error'`, and go only to the configured hosts plus the PackyAPI fallback host.
 - Model traffic goes to the configured model host through the plugin's pi-ai adapter. Protocol-specific compatibility headers are applied host-side; credentials remain scoped to the selected plugin key.
 
-## Native Claude requests
+## Claude requests
 
-- Claude uses the plugin's HTTP Messages route. The plugin has no Claude CLI runner, installer, delegation tool or local MCP bridge. Existing standalone Claude Code installations and configuration are untouched.
-- The compatibility headers and session metadata do not load a CLI login or external configuration. Bearer authentication uses only the plugin's selected conversation key; images keep their separate credential record.
-- DSH owns tool execution, permissions, plan mode, attachments and history. Wire tool aliases are restored only for tools offered on that request; unknown aliases are not decoded into host tools. Saved images from older CLI-backed sessions remain readable without executing their old tools.
-- Captured client-policy refusals do not disable keys or switch providers. The specific pre-stream anomalies covered by the native transport may replay the exact bytes and credential once; ordinary policy refusals, HTTP 429 and accepted streams are excluded. Cancellation aborts the replay.
+- Claude requests use one of two transports, chosen by the request key's PackyCode groups (or the user's pin): keys in `cc` send them through this device's official Claude Code CLI; every other key uses the plugin's HTTP Messages route. Both carry the same payload; neither has any fallback to the other, to another provider, or to another credential.
+- The HTTP route's compatibility headers and session metadata do not load a CLI login or external configuration. Bearer authentication uses only the plugin's selected conversation key; images keep their separate credential record.
+- DSH owns tool execution, permissions, plan mode, attachments and history on both routes. Wire tool aliases are restored only for tools offered on that request; unknown aliases are not decoded into host tools. Saved images from older CLI-backed sessions remain readable without executing their old tools.
+- Captured client-policy refusals do not disable keys or switch providers or transports. The specific pre-stream anomalies covered by the HTTP route may replay the exact bytes and credential once; ordinary policy refusals, HTTP 429 and accepted streams are excluded. Cancellation aborts the replay.
+
+## The Claude Code CLI transport
+
+- The CLI is a transport, not an agent: it runs with all of its own tools disabled (`--tools ""`), so it cannot read, write or execute anything itself. The tools it can see are the ones DSH offered for that request, served by an MCP bridge; every call is answered with the result DSH produced after running the tool under its own permissions and sandbox.
+- The bridge is a per-process Streamable HTTP server bound to `127.0.0.1` on a random port. It requires a random 256-bit capability on every request, rejects foreign `Host` and `Origin` headers, and closes with its process. The capability lives only in an owner-only (`0600`) config file inside an owner-only run directory under the CLI home; it never appears in a command line.
+- The CLI runs with an isolated config home (`~/.dsh/packycode-claude-cli`), `--setting-sources ""`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, and CLAUDE.md, auto-memory, auto-update, telemetry and non-essential traffic disabled. Inherited `ANTHROPIC_*`, `CLAUDE_*`, `MCP_*`, `DISABLE_*` and `ENABLE_*` variables are removed, so the user's own Claude Code login, API key, base URL, model and settings never reach it.
+- The request key reaches the child only as `ANTHROPIC_AUTH_TOKEN` in its environment, with the endpoint as `ANTHROPIC_BASE_URL`; it is never written to a file, an argument, a transcript or a log. The DSH system prompt and the conversation transcript the CLI resumes are written to that owner-only run directory and removed when the process ends; directories left by a crashed host are removed after a day.
+- The CLI's own retries, model fallback, refusal fallback and compaction are disabled: one DSH step is one API request, and retries follow DSH's policy. Processes are stopped on cancellation, after 20 idle minutes, beyond eight live conversations, and when the plugin unloads.
+- Installing the CLI from the settings panel runs `npm install -g @anthropic-ai/claude-code` with constant arguments; on Windows the npm launcher is resolved to the program it forwards to, so no shell parses user text.
 
 ## Reporting
 

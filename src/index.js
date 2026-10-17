@@ -19,6 +19,9 @@ import { join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 
 import { createBalanceReader } from './balance.js'
+import { createClaudeCliManager } from './claude-install.js'
+import { createClaudeCliTransport } from './claude-cli-transport.js'
+import { CLAUDE_TRANSPORTS, claudeTransportFor, DEFAULT_CLAUDE_TRANSPORT, isClaudeModel, readClaudeTransport } from './claude-transport.js'
 import {
   CHANNEL,
   DEFAULT_API_HOST,
@@ -73,6 +76,14 @@ export const Config = z.object({
   imageEnabled: live(z.boolean().default(true)),
   imageModel: live(z.union([...IMAGE_MODEL_IDS]).default(DEFAULT_IMAGE_MODEL)),
   imageQuality: live(z.union([...IMAGE_QUALITIES]).default('auto')),
+  /**
+   * How Claude requests travel: `auto` sends a key in the `cc` group through
+   * the official Claude Code CLI and every other key over HTTP; `cli` and
+   * `http` pin one transport.
+   */
+  claudeTransport: live(z.union([...CLAUDE_TRANSPORTS]).default(DEFAULT_CLAUDE_TRANSPORT)),
+  /** Path to the Claude Code CLI; empty means "the usual install places, then PATH". */
+  claudeCliPath: live(z.string().default('')),
 })
 
 export function apply(ctx, config) {
@@ -91,6 +102,8 @@ export function apply(ctx, config) {
     imageEnabled: fieldValue(config?.imageEnabled),
     imageModel: fieldValue(config?.imageModel),
     imageQuality: fieldValue(config?.imageQuality),
+    claudeTransport: fieldValue(config?.claudeTransport),
+    claudeCliPath: fieldValue(config?.claudeCliPath),
   })
   const hosts = () => {
     const current = source() ?? {}
@@ -137,11 +150,45 @@ export function apply(ctx, config) {
     onChange: () => refreshModels(),
   })
 
+  // ── the Claude Code CLI transport ─────────────────────────────────────────
+
+  /**
+   * Keys in a group that only serves the official client send their Claude
+   * requests through this device's Claude Code CLI. DSH's agent loop, tools,
+   * permissions and plan mode are unchanged; only the transport differs.
+   */
+  const claudeCli = createClaudeCliManager({ explicitPath: () => fieldValue(source()?.claudeCliPath) })
+  const cliTransport = createClaudeCliTransport({
+    binary: async () => {
+      const found = await claudeCli.detect()
+      if (typeof found.path !== 'string' || found.path === '') {
+        throw Object.assign(new Error('Claude Code CLI is not installed'), { code: 'CLAUDE_CLI_MISSING' })
+      }
+      return found.path
+    },
+    version: () => claudeCli.lastDetection()?.version,
+    logger: ctx.logger,
+  })
+  ctx.effect(() => () => { void cliTransport.close() }, 'packycode-api: Claude Code CLI processes')
+  const claudePreference = { writable: false, set: undefined }
+  const claudeTransportPreference = () => readClaudeTransport(source()?.claudeTransport)
+  /** The transport a Claude request on this key takes, by its last group reading. */
+  const claudeTransportOf = keyId => claudeTransportFor({
+    preference: claudeTransportPreference(),
+    groups: keyId === undefined ? undefined : groups.groupsOf(keyId),
+  })
+
   // ── the model route ───────────────────────────────────────────────────────
 
-  // Every model uses DSH's native HTTP/tool loop; no implicit CLI fallback.
+  // Every model runs DSH's native agent loop. Claude requests on a cc key
+  // are sent by the official CLI; no other fallback exists.
   const registration = ctx.llm.registerAdapter([PROVIDER], createRouteAdapter({
     ring, keys, fallbackSessionId, resolveAttachments: attachments, isModelVisible: modelSelection.isVisible,
+    claudeCli: Object.freeze({
+      followsGroups: () => claudeTransportPreference() === 'auto',
+      choose: ({ apiKey, model }) => isClaudeModel(model) && claudeTransportOf(keys.idOf(apiKey)).transport === 'cli',
+      fetch: (input, init, meta) => cliTransport.fetch(input, init, meta),
+    }),
     resolveWorkingDirectory: sessionId => {
       const session = currentSession()
       // A background/title call for another session must not inherit the
@@ -225,6 +272,7 @@ export function apply(ctx, config) {
     searchPreference,
     modelPreference,
     imagePreference,
+    claudePreference,
   }))
   // A volatile field changed (the PackyCode panel, or a hand edit of the
   // profile patch): follow it without restarting the route.
@@ -267,6 +315,27 @@ export function apply(ctx, config) {
     hosts,
     preference: hostPreference,
     pluginManager: createPackyCodePluginManager(),
+    claude: Object.freeze({
+      async status({ force = false } = {}) {
+        return {
+          ...(await claudeCli.status({ force })),
+          transport: claudeTransportPreference(),
+          writable: claudePreference.writable === true && typeof claudePreference.set === 'function',
+          processes: cliTransport.stats(),
+        }
+      },
+      install: () => claudeCli.install(),
+      async update({ transport } = {}) {
+        if (!CLAUDE_TRANSPORTS.includes(transport)) throw new Error('That PackyCode Claude transport is not supported')
+        if (claudePreference.writable !== true || typeof claudePreference.set !== 'function') throw new Error('PackyCode settings are not writable in this profile')
+        try {
+          await claudePreference.set({ claudeTransport: transport })
+        } catch {
+          throw new Error('PackyCode could not save the Claude transport')
+        }
+      },
+      transportFor: names => claudeTransportFor({ preference: claudeTransportPreference(), groups: names }),
+    }),
     search,
     modelSelection,
     images,
@@ -316,6 +385,14 @@ export function apply(ctx, config) {
   })
 }
 
+export { CLAUDE_MISSING_MESSAGE, CLAUDE_NPM_PACKAGE, claudeBinaryCandidates, DEFAULT_CLAUDE_CONFIG_DIR, locateClaudeBinary, resolveSpawnCommand } from './claude-binary.js'
+export { baseUrlOf, CLI_SESSION_IDLE_MS, CLI_TOOL_NOTE, createClaudeCliTransport, describeRequest, dshSystemText, MAX_LIVE_CLI_SESSIONS, planContinuation } from './claude-cli-transport.js'
+export { buildCliArgs, buildCliEnvironment, cliErrorMessage, startClaudeCliSession } from './claude-cli-session.js'
+export { CLAUDE_INSTALL_COMMAND, createClaudeCliManager, explainNpmFailure, locateNpm, parseClaudeVersion } from './claude-install.js'
+export { MCP_SERVER_NAME, MCP_TOOL_PREFIX, startClaudeMcpBridge, toolResultToMcp } from './claude-mcp-bridge.js'
+export { buildTranscript, canonicalMessage, splitConversation } from './claude-transcript.js'
+export { cliToolName, createClaudeToolNames } from './claude-tools.js'
+export { CLAUDE_TRANSPORTS, claudeTransportFor, CLI_ONLY_GROUPS, DEFAULT_CLAUDE_TRANSPORT, HTTP_CLAUDE_GROUPS, readClaudeTransport } from './claude-transport.js'
 export { createBalanceReader, parseTokenUsage } from './balance.js'
 export { normalizeHost, statusHostOrder } from './hosts.js'
 export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
@@ -331,12 +408,17 @@ export {
 } from './constants.js'
 export {
   classifyClientPolicy,
+  classifyCliOutdated,
+  classifyCliUnavailable,
   classifyGatewayFailure,
   classifyUpstreamServerError,
   classifyTestMessagePolicy,
   explainTestMessagePolicyFailure,
   TEST_MESSAGE_POLICY_CODE,
   explainClientPolicyFailure,
+  explainCliClientPolicyFailure,
+  explainCliOutdated,
+  explainCliUnavailable,
   normalizeFailureMessage,
 } from './failures.js'
 export { createDiagnostics, DIAGNOSTICS_FORMAT, DIAGNOSTICS_LIMITS, summarizeSessionEvents } from './diagnostics.js'

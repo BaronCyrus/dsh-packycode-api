@@ -8,10 +8,12 @@
 import { createUserMessage, LlmError, QUOTA_EXCEEDED_CODE, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
+import { isClaudeModel } from './claude-transport.js'
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PLUGIN_ID, PROVIDER } from './constants.js'
 import { classifyUpstreamServerError, classifyTestMessagePolicy, TEST_MESSAGE_POLICY_CODE } from './failures.js'
 import { guardGeminiReplay } from './gemini-replay.js'
 import { createPackyCodeProvider, guardKeyRotation } from './provider.js'
+import { currentRequest, withRequestContext } from './request-context.js'
 import { clarifyWorkingDirectory } from './working-directory.js'
 
 /**
@@ -131,18 +133,32 @@ export function createPackyCodeProfile(provider) {
   })
 }
 
+/** The initiating session's working directory, when the resolver knows it. */
+function workingDirectoryOf(resolveWorkingDirectory, sessionId) {
+  if (typeof resolveWorkingDirectory !== 'function') return undefined
+  try {
+    const cwd = resolveWorkingDirectory(sessionId)
+    return typeof cwd === 'string' && cwd !== '' && !cwd.includes('\0') ? cwd : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * The HTTP route's adapter.
+ * The route's adapter.
  *
  * Each request resolves the active key, then runs on the key the chooser picks
- * for its model; a key-level failure in the stream moves that key aside.
+ * for its model; a key-level failure in the stream moves that key aside. A
+ * Claude request on a key whose group only serves the official client is sent
+ * by the Claude Code CLI (`claudeCli`); everything else is plain HTTP.
  * @param options - the key ring and chooser, the session id used when a caller
- *   supplies none, the attachment store image input is read from, and an
- *   optional synchronous resolver for the initiating session's exact cwd.
+ *   supplies none, the attachment store image input is read from, an optional
+ *   synchronous resolver for the initiating session's exact cwd, and the
+ *   optional Claude Code CLI transport selector.
  * @returns a `PiAiAdapter` serving the `packycode` route.
  */
-export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments, resolveWorkingDirectory, isModelVisible = () => true }) {
-  const raw = createPackyCodeProvider()
+export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments, resolveWorkingDirectory, isModelVisible = () => true, claudeCli }) {
+  const raw = createPackyCodeProvider({ claudeCli })
   /**
    * The gateway's Codex-group check refuses a Responses request that carries
    * no `prompt_cache_key` with a 403, which pi-ai derives from the session id.
@@ -165,6 +181,22 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   const provider = Object.freeze({ ...raw, stream: guarded('stream'), streamSimple: guarded('streamSimple') })
   const profiles = new Map([[PROVIDER, createPackyCodeProfile(provider)]])
 
+  /**
+   * Iterate one request inside its context: the transport reads the purpose
+   * and the initiating session's cwd from it where the request is sent.
+   */
+  const inContext = (options, send) => {
+    const clarified = clarifyWorkingDirectory(options, resolveWorkingDirectory)
+    const cwd = workingDirectoryOf(resolveWorkingDirectory, options.sessionId)
+    const context = {
+      model: options.model,
+      ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
+      ...(options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) }),
+      ...(cwd === undefined ? {} : { cwd }),
+    }
+    return classifyRouteFailures(withRequestContext(context, send(clarified)))
+  }
+
   // Visibility affects discovery only. Resolution and prepared/in-flight
   // turns still use the complete catalog, including a now-hidden model.
   return new (class extends PiAiAdapter {
@@ -175,12 +207,12 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
         ...prepared,
         stream: options => options.purpose === 'session-title' && (title !== undefined || model === 'claude-haiku-5-5')
           ? this.stream(options)
-          : classifyRouteFailures(prepared.stream(clarifyWorkingDirectory(options, resolveWorkingDirectory))),
+          : inContext(options, routedOptions => prepared.stream(routedOptions)),
       }
     }
 
     stream(options) {
-      return classifyRouteFailures(super.stream(clarifyWorkingDirectory(titleRequest(options), resolveWorkingDirectory)))
+      return inContext(titleRequest(options), routedOptions => super.stream(routedOptions))
     }
 
     async listModels(provider) {
@@ -196,6 +228,9 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
           'MISSING_CREDENTIAL',
         )
       }
+      // A Claude request's transport follows its key's groups; give the
+      // first reading a moment so a cc key does not start out over HTTP.
+      if (claudeCli?.followsGroups?.() === true && isClaudeModel(currentRequest()?.model)) await keys.awaitGroups?.()
       return active.key
     },
     auth: Object.freeze({

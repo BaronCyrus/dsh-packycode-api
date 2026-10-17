@@ -62,10 +62,25 @@ export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEF
     return key
   }
 
+  /**
+   * Wait at most `waitMs` for a group reading to exist, whatever the number
+   * of keys: a Claude request's transport depends on its key's groups.
+   */
+  const awaitGroups = async () => {
+    if (groups.hasReading() || snapshot.length === 0) return
+    let timer
+    await Promise.race([groups.read().catch(() => undefined), new Promise(resolve => { timer = setTimeout(resolve, waitMs) })])
+    clearTimeout(timer)
+  }
+
   return Object.freeze({
     remember,
     covers,
     active,
+    awaitGroups,
+
+    /** The ring id of the key material a request carries, as of the last resolution. */
+    idOf: key => (typeof key === 'string' ? idByKey.get(key) : undefined),
 
     /**
      * The key one HTTP request for `modelId` runs with, given the active key

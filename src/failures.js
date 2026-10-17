@@ -146,6 +146,81 @@ export function explainClientPolicyFailure() {
     + ' / This group only serves the vendor’s official client; the API key is fine.'
 }
 
+/** Prefix of every failure the Claude Code CLI transport relays from the gateway. */
+export const CLI_MARK = '[Claude Code CLI]'
+/** The CLI could not be found or started; the transport's error type says so. */
+export const CLI_UNAVAILABLE = 'dsh_cli_unavailable'
+/** The installed CLI refused an option the transport needs. */
+export const CLI_OUTDATED = 'dsh_cli_outdated'
+
+/**
+ * The message a relayed failure carried. pi-ai reports an HTTP error as its
+ * status followed by the JSON body; the gateway's or CLI's own sentence is
+ * that body's `error.message`.
+ */
+function relayedMessage(message) {
+  const text = typeof message === 'string' ? message : ''
+  const start = text.indexOf('{')
+  if (start >= 0) {
+    try {
+      const body = JSON.parse(text.slice(start))
+      const inner = body?.error?.message ?? body?.message
+      if (typeof inner === 'string') return inner
+    } catch { /* not a JSON body */ }
+  }
+  return text
+}
+
+/** Whether a failure says the Claude Code CLI is missing. */
+export const classifyCliUnavailable = message => typeof message === 'string' && message.includes(CLI_UNAVAILABLE)
+/** Whether a failure says the Claude Code CLI is too old for this plugin. */
+export const classifyCliOutdated = message => typeof message === 'string' && message.includes(CLI_OUTDATED)
+
+/**
+ * Explain a missing CLI. Like every explanation here it carries no status
+ * token and no transport wording, so DSH shows it once instead of retrying a
+ * request that cannot start.
+ * @returns the replacement sentence.
+ */
+export function explainCliUnavailable(message) {
+  // Local start-up detail, without anything the host would read as a status or transport fault.
+  const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_unavailable:?\s*/u, '').replace(/\b\d{3}\b/gu, '')
+    .replace(/\b(?:network|connection|socket|fetch|timed?\s*out|timeout|terminated)\b/giu, '…').trim().slice(0, 300)
+  return '本机没有可用的 Claude Code CLI，而当前 Key 所在的 Claude 分组（cc）只接受官方 Claude Code 客户端。'
+    + '请在 设置 → PackyCode → Claude Code CLI 一键安装，或在终端执行 npm install -g @anthropic-ai/claude-code，然后重发这条消息。'
+    + '也可以改用 cc-sale / cc-expensive 分组的 Key，它们走插件内置的 HTTP 通道。'
+    + (detail === '' || detail === 'dsh_cli_unavailable' ? '' : `（启动失败：${detail}）`)
+    + ' / Claude Code CLI is not available, and this key\'s Claude group only serves the official client. Install it under Settings → PackyCode (npm install -g @anthropic-ai/claude-code), then resend.'
+}
+
+/**
+ * Explain a CLI that is too old for the options this plugin passes.
+ * @param message - the CLI's own complaint.
+ * @returns the replacement sentence.
+ */
+export function explainCliOutdated(message) {
+  const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_outdated:?\s*/u, '').replace(/\b\d{3}\b/gu, '').slice(0, 300)
+  return '本机的 Claude Code CLI 版本过旧，不支持插件所需的参数。请在终端执行 claude update，或 npm install -g @anthropic-ai/claude-code@latest 更新后重发。'
+    + ` / The installed Claude Code CLI is too old for this plugin; update it (claude update). CLI said: ${detail}`
+}
+
+/**
+ * Explain a client-policy refusal of a request the official CLI itself sent.
+ * The HTTP route's advice (use the official client) does not apply; the
+ * gateway's words are kept, without their status, for a support request.
+ * @param message - the relayed failure text.
+ * @returns the replacement sentence.
+ */
+export function explainCliClientPolicyFailure(message) {
+  const detail = relayedMessage(message)
+    .replace(/^[\s\S]*?\[Claude Code CLI\]\s*/u, '')
+    .replace(/\b(?:401|403)\b/gu, 'HTTP')
+    .slice(0, 600)
+  return 'PackyCode 拒绝了这次由官方 Claude Code CLI 发出的请求，认为客户端异常。这不是 API Key 失效。'
+    + '请先把 Claude Code CLI 更新到最新版本（claude update）再试；仍然失败时，请把下面的原始错误（含 request id）发给 PackyCode 客服。'
+    + ` / The gateway refused a request the official Claude Code CLI sent; the API key is fine. Gateway said: ${detail}`
+}
+
 /**
  * Rewrite a failure message so the harness classifies it as quota or auth.
  *

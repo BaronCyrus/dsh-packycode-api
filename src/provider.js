@@ -17,9 +17,36 @@ import { createClaudeApi } from './claude-api.js'
 import { DEFAULT_API_HOST, DISPLAY_NAME, PROVIDER } from './constants.js'
 import { createGeminiApi } from './gemini-api.js'
 import { redactSecrets } from './secret-redactor.js'
-import { classifyClientPolicy, classifyGatewayFailure, classifyTestMessagePolicy, explainClientPolicyFailure, explainTestMessagePolicyFailure, normalizeFailureMessage } from './failures.js'
+import {
+  CLI_MARK,
+  classifyCliOutdated,
+  classifyCliUnavailable,
+  classifyClientPolicy,
+  classifyGatewayFailure,
+  classifyTestMessagePolicy,
+  explainCliClientPolicyFailure,
+  explainCliOutdated,
+  explainCliUnavailable,
+  explainClientPolicyFailure,
+  explainTestMessagePolicyFailure,
+  normalizeFailureMessage,
+} from './failures.js'
 
 const TERMINAL_EVENTS = new Set(['error', 'done'])
+
+/**
+ * A plugin-authored sentence for failures no retry can clear, or undefined.
+ * Each carries no status token, so DSH shows it once instead of retrying.
+ */
+function explainFinalFailure(text) {
+  if (classifyCliUnavailable(text)) return explainCliUnavailable(text)
+  if (classifyCliOutdated(text)) return explainCliOutdated(text)
+  if (classifyTestMessagePolicy(text)) return explainTestMessagePolicyFailure()
+  // A client-policy refusal is about this client, not this key: explain it
+  // and leave the ring alone. The official CLI's own refusal gets other advice.
+  if (classifyClientPolicy(text)) return text.includes(CLI_MARK) ? explainCliClientPolicyFailure(text) : explainClientPolicyFailure()
+  return undefined
+}
 
 /**
  * The api-key method pi-ai consults before it honours a request's `apiKey`
@@ -37,8 +64,12 @@ function keyRingAuth() {
   }
 }
 
-/** Build the route's pi-ai provider (unguarded; the plugin wraps its streams). */
-export function createPackyCodeProvider() {
+/**
+ * Build the route's pi-ai provider (unguarded; the plugin wraps its streams).
+ * @param options - `claudeCli`, the Claude Code CLI transport selector for
+ *   keys whose Claude group only serves the official client.
+ */
+export function createPackyCodeProvider({ claudeCli } = {}) {
   const provider = createProvider({
     id: PROVIDER,
     name: DISPLAY_NAME,
@@ -48,7 +79,7 @@ export function createPackyCodeProvider() {
     api: {
       'openai-completions': openAICompletionsApi(),
       'openai-responses': openAIResponsesApi(),
-      'anthropic-messages': createClaudeApi(),
+      'anthropic-messages': createClaudeApi({ cli: claudeCli }),
       'google-generative-ai': createGeminiApi(),
     },
   })
@@ -98,14 +129,8 @@ export function guardKeyRotation(stream, { onKeyFailure, key } = {}) {
     for (const carrierKey of ['error', 'message']) {
       const carrier = value[carrierKey]
       if (carrier === null || typeof carrier !== 'object') continue
-      if (classifyTestMessagePolicy(carrier.errorMessage)) {
-        return { ...value, [carrierKey]: { ...carrier, errorMessage: explainTestMessagePolicyFailure() } }
-      }
-      // A client-policy refusal is about this client, not this key: explain it
-      // and leave the ring alone.
-      if (classifyClientPolicy(carrier.errorMessage)) {
-        return { ...value, [carrierKey]: { ...carrier, errorMessage: explainClientPolicyFailure() } }
-      }
+      const explained = explainFinalFailure(carrier.errorMessage)
+      if (explained !== undefined) return { ...value, [carrierKey]: { ...carrier, errorMessage: explained } }
       const kind = classifyGatewayFailure(carrier.errorMessage)
       if (kind === undefined) continue
       report(kind, carrier.errorMessage)
@@ -131,14 +156,10 @@ export function guardKeyRotation(stream, { onKeyFailure, key } = {}) {
                 const original = error instanceof Error ? error.message : String(error)
                 const text = redactSecrets(original, key === undefined ? [] : [key])
                 const cause = text === original ? error : new Error(text)
-                if (classifyTestMessagePolicy(text)) {
-                  throw new Error(explainTestMessagePolicyFailure(), { cause })
-                }
                 // The policy refusal is worth explaining even mid-stream; a
                 // key fault is only the key's when nothing was answered yet.
-                if (classifyClientPolicy(text)) {
-                  throw new Error(explainClientPolicyFailure(), { cause })
-                }
+                const explained = explainFinalFailure(text)
+                if (explained !== undefined) throw new Error(explained, { cause })
                 const kind = observed ? undefined : classifyGatewayFailure(text)
                 if (kind !== undefined) {
                   report(kind, text)

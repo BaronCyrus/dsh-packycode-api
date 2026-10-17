@@ -6,17 +6,41 @@ import { createHash } from 'node:crypto'
 // dispatch stay unchanged; this is a request-scoped wire name, not a fallback.
 const BUILTIN_NAMES = Object.freeze({ bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', glob: 'Glob', grep: 'Grep' })
 
-/** CLI-compatible wire names, restored to their originals before host dispatch. */
-export function createClaudeToolNames() {
+/** Through the CLI every DSH tool is an MCP tool of the `dsh` server. */
+const CLI_PREFIX = 'mcp__dsh__'
+/** A name the CLI keeps verbatim: no double underscore, and the whole name within 64 characters. */
+const CLI_SAFE_NAME = /^[a-zA-Z0-9-]+(?:_[a-zA-Z0-9-]+)*$/u
+const CLI_MAX_NAME = 64 - CLI_PREFIX.length
+
+const digestOf = name => createHash('sha256').update(name).digest('hex').slice(0, 12)
+
+/** The wire name of a DSH tool when the official CLI carries the request. */
+export function cliToolName(name) {
+  if (CLI_SAFE_NAME.test(name) && name.length <= CLI_MAX_NAME) return `${CLI_PREFIX}${name}`
+  const slug = name.replace(/[^a-zA-Z0-9-]+/gu, '_').replace(/^_+/u, '').slice(0, CLI_MAX_NAME - 13).replace(/_+$/u, '') || 'tool'
+  return `${CLI_PREFIX}${slug}_${digestOf(name)}`
+}
+
+/**
+ * Request-scoped wire names, restored to their originals before host
+ * dispatch. Over HTTP the CLI-compatible built-in spellings are used; through
+ * the CLI every tool is listed by the MCP bridge and the model sees
+ * `mcp__dsh__<name>`.
+ * @param options - `cli` selects the CLI transport's names.
+ */
+export function createClaudeToolNames({ cli = false } = {}) {
   const owners = new Map(), offered = new Map(), clientNames = new Set()
   let declaredNames = new Set()
   const encode = (name, available = false) => {
     if (typeof name !== 'string') return name
-    const slug = name.replace(/[^a-zA-Z0-9_-]/gu, '_').slice(0, 40) || 'tool'
-    const digest = createHash('sha256').update(name).digest('hex').slice(0, 12)
-    const builtin = Object.hasOwn(BUILTIN_NAMES, name) ? BUILTIN_NAMES[name] : undefined
-    // Never make a native tool's exact name refer to a different host tool.
-    const alias = builtin && !declaredNames.has(builtin) ? builtin : `mcp__dsh__${slug}_${digest}`
+    let alias
+    if (cli) alias = cliToolName(name)
+    else {
+      const slug = name.replace(/[^a-zA-Z0-9_-]/gu, '_').slice(0, 40) || 'tool'
+      const builtin = Object.hasOwn(BUILTIN_NAMES, name) ? BUILTIN_NAMES[name] : undefined
+      // Never make a native tool's exact name refer to a different host tool.
+      alias = builtin && !declaredNames.has(builtin) ? builtin : `mcp__dsh__${slug}_${digestOf(name)}`
+    }
     if (owners.has(alias) && owners.get(alias) !== name) throw new Error('Ambiguous Claude tool name')
     owners.set(alias, name)
     if (available) { offered.set(alias, name); clientNames.add(name) }

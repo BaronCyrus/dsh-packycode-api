@@ -1,9 +1,10 @@
-/** Claude Messages over HTTP, with the gateway's tested client envelope. */
+/** Claude Messages over HTTP, or through the official CLI for keys whose group requires it. */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { createClaudeReplayFetch } from './claude-replay.js'
 import { finishClaudeStream } from './claude-stream.js'
 import { createClaudeToolNames } from './claude-tools.js'
+import { currentRequest } from './request-context.js'
 
 // Pinned to the request shape verified live on 2026-10-16. No CLI is needed
 // to discover this version, send a turn, or run the host's native tools.
@@ -30,7 +31,7 @@ function attributionBlock(messages) {
 }
 
 /** Preserve UUIDs; map other host session ids deterministically, without a key. */
-function sessionUuid(value) {
+export function sessionUuid(value) {
   if (typeof value !== 'string' || value === '') return randomUUID()
   if (UUID.test(value)) return value.toLowerCase()
   const bytes = createHash('sha256').update(value).digest().subarray(0, 16)
@@ -45,8 +46,14 @@ function sessionUuid(value) {
  * Only the host-side client envelope is changed. The bearer is always the
  * explicit request key selected by this plugin; there is no credential or
  * subprocess fallback. A client-policy refusal still reaches the route guard.
+ *
+ * With `cli`, a request whose key must use the official client is handed to
+ * the Claude Code CLI transport instead of the network: the same payload,
+ * the same SSE answer, DSH's tools listed through the CLI's MCP bridge.
+ * @param options - `cli.choose({ apiKey, model })` decides per request;
+ *   `cli.fetch(input, init, meta)` sends it.
  */
-export function createClaudeApi() {
+export function createClaudeApi({ cli } = {}) {
   const api = anthropicMessagesApi()
   const deviceId = randomBytes(32).toString('hex')
   const adapt = (model, context, options, toolNames) => {
@@ -102,9 +109,34 @@ export function createClaudeApi() {
       },
     }
   }
+  /**
+   * The official CLI writes its own envelope, identity, effort and thinking
+   * display; only DSH's payload (with CLI tool names) is handed over. The
+   * route's request context says which DSH session, purpose and working
+   * directory the request belongs to.
+   */
+  const adaptCli = (model, context, options, toolNames) => {
+    const route = currentRequest()
+    const meta = Object.freeze({
+      apiKey: options?.apiKey,
+      sessionId: sessionUuid(options?.sessionId),
+      ...(route?.purpose === undefined ? {} : { purpose: route.purpose }),
+      ...(typeof route?.cwd === 'string' ? { cwd: route.cwd } : {}),
+    })
+    return {
+      ...options,
+      fetch: async (input, init) => {
+        const fetchImpl = createClaudeReplayFetch((target, request) => cli.fetch(target, request, meta), { model, context })
+        const response = await fetchImpl(input, init)
+        return finishClaudeStream(response, init?.signal ?? (input instanceof Request ? input.signal : undefined))
+      },
+      onPayload: async (payload, model) => toolNames.encodePayload(await options?.onPayload?.(payload, model) ?? payload),
+    }
+  }
   const invoke = (method, model, context, options) => {
-    const names = createClaudeToolNames()
-    return names.decodeStream(api[method](model, context, adapt(model, context, options, names)))
+    const viaCli = cli !== undefined && cli.choose({ apiKey: options?.apiKey, model: model.id }) === true
+    const names = createClaudeToolNames({ cli: viaCli })
+    return names.decodeStream(api[method](model, context, (viaCli ? adaptCli : adapt)(model, context, options, names)))
   }
   return {
     ...api,

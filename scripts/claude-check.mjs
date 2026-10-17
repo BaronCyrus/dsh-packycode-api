@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-/** Built native-route checks. Fixtures only; no DSH changes or CLI processes. */
+/**
+ * Built Claude route checks with fixtures; no DSH changes. `--transport cli`
+ * sends every request through this device's Claude Code CLI, as a cc key
+ * does inside DSH, with an isolated CLI home.
+ */
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
@@ -8,27 +12,51 @@ import { BlockAssembler, createUserMessage, createToolResultMessage } from '@dee
 import { redactSecrets } from '../src/secret-redactor.js'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
-import { CLAUDE_SCENARIO_VERSION, createBusinessScenario, matchesBusinessAnswer } from './claude-scenarios.mjs'
+import { CLAUDE_SCENARIO_VERSION, createBusinessScenario, matchesBusinessAnswer, matchesPlan, PLAN_POLICY } from './claude-scenarios.mjs'
 
 export const CLAUDE_MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+export const CLAUDE_CHECK_KINDS = Object.freeze(['text', 'tool', 'image', 'title', 'plan'])
+const BASE_SYSTEM = 'You are an assistant inside DeepSeek Harness. Follow the user request using only the supplied DSH tools.'
 
 /** One isolated in-memory ring. Stored credentials can never be changed. */
-export async function createClaudeCheck({ key, sessionId = randomUUID(), timeoutMs = 65_000, maxRetries = 0, retryDelayMs = 1500, builtPath = new URL('../lib/index.js', import.meta.url) } = {}) {
+export async function createClaudeCheck({ key, sessionId = randomUUID(), timeoutMs = 65_000, maxRetries = 0, retryDelayMs = 1500, transport = 'http', builtPath = new URL('../lib/index.js', import.meta.url) } = {}) {
   if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 2) throw new Error('Claude checks allow at most two transient retries')
+  if (!['http', 'cli'].includes(transport)) throw new Error('Claude checks run over http or cli')
   const builtUrl = builtPath instanceof URL ? builtPath : pathToFileURL(resolve(builtPath))
   if (builtUrl.protocol !== 'file:') throw new Error('Claude checks require a local built artifact')
-  const { PackyCodeKeyRing, createRouteAdapter } = await import(builtUrl.href)
+  const { PackyCodeKeyRing, createRouteAdapter, createClaudeCliManager, createClaudeCliTransport } = await import(builtUrl.href)
   let record
   const ring = new PackyCodeKeyRing({ readRecord: async () => record, modifyRecord: async (_id, mutate) => { record = await mutate(record); return record } })
   await ring.add(key, 'native Claude check')
   const scrub = value => redactSecrets(String(value), [key])
   const fixture = createVisionFixture('red')
   const failures = []
+  const requests = []
+  let cli
+  if (transport === 'cli') {
+    const found = await createClaudeCliManager().detect({ force: true })
+    if (typeof found.path !== 'string') throw new Error('Claude Code CLI is not installed on this device')
+    const sender = createClaudeCliTransport({ binary: async () => found.path, version: () => found.version })
+    cli = {
+      version: found.version,
+      sender,
+      // Every Claude request goes through the CLI, as for a cc key in DSH.
+      selector: { followsGroups: () => false, choose: () => true, fetch: async (input, init, meta) => {
+        const payload = JSON.parse(init.body)
+        const observed = { transport: 'cli', model: payload.model, effort: payload.output_config?.effort, tools: (payload.tools ?? []).map(tool => tool.name), ...(meta.purpose === undefined ? {} : { purpose: meta.purpose }) }
+        requests.push(observed)
+        const response = await sender.fetch(input, init, meta)
+        observed.status = response.status
+        if (!response.ok) observed.error = scrub(await response.clone().text()).slice(0, 500)
+        return response
+      } },
+    }
+  }
   const adapter = createRouteAdapter({ ring, fallbackSessionId: sessionId, resolveAttachments: () => fixture.attachments,
     keys: { active: () => ring.activeKey(), forRequest: (_model, chosen) => chosen, onKeyFailure: kind => failures.push(kind) },
+    ...(cli === undefined ? {} : { claudeCli: cli.selector }),
   })
   const original = globalThis.fetch
-  const requests = []
   const observedFetch = async (input, init) => {
     const request = new Request(input, init)
     const url = new URL(request.url)
@@ -63,7 +91,7 @@ export async function createClaudeCheck({ key, sessionId = randomUUID(), timeout
       for await (const chunk of prepared.stream({
         provider: 'packycode', model, sessionId, reasoningEffort: effort, maxTokens: 2048,
         signal: signal === undefined ? AbortSignal.timeout(timeoutMs) : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-        system: kind === 'title' ? '只回复一个简短中文会话标题，不要 JSON、引号或解释。' : 'You are an assistant inside DeepSeek Harness. Follow the user request using only the supplied DSH tools.',
+        system: kind === 'title' ? '只回复一个简短中文会话标题，不要 JSON、引号或解释。' : kind === 'plan' ? `${BASE_SYSTEM}\n\n${PLAN_POLICY}` : BASE_SYSTEM,
         messages, ...(scenario.tools === undefined ? {} : { tools: scenario.tools }), ...(kind === 'title' ? { purpose: 'session-title' } : {}),
       })) assembled.push(chunk)
       if (assembled.finish?.kind === 'error') {
@@ -83,7 +111,7 @@ export async function createClaudeCheck({ key, sessionId = randomUUID(), timeout
 
   return {
     async run({ model, kind = 'text', effort = 'low', signal, variant = 0 } = {}) {
-      if (!CLAUDE_MODELS.includes(model) || !['text', 'tool', 'image', 'title'].includes(kind)) throw new Error('Unsupported Claude check')
+      if (!CLAUDE_MODELS.includes(model) || !CLAUDE_CHECK_KINDS.includes(kind)) throw new Error('Unsupported Claude check')
       const started = Date.now()
       const firstRequest = requests.length
       let answer
@@ -93,6 +121,31 @@ export async function createClaudeCheck({ key, sessionId = randomUUID(), timeout
       try {
         const messages = [message([{ type: 'text', text: scenario.prompt }, ...(kind === 'image' ? [fixture.block] : [])])]
         let result = await turn(model, messages, { kind, effort, signal, scenario })
+        if (kind === 'plan') {
+          // DSH's loop in plan mode: run the read-only lookup, then review the plan.
+          let plan
+          for (let step = 0; step < 4 && plan === undefined; step++) {
+            const calls = result.blocks().filter(block => block.type === 'tool-call')
+            if (calls.length === 0) throw new Error(`Plan mode ended without exit_plan_mode (${result.finish?.kind})`)
+            messages.push(result.message({ kind: 'model', provider: 'packycode', model, replayState: result.replayState }))
+            for (const call of calls) {
+              toolCalls += 1
+              if (call.name === 'exit_plan_mode') {
+                plan = JSON.parse(call.arguments).plan
+                if (!matchesPlan(plan)) throw new Error('The submitted plan did not start with a heading about the request')
+                messages.push(createToolResultMessage({ callId: call.id, content: [{ type: 'text', text: 'Plan approved — plan mode exited; carry out the plan starting with your next step.' }], isError: false }))
+              } else if (call.name === 'lookup_inventory') {
+                messages.push(createToolResultMessage({ callId: call.id, content: [{ type: 'text', text: JSON.stringify(scenario.toolResult) }], isError: false }))
+              } else throw new Error(`Plan mode called an unexpected tool: ${call.name}`)
+            }
+            result = await turn(model, JSON.parse(JSON.stringify(messages)), { kind, effort, signal, scenario })
+          }
+          if (plan === undefined) throw new Error('No plan was submitted within four steps')
+          // After approval the model may start implementing; the check stops there.
+          if (!['stop', 'tool-calls'].includes(result.finish?.kind)) throw new Error(`Unexpected finish after approval: ${result.finish?.kind}`)
+          const observed = requests.slice(firstRequest)
+          return { ...identity, ok: true, recovered: observed.some(request => request.status >= 400 || request.error !== undefined || request.streamError !== undefined), plan: scrub(plan).slice(0, 300), toolCalls, durationMs: Date.now() - started, requests: observed }
+        }
         if (kind === 'tool') {
           const calls = result.blocks().filter(block => block.type === 'tool-call')
           toolCalls = calls.length
@@ -110,13 +163,18 @@ export async function createClaudeCheck({ key, sessionId = randomUUID(), timeout
           if (requests.at(-1).model !== 'claude-haiku-5-5') throw new Error('Claude title did not use Haiku')
         }
         const observed = requests.slice(firstRequest)
-        return { ...identity, ok: true, recovered: observed.some(request => request.status >= 400 || request.error !== undefined || request.streamError !== undefined), answer: scrub(answer), toolCalls, durationMs: Date.now() - started, requests: observed }
+        return { ...identity, ok: true, recovered: observed.some(request => request.status >= 400 || request.error !== undefined || request.streamError !== undefined), answer: scrub(answer), toolCalls, durationMs: Date.now() - started, requests: observed, ...(cli === undefined ? {} : { cli: cli.sender.stats() }) }
       } catch (error) {
         return { ...identity, ok: false, ...(answer === undefined ? {} : { answer: scrub(answer) }), toolCalls, durationMs: Date.now() - started,
           failure: { code: error.code ?? 'CHECK', message: scrub(error instanceof Error ? error.message : error).slice(0, 500) }, requests: requests.slice(firstRequest) }
       }
     },
-    close() { if (globalThis.fetch === observedFetch) globalThis.fetch = original },
+    /** The Claude Code CLI this check runs through, when it does. */
+    cliVersion: cli?.version,
+    async close() {
+      if (globalThis.fetch === observedFetch) globalThis.fetch = original
+      await cli?.sender.close()
+    },
   }
 }
 
@@ -126,19 +184,20 @@ async function main() {
   const selected = option('--model', undefined)
   const kind = option('--kind', undefined)
   if (selected !== undefined && !CLAUDE_MODELS.includes(selected)) throw new Error('Unknown Claude model')
-  if (kind !== undefined && !['text', 'tool', 'image', 'title'].includes(kind)) throw new Error('Unknown Claude check kind')
+  if (kind !== undefined && !CLAUDE_CHECK_KINDS.includes(kind)) throw new Error('Unknown Claude check kind')
+  const transport = option('--transport', 'http')
   const key = await readStoredKey({ label: option('--key-label', undefined) })
-  const check = await createClaudeCheck({ key, maxRetries: Number(option('--retry-transient', 0)) })
+  const check = await createClaudeCheck({ key, transport, maxRetries: Number(option('--retry-transient', 0)) })
   try {
-    console.log(`stored key: …${key.slice(-4)}`)
+    console.log(`stored key: …${key.slice(-4)} · transport: ${transport}${check.cliVersion === undefined ? '' : ` (Claude Code ${check.cliVersion})`}`)
     for (const model of selected === undefined ? CLAUDE_MODELS : [selected]) {
-      for (const current of kind === undefined ? ['text', 'tool', 'image', 'title'] : [kind]) {
+      for (const current of kind === undefined ? CLAUDE_CHECK_KINDS : [kind]) {
         const outcome = await check.run({ model, kind: current, effort: option('--effort', 'low') })
         console.log(JSON.stringify(outcome))
         if (!outcome.ok) process.exitCode = 1
       }
     }
-  } finally { check.close() }
+  } finally { await check.close() }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

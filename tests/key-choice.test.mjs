@@ -123,7 +123,9 @@ test('a native Claude turn after "use this key" uses that key, otherwise one wit
   const gateway = fakeGateway()
   t.after(gateway.restore)
   const { ctx, seen } = context()
-  apply(ctx, {})
+  // Key choice is transport-independent; pin HTTP so the cc key's Claude
+  // turns reach this fake gateway instead of a Claude Code CLI.
+  apply(ctx, { claudeTransport: 'http' })
   await seen.handler('keys/add', { key: KEY_CODEX, label: 'codex' })
   await seen.handler('keys/add', { key: KEY_CLAUDE, label: 'claude' })
 

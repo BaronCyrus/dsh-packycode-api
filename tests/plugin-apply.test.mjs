@@ -4,6 +4,7 @@ import test from 'node:test'
 import { apply, Config, inject, name } from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
+import { fieldValue } from '../src/preferences.js'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 
 /**
@@ -57,9 +58,12 @@ function stubContext() {
   return { ctx, registered }
 }
 
+/** A configured CLI path that cannot exist, so no test starts a real Claude Code CLI. */
+const NO_CLI = '/nonexistent/packycode-test-claude-cli'
+
 test('registers one route and one directory entry, and defers the browser surface', async () => {
   const { ctx, registered } = stubContext()
-  apply(ctx)
+  apply(ctx, { claudeCliPath: NO_CLI })
 
   assert.equal(name, 'packycode-api')
   // A profile without a browser surface must still boot: only the route is mandatory.
@@ -86,17 +90,19 @@ test('registers one route and one directory entry, and defers the browser surfac
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))
 
-  // There is no delegated tool or installer, even when the tools service exists.
+  // The CLI is a transport, never a tool the model sees: nothing is registered
+  // for it, and the 1.2 delegation settings stay gone.
   assert.deepEqual(registered.tools, [])
-  assert.equal(registered.effects.some(label => /CLI|claude_code/u.test(label)), false)
-  for (const field of ['claudeCliPath', 'claudeCliMode', 'claudeCliCwd']) {
-    assert.equal(Object.hasOwn(Config.dict, field), false)
-  }
-  for (const endpoint of ['claude-cli/status', 'claude-cli/install']) {
-    const reply = await registered.rpc[0].handler(endpoint)
-    assert.equal(reply.ok, false)
-    assert.equal(reply.error.message, 'Unknown PackyCode endpoint')
-  }
+  assert.ok(registered.effects.includes('packycode-api: Claude Code CLI processes'))
+  assert.equal(fieldValue(Config({}).claudeTransport), 'auto')
+  assert.equal(fieldValue(Config({}).claudeCliPath), '')
+  for (const field of ['claudeCliMode', 'claudeCliCwd']) assert.equal(Object.hasOwn(Config.dict, field), false)
+  const cli = await registered.rpc[0].handler('claude-cli/status')
+  assert.equal(cli.ok, true)
+  assert.equal(cli.value.installed, false)
+  assert.equal(cli.value.configuredPath, NO_CLI)
+  assert.equal(cli.value.transport, 'auto')
+  assert.deepEqual(cli.value.processes, { live: 0, opened: 0, continued: 0 })
 })
 
 test('native image generation remains registered after CLI delegation is removed', async () => {
@@ -122,13 +128,17 @@ test('a profile without a connection service still registers the route', () => {
   assert.deepEqual(registered.rpc, [])
 })
 
-test('registered Claude turns use HTTP and ignore obsolete CLI settings from an older profile', async t => {
+test('Claude turns on a key outside the CLI-only groups stay on HTTP, ignoring 1.2 CLI settings', async t => {
   const { ctx, registered } = stubContext()
   await new PackyCodeKeyRing(ctx.credentials).add('sk-native-apply-fixture', 'native')
-  apply(ctx, { claudeCliPath: '/nonexistent/packycode-native-fixture-cli', claudeCliMode: 'full', claudeCliCwd: '/nonexistent/workspace' })
+  apply(ctx, { claudeCliPath: NO_CLI, claudeCliMode: 'full', claudeCliCwd: '/nonexistent/workspace' })
   const requests = []
   t.mock.method(globalThis, 'fetch', async (input, init) => {
     const request = new Request(input, init)
+    const path = new URL(request.url).pathname
+    // The group reading: this key is in cc-sale, which accepts third-party clients.
+    if (path === '/v1/chat/completions') return Response.json({ error: { message: '当前令牌未覆盖供应商（已选分组=[cc-sale]）' } }, { status: 400 })
+    if (path === '/v1/models' || path === '/api/pricing') return Response.json({ data: [] })
     const body = await request.json()
     requests.push(body)
     return anthropicStream(body.model)

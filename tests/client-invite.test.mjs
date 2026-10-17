@@ -92,13 +92,15 @@ async function accountsFixture(t, { keys = [], statusFails = false, removeAllFai
   }
 }
 
-test('the built settings page retains native controls without a CLI card or detection requests', async t => {
+test('the built settings page keeps the native controls and adds the Claude Code CLI card without installing', async t => {
   const page = await accountsFixture(t)
-  for (const endpoint of ['status', 'images/status', 'models/status', 'search/status', 'plugin/version']) {
+  for (const endpoint of ['status', 'images/status', 'models/status', 'search/status', 'plugin/version', 'claude-cli/status']) {
     assert.ok(page.endpoints.includes(endpoint), endpoint)
   }
-  assert.equal(page.endpoints.some(endpoint => endpoint.startsWith('claude-cli/')), false)
-  assert.equal(page.headings().some(heading => /Claude Code|CLI|委派/u.test(heading)), false)
+  // Detection only: an install runs npm and needs the user's click.
+  assert.equal(page.endpoints.includes('claude-cli/install'), false)
+  assert.ok(page.headings().includes(zh.cliTitle))
+  assert.equal(page.headings().some(heading => /委派/u.test(heading)), false)
 })
 
 test('a profile with no stored key is offered the registration invite, opening outside DSH', async t => {

@@ -24,6 +24,13 @@ const STOCK = [
   { sku: 'MS-24', onHand: 16, reserved: 4, requested: 8 },
   { sku: 'USB-C-2M', onHand: 63, reserved: 12, requested: 70 },
 ]
+/** DSH's plan-mode exit tool, as the plan-mode plugin registers it. */
+export const EXIT_PLAN_TOOL = {
+  name: 'exit_plan_mode', description: "Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode.",
+  parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete plan, as markdown, starting with a # heading that names it.' } }, required: ['plan'], additionalProperties: false },
+}
+/** The guidance DSH's plan mode adds to the system prompt while it is active. */
+export const PLAN_POLICY = 'Plan mode is active. Explore read-only with the available tools, do not change anything, then present the complete implementation plan with exit_plan_mode. Implementation starts only after the user approves.'
 const INVENTORY_TOOL = {
   name: 'lookup_inventory', description: '查询商品库存及已预留数量。只读操作，不修改库存。',
   parameters: { type: 'object', properties: { sku: { type: 'string', description: '商品 SKU' } }, required: ['sku'], additionalProperties: false },
@@ -48,11 +55,25 @@ export function createBusinessScenario(kind, variant = 0) {
     prompt: '素材库需要给这张商品色卡添加颜色标签。请读取图片，返回 JSON，包含 color（英文小写颜色名）和 label（中文颜色名）。',
     expected: { color: 'red', label: '红色' },
   }
+  if (kind === 'plan') {
+    const stock = STOCK[variant % STOCK.length]
+    return {
+      id: `stockout-alert-plan-${stock.sku}`,
+      prompt: `我们要给订单系统加一个缺货预警：订单量超过可用库存时提醒采购。先用 lookup_inventory 查询 ${stock.sku} 的库存了解现状，然后用 exit_plan_mode 提交实施计划（以 # 标题开头），不要直接实施。`,
+      tools: [INVENTORY_TOOL, EXIT_PLAN_TOOL], toolArguments: { sku: stock.sku },
+      toolResult: { sku: stock.sku, onHand: stock.onHand, reserved: stock.reserved },
+    }
+  }
   if (kind === 'title') return {
     id: 'fulfillment-session-title',
     prompt: '请整理今天的仓库发货安排：核对待发订单与可用库存，把缺货订单单独列出，汇总需要采购补货的商品，并给客服准备延迟发货说明。',
   }
   throw new Error('Unknown business scenario kind')
+}
+
+/** A submitted plan: a markdown heading, and about the requested feature. */
+export function matchesPlan(plan) {
+  return typeof plan === 'string' && /^#{1,6}\s+\S/u.test(plan.trim()) && /缺货|预警|库存|stock/iu.test(plan)
 }
 
 export function matchesBusinessAnswer(scenario, answer) {

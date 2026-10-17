@@ -75,7 +75,8 @@ async function runningHost(t, { Context, Connection }, { withWebServer = true } 
   })
   return {
     ctx, routes, base, request, settled,
-    async install() { const fiber = await ctx.plugin(packycode); await settled(); return fiber },
+    // A CLI path that cannot exist keeps the status probe off any real Claude Code CLI.
+    async install() { const fiber = await ctx.plugin(packycode, { claudeCliPath: '/nonexistent/packycode-registration-cli' }); await settled(); return fiber },
     async removeWebServer() { await webFiber.dispose(); await settled() },
     async addWebServer() { webFiber = await ctx.plugin(webPlugin); await settled() },
     assertUnrestarted() {
@@ -106,12 +107,11 @@ for (const host of hosts) {
       assert.equal(response.status, 200, method)
       assert.equal(host.responseSchema.parse(await response.json()).result.error.code, 'gateway/bad-request')
     }
-    for (const method of ['claude-cli/status', 'claude-cli/install']) {
-      const response = await env.request(method)
-      const parsed = host.responseSchema.parse(await response.json())
-      assert.equal(parsed.result.ok, false)
-      assert.equal(parsed.result.error.message, 'Unknown PackyCode endpoint')
-    }
+    // The CLI status is served from the first install (install itself runs npm, so it is not exercised here).
+    const cli = host.responseSchema.parse(await (await env.request('claude-cli/status')).json())
+    assert.equal(cli.result.ok, true)
+    assert.equal(cli.result.value.installed, false)
+    assert.equal(cli.result.value.transport, 'auto')
     env.assertUnrestarted()
     await fiber.dispose()
     assert.equal((await env.request()).status, 405, 'uninstall removes this plugin route')

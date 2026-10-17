@@ -25,6 +25,9 @@ const REFRESH_MS = 60_000
 const INVITE_URL = 'https://www.packyapi.ai/register?aff=Im3l'
 /** How long after a search change the panel re-reads what DSH applied (the patch hot-reloads). */
 const SEARCH_SETTLE_MS = 1_500
+/** While the CLI installs, the panel polls its status this often. */
+const INSTALL_POLL_MS = 2_000
+const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 const OWN_SEARCH_IDS = { auto: 'packycode-api-auto', packycode: 'packycode-api' }
 const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
 /** The catalog's models by family, for the "reaches" line under each key. */
@@ -143,8 +146,26 @@ function KeyGroups({ group, descriptions, loading, t }) {
           ))}
         </div>
       )}
+      <ClaudeRoute group={group} t={t} />
       {group.stale !== undefined && <span className="pkc-meta">{t('groupsStale')}</span>}
     </>
+  )
+}
+
+/** Which transport this key's Claude requests take, when the key reaches Claude. */
+function ClaudeRoute({ group, t }) {
+  const route = group.claudeTransport
+  if (route === undefined || !CLAUDE_MODELS.some(id => group.coverage?.[id] === true)) return null
+  const pinned = route.reason === 'preference' ? t('keyClaudePinned') : ''
+  const hint = route.transport === 'cli'
+    ? `${fill(t('keyClaudeCliHint'), { groups: (route.groups ?? []).join(' / ') || 'cc' })}${pinned}`
+    : `${t('keyClaudeHttpHint')}${pinned}`
+  return (
+    <div className="pkc-groups">
+      <span className="pkc-chip" data-tone={route.transport === 'cli' ? 'info' : 'neutral'} title={hint}>
+        {route.transport === 'cli' ? t('keyClaudeCli') : t('keyClaudeHttp')}
+      </span>
+    </div>
   )
 }
 
@@ -524,6 +545,153 @@ function SearchCard({ call, t }) {
   )
 }
 
+// ── Claude Code CLI ─────────────────────────────────────────────────────────
+
+const INSTALL_FAILURES = {
+  'npm-missing': () => 'cliNpmMissing',
+  permission: cli => (cli.platform === 'win32' ? 'cliPermissionWindows' : 'cliPermission'),
+  network: () => 'cliNetwork',
+  timeout: () => 'cliTimeout',
+  'not-found-after-install': () => 'cliNotFoundAfterInstall',
+}
+
+/** The sentence explaining a failed install, by the code the host classified. */
+function installFailure(cli, t) {
+  const key = INSTALL_FAILURES[cli.install?.code]?.(cli)
+  return key === undefined ? undefined : fill(t(key), { command: cli.command ?? '' })
+}
+
+/**
+ * Which route Claude requests take, whether this device has the Claude Code
+ * CLI those on cc keys need, and — without one — an installer.
+ */
+function ClaudeCliCard({ call, t }) {
+  const [cli, setCli] = react.useState()
+  const [checking, setChecking] = react.useState(false)
+  const [saving, setSaving] = react.useState(false)
+  const [error, setError] = react.useState()
+
+  const check = react.useCallback((force = false) => {
+    setChecking(true)
+    setError(undefined)
+    return call('claude-cli/status', { force })
+      .then(setCli)
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setChecking(false))
+  }, [call])
+
+  react.useEffect(() => {
+    check(false)
+  }, [check])
+
+  const running = cli?.install?.state === 'running'
+  react.useEffect(() => {
+    if (!running) return undefined
+    let live = true
+    const timer = window.setInterval(() => {
+      call('claude-cli/status').then(value => {
+        if (live) setCli(value)
+      }).catch(() => undefined)
+    }, INSTALL_POLL_MS)
+    return () => {
+      live = false
+      window.clearInterval(timer)
+    }
+  }, [call, running])
+
+  const install = () => {
+    setError(undefined)
+    call('claude-cli/install').then(setCli).catch(failure => setError(clearMessage(failure)))
+  }
+  const choose = transport => {
+    setSaving(true)
+    setError(undefined)
+    call('claude-cli/update', { transport })
+      .then(setCli)
+      .catch(failure => setError(`${t('cliTransportFailed')}: ${clearMessage(failure)}`))
+      .finally(() => setSaving(false))
+  }
+
+  const usable = cli?.installed === true && cli.version !== undefined
+  const failed = cli?.install?.state === 'failed'
+  const failure = cli === undefined ? undefined : installFailure(cli, t)
+  const transport = cli?.transport ?? 'auto'
+  const processes = cli?.processes
+  return (
+    <Card
+      title={t('cliTitle')}
+      aside={<Button disabled={checking || running} onClick={() => check(true)}>{checking ? t('refreshing') : t('cliRecheck')}</Button>}
+    >
+      <p className="pkc-note">{t('cliIntro')}</p>
+      {cli !== undefined && (
+        <div className="pkc-setting">
+          <span className="pkc-label">{t('cliTransportTitle')}</span>
+          <div>
+            <Segmented
+              label={t('cliTransportTitle')}
+              value={transport}
+              disabled={saving || cli.writable !== true}
+              onChange={choose}
+              options={[
+                { value: 'auto', label: t('cliTransportAuto') },
+                { value: 'cli', label: t('cliTransportCli') },
+                { value: 'http', label: t('cliTransportHttp') },
+              ]}
+            />
+            <p className="pkc-note">{t({ auto: 'cliTransportAutoHint', cli: 'cliTransportCliHint', http: 'cliTransportHttpHint' }[transport] ?? 'cliTransportAutoHint')}</p>
+            {cli.writable !== true && <p className="pkc-note">{t('cliTransportNotWritable')}</p>}
+          </div>
+        </div>
+      )}
+      {cli === undefined && error === undefined && <p className="pkc-note">{t('cliChecking')}</p>}
+      {usable && (
+        <>
+          <div className="pkc-status">
+            <span className="pkc-dot" data-tone="success" />
+            <span>{t('cliInstalled')}</span>
+            <b>{`${t('cliVersion')} ${cli.version}`}</b>
+          </div>
+          <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
+          {processes !== undefined && <span className="pkc-meta">{fill(t('cliProcesses'), processes)}</span>}
+          {cli.install?.state === 'succeeded' && <p className="pkc-note">{t('cliInstallSucceeded')}</p>}
+        </>
+      )}
+      {cli !== undefined && !usable && (
+        <div className="pkc-callout">
+          <div className="pkc-status">
+            <span className="pkc-dot" data-tone={cli.installed ? 'danger' : 'warn'} />
+            <b>{cli.installed ? t('cliBroken') : t('cliMissing')}</b>
+          </div>
+          {cli.installed && (
+            <>
+              <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
+              {cli.error !== undefined && <pre className="pkc-detail">{cli.error}</pre>}
+            </>
+          )}
+          {cli.configuredPath !== undefined && <p className="pkc-note">{fill(t('cliConfiguredMissing'), { path: cli.configuredPath })}</p>}
+          <p className="pkc-note">{t('cliMissingHint')}</p>
+          <div className="pkc-split">
+            <Button variant="primary" size="md" disabled={running || checking} onClick={install}>
+              {running ? t('cliInstalling') : cli.installed ? t('cliReinstall') : t('cliInstall')}
+            </Button>
+          </div>
+          <p className="pkc-note">
+            {fill(t('cliInstallCommand'), { command: cli.command ?? '' })}
+            {cli.platform === 'win32' && ` ${t('cliWindowsNote')}`}
+          </p>
+        </div>
+      )}
+      {failed && !usable && (
+        <>
+          <p className="pkc-error">{failure === undefined ? t('cliInstallFailed') : `${t('cliInstallFailed')} · ${failure}`}</p>
+          {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="pkc-detail">{cli.install.detail}</pre>}
+        </>
+      )}
+      {error !== undefined && <p className="pkc-error" role="alert">{`${t('error')}: ${error}`}</p>}
+    </Card>
+  )
+}
+
 // ── plugin version ──────────────────────────────────────────────────────────
 
 /** A release-age wait can end tomorrow, so the date is part of the time. */
@@ -632,6 +800,7 @@ function PackyCodeSection({ rpc, t }) {
       <p className="pkc-intro">{t('intro')}</p>
       <AccountsCard call={call} t={t} />
       <PackyCodeImagesCard call={call} t={t} />
+      <ClaudeCliCard call={call} t={t} />
       <ModelsCard call={call} t={t} />
       <SearchCard call={call} t={t} />
       <VersionCard call={call} t={t} />
