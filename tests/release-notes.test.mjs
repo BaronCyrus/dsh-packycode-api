@@ -87,7 +87,7 @@ test('the tag checks its notes before npm publishes, then hands the published ta
   assert.equal(handOff.with['if-no-files-found'], 'error')
 })
 
-test('only the release jobs may write, and they run no dependency code', () => {
+test('only the release job may write, and it runs no dependency code', () => {
   const { permissions, jobs } = workflow()
   assert.deepEqual(permissions, { 'id-token': 'write', contents: 'read' }, 'the publish job keeps read-only contents')
   assert.equal(jobs.publish.permissions, undefined)
@@ -108,14 +108,11 @@ test('only the release jobs may write, and they run no dependency code', () => {
   // Latest follows npm's `latest`, which the tag moves at once.
   assert.match(create.run, /gh release create "\$GITHUB_REF_NAME" "\$artifact" --verify-tag --latest --title "\$title" --notes-file "\$notes"/u)
   assert.match(create.run, /if gh release view "\$GITHUB_REF_NAME"/u, 'a release made by hand is left unchanged')
-
-  // Marking the promoted release Latest is the only other write, with no checkout at all.
-  const mark = jobs['mark-latest']
-  assert.deepEqual(mark.permissions, { contents: 'write' })
-  assert.equal(mark.steps.some(step => step.uses), false)
-  for (const step of mark.steps) assert.doesNotMatch(step.run, /\bpnpm\b|\bnpm\b|\bnpx\b|\bnode\b/u, `${step.name}: only gh runs with a write token`)
   const writers = Object.entries(jobs).filter(([, job]) => job.permissions?.contents === 'write').map(([name]) => name)
-  assert.deepEqual(writers, ['release', 'mark-latest'])
+  assert.deepEqual(writers, ['release'])
+  // Tags publish straight to `latest`; nothing stages or moves dist-tags.
+  assert.deepEqual(Object.keys(jobs), ['publish', 'release'])
+  assert.deepEqual(Object.keys(workflow().on), ['push', 'workflow_dispatch'])
 })
 
 test('nothing in the workflow switches npm from OIDC to token auth', () => {
