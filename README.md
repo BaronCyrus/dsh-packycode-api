@@ -16,7 +16,7 @@
 [![MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
 [![Star](https://img.shields.io/github/stars/BaronCyrus/dsh-packycode-api?style=flat&logo=github&label=Star)](https://github.com/BaronCyrus/dsh-packycode-api/stargazers)
 
-[功能](#功能) · [安装](#安装) · [日常使用](#日常使用) · [模型与分组](#模型与分组) · [更新与卸载](#更新与卸载)
+[功能](#功能) · [安装](#安装) · [日常使用](#日常使用) · [模型与分组](#模型与分组) · [更新与卸载](#更新与卸载) · [支持作者](#支持作者)
 
 </div>
 
@@ -291,3 +291,14 @@ pnpm run check
 ## License
 
 [MIT](LICENSE)
+
+## 支持作者
+
+本插件免费开源，赞赏全凭心意。如果它让你在 DSH 里用 PackyCode 省了不少折腾，欢迎扫码支持，让插件持续跟上新模型和新版 DSH。
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/assets/sponsor-wechat.png" width="200" alt="微信赞赏码"><br><b>微信赞赏</b></td>
+    <td align="center"><img src="docs/assets/sponsor-alipay.png" width="200" alt="支付宝收款码"><br><b>支付宝</b></td>
+  </tr>
+</table>

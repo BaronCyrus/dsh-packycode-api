@@ -16,7 +16,7 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 [![MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
 [![Star](https://img.shields.io/github/stars/BaronCyrus/dsh-packycode-api?style=flat&logo=github&label=Star)](https://github.com/BaronCyrus/dsh-packycode-api/stargazers)
 
-[Features](#features) · [Install](#install) · [Daily use](#daily-use) · [Models and groups](#models-and-groups) · [Update and uninstall](#update-and-uninstall)
+[Features](#features) · [Install](#install) · [Daily use](#daily-use) · [Models and groups](#models-and-groups) · [Update and uninstall](#update-and-uninstall) · [Support](#support-the-author)
 
 </div>
 
@@ -291,3 +291,14 @@ Read [AGENTS.md](AGENTS.md) before agent-assisted changes or a release. Publishi
 ## License
 
 [MIT](LICENSE)
+
+## Support the author
+
+This plugin is free and open source, and tips are entirely optional. If it saved you some hassle using PackyCode in DSH, a tip helps keep it current with new models and new DSH releases.
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/assets/sponsor-wechat.png" width="200" alt="WeChat tip code"><br><b>WeChat</b></td>
+    <td align="center"><img src="docs/assets/sponsor-alipay.png" width="200" alt="Alipay payment code"><br><b>Alipay</b></td>
+  </tr>
+</table>

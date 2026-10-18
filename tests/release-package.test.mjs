@@ -34,3 +34,15 @@ test('release package includes the README mascot', async () => {
     assert.ok((await read(path)).includes(mascot))
   }
 })
+
+test('release package includes every local README image', async () => {
+  const manifest = JSON.parse(await read('package.json'))
+  for (const path of ['README.md', 'README.en.md']) {
+    const images = [...(await read(path)).matchAll(/<img\b[^>]*\bsrc="(docs\/[^"]+)"/g)].map((match) => match[1])
+    assert.ok(images.includes('docs/assets/sponsor-wechat.png') && images.includes('docs/assets/sponsor-alipay.png'), `${path} must show both tip codes`)
+    for (const image of images) {
+      assert.ok(manifest.files.includes(image), `publish files must include ${image}`)
+      assert.ok((await read(image, null)).length > 0, `${image} must exist and be nonempty`)
+    }
+  }
+})
