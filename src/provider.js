@@ -2,14 +2,13 @@
  * The PackyCode pi-ai provider, built in code so the user configures no route.
  *
  * `createProvider` dispatches on `model.api`, which is what lets one route
- * carry Chat Completions, Responses, Anthropic Messages and native Gemini
- * models — the gateway refuses some of them over other protocols.
+ * carry Responses, Anthropic Messages and native Gemini models — the gateway
+ * refuses some of them over other protocols.
  *
  * @module dsh-packycode-api/provider
  */
 
 import { createProvider } from '@earendil-works/pi-ai'
-import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 
 import { PACKYCODE_MODELS } from './catalog.js'
@@ -77,14 +76,14 @@ export function createPackyCodeProvider({ claudeCli } = {}) {
     auth: keyRingAuth(),
     models: PACKYCODE_MODELS,
     api: {
-      'openai-completions': openAICompletionsApi(),
       'openai-responses': openAIResponsesApi(),
       'anthropic-messages': createClaudeApi({ cli: claudeCli }),
       'google-generative-ai': createGeminiApi(),
     },
   })
   // Only GPT's Responses route requires prompt_cache_key here. Sending it
-  // to Grok makes the gateway return a misleading upstream API-key error.
+  // to Grok makes the gateway return a misleading upstream API-key error,
+  // and DeepSeek's prefix cache hits without it.
   // pi-ai's public cacheRetention option omits this field without changing
   // the model, protocol, reasoning, session headers, or credential source.
   const requestOptions = (model, options) => model.api === 'openai-responses' && !model.id.startsWith('gpt-')

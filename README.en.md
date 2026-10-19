@@ -170,7 +170,7 @@ Live checks on 2026-10-15 passed generation and editing at `low` on all three en
 
 | Model | How it runs | Effort | Token group |
 | --- | --- | --- | --- |
-| `deepseek-flash` | HTTP, chat/completions, images allowed | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
+| `deepseek-flash` | HTTP, Responses, images allowed | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
 | `gpt-6-astra` | Same | Same | Same |
 | `gpt-5.6-sol` | Same | Same | Same |
@@ -183,7 +183,7 @@ Live checks on 2026-10-15 passed generation and editing at `low` on all three en
 
 A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
 
-All ten models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Chat Completions request.
+All ten models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Responses request.
 
 Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon), [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). Both models use the native Gemini protocol through `/v1beta/models/{model}:streamGenerateContent`, streaming text, thinking and tool calls; images are read through DSH's attachment service. Thinking levels are sent with `thinkingLevel`. Both routes use the single-stream output limit without automatic continuation beyond 65,536 tokens. Available endpoints and groups follow the [PackyAPI live model catalog](https://www.packyapi.com/api/pricing).
 
@@ -191,7 +191,9 @@ Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](htt
 
 Grok 4.7's context and reasoning levels follow the [official guide](https://docs.x.ai/developers/grok-4-7). There is no separate text-output limit; the plugin uses the context size as its numeric output ceiling, bounded by the remaining context per request.
 
-Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present.
+Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present, and DeepSeek Flash hits its prefix cache without it.
+
+DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `openai-response`). With effort off it sends `reasoning.effort: "none"`, and the gateway answers without reasoning; otherwise reasoning comes back as `reasoning_text` and is sent back with the same turn's tool calls.
 
 <details>
 <summary>Protocol, group and client compatibility</summary>

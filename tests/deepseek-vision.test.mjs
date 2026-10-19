@@ -7,8 +7,9 @@ import { createVisionFixture } from '../scripts/vision-fixture.mjs'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createRouteAdapter } from '../src/route.js'
 import { fakeCredentials } from './helpers.mjs'
+import { messageItem, responsesStream } from './fixtures/responses.mjs'
 
-test('DeepSeek images reach Chat Completions through the registered host route', async t => {
+test('DeepSeek images reach Responses through the registered host route', async t => {
   const fixture = createVisionFixture('red')
   const ring = new PackyCodeKeyRing(fakeCredentials())
   await ring.add('sk-fixture-only-not-a-real-key', 'fixture')
@@ -26,13 +27,7 @@ test('DeepSeek images reach Chat Completions through the registered host route',
   t.mock.method(globalThis, 'fetch', async (input, init) => {
     const request = new Request(input, init)
     requests.push({ url: request.url, body: await request.json() })
-    const events = [
-      { id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'deepseek-flash', choices: [{ index: 0, delta: { role: 'assistant', content: 'red' }, finish_reason: null }] },
-      { id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'deepseek-flash', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
-    ]
-    return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n', {
-      headers: { 'Content-Type': 'text/event-stream' },
-    })
+    return responsesStream([messageItem('red')])
   })
   const prepared = await adapter.prepareCall('packycode', 'deepseek-flash')
   const chunks = []
@@ -49,13 +44,13 @@ test('DeepSeek images reach Chat Completions through the registered host route',
   assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), 'red')
   assert.deepEqual(fixture.reads, [fixture.block.attachment.attachmentId])
   assert.equal(requests.length, 1)
-  assert.equal(requests[0].url, 'https://cf.api.fan/v1/chat/completions')
+  assert.equal(requests[0].url, 'https://cf.api.fan/v1/responses')
   assert.equal(requests[0].body.model, 'deepseek-flash')
-  const content = requests[0].body.messages.find(message => message.role === 'user').content
-  assert.deepEqual(content[0], { type: 'text', text: 'Describe this image.' })
+  const content = requests[0].body.input.find(item => item.role === 'user').content
+  assert.deepEqual(content[0], { type: 'input_text', text: 'Describe this image.' })
   // The host also adds a text description of the request preview. What
   // matters here is that it preserves the pixels rather than only that text.
-  assert.deepEqual(content.filter(block => block.type === 'image_url'), [
-    { type: 'image_url', image_url: { url: `data:image/png;base64,${fixture.data.toString('base64')}` } },
+  assert.deepEqual(content.filter(block => block.type === 'input_image'), [
+    { type: 'input_image', detail: 'auto', image_url: `data:image/png;base64,${fixture.data.toString('base64')}` },
   ])
 })

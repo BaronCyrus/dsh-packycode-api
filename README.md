@@ -170,7 +170,7 @@ Claude 与其它模型一样，通过 DSH 的 `packycode_image_generate` 工具�
 
 | 模型 | 怎么调用 | 推理档位 | 适合的令牌分组 |
 | --- | --- | --- | --- |
-| `deepseek-flash` | HTTP，chat/completions，可带图 | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
+| `deepseek-flash` | HTTP，Responses，可带图 | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
 | `gpt-6-astra` | 同上 | 同上 | 同上 |
 | `gpt-5.6-sol` | 同上 | 同上 | 同上 |
@@ -183,7 +183,7 @@ Claude 与其它模型一样，通过 DSH 的 `packycode_image_generate` 工具�
 
 列表里看得到模型，不代表当前令牌分组一定放行。换分组时不要把对应分组一起去掉。
 
-当前目录中的 10 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 chat/completions 请求发送。
+当前目录中的 10 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。
 
 Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
 
@@ -191,7 +191,9 @@ Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https:
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 
-Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses 模型默认省略。当前网关的 Grok 路由会将这个字段误报成 `Incorrect API key provided`。
+Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses 模型默认省略。当前网关的 Grok 路由会将这个字段误报成 `Incorrect API key provided`；DeepSeek Flash 不带它也能命中前缀缓存。
+
+DeepSeek Flash 走网关的 Responses 接口（`/api/pricing` 列出 `openai-response`）。关闭推理时发送 `reasoning.effort: "none"`，网关返回时不带思考；开启时思考内容以 `reasoning_text` 返回，并随同一轮的工具调用一起回传。
 
 <details>
 <summary>协议、分组与客户端兼容性</summary>

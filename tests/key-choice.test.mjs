@@ -7,6 +7,7 @@ import { PACKYCODE_MODEL_IDS } from '../src/catalog.js'
 import { apply } from '../src/index.js'
 import { fakeCredentials } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
+import { responsesStream } from './fixtures/responses.mjs'
 
 const KEY_CODEX = 'sk-codex-only-key-AAAA'
 const KEY_DEEPSEEK = 'sk-deepseek-key-BBBB'
@@ -22,14 +23,10 @@ const PRICING = {
   usable_group: { cc: 'claude code专用' },
 }
 
-const sse = chunks => new Response(chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n', {
-  status: 200,
-  headers: { 'content-type': 'text/event-stream' },
-})
-
 /**
  * A stand-in PackyCode gateway on `fetch`: the group probe, the model list,
- * pricing, and a streaming chat completion that records the key it was sent.
+ * pricing, and streaming Responses and Messages answers that record the key
+ * they were sent.
  */
 function fakeGateway() {
   const chatKeys = []
@@ -46,17 +43,16 @@ function fakeGateway() {
     }
     if (url.endsWith('/api/pricing')) return Response.json(PRICING)
     if (url.endsWith('/v1/models')) return Response.json({ data: [] })
+    if (new URL(url).pathname === '/v1/responses') {
+      chatKeys.push(key)
+      return responsesStream()
+    }
     if (url.endsWith('/v1/chat/completions')) {
       const body = JSON.parse(typeof init.body === 'string' ? init.body : await new Response(init.body).text())
       if (body.model === 'dsh-packycode-group-probe') {
         probes.push(key)
         return Response.json({ error: { code: 'model_not_found', message: `当前令牌未覆盖供应商 ""（模型=${body.model}，已选分组=[${(GROUPS[key] ?? []).join(' ')}]）` } }, { status: 400 })
       }
-      chatKeys.push(key)
-      return sse([
-        { id: 'c1', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] },
-        { id: 'c1', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
-      ])
     }
     return new Response('{}', { status: 404 })
   }

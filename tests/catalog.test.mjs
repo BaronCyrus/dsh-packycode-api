@@ -20,9 +20,14 @@ test('every current model declares the text and image inputs documented by its v
 })
 
 test('pins each model to the protocol and base URL the gateway serves', () => {
-  // OpenAI traffic carries /v1 and never an endpoint path; the SDK appends it.
-  assert.equal(byId('deepseek-flash').api, 'openai-completions')
+  // OpenAI-protocol traffic carries /v1 and never an endpoint path; the SDK appends it.
+  // PackyCode serves DeepSeek Flash on Responses as well (`/api/pricing`: `openai-response`).
+  assert.equal(byId('deepseek-flash').api, 'openai-responses')
   assert.equal(byId('deepseek-flash').baseUrl, `${DEFAULT_API_HOST}/v1`)
+  // The gateway refuses a Responses output limit above 393,216 for DeepSeek Flash.
+  assert.ok(byId('deepseek-flash').maxTokens <= 393_216)
+  // No catalog model uses Chat Completions any more.
+  assert.deepEqual(PACKYCODE_MODELS.filter(model => model.api === 'openai-completions').map(model => model.id), [])
   assert.equal(byId('gpt-6.1-sol').api, 'openai-responses')
   assert.equal(byId('gpt-6.1-sol').baseUrl, `${DEFAULT_API_HOST}/v1`)
   // GPT-6 Astra rides the same Responses route as Sol (the Codex group's protocol).
@@ -90,9 +95,10 @@ test('every model accepts the route default effort', () => {
 })
 
 test('declares the wire dialect each protocol needs', () => {
-  assert.equal(byId('deepseek-flash').compat.thinkingFormat, 'deepseek')
-  assert.equal(byId('deepseek-flash').compat.maxTokensField, 'max_tokens')
-  assert.equal(byId('deepseek-flash').compat.requiresReasoningContentOnAssistantMessages, true)
+  // DeepSeek over Responses needs no Chat Completions dialect: `off` sends
+  // `reasoning.effort: "none"`, and reasoning replays as Responses items.
+  assert.equal(byId('deepseek-flash').compat, undefined)
+  assert.equal(byId('deepseek-flash').thinkingLevelMap.off, undefined)
   // Claude 5.x always thinks adaptively and rejects temperature.
   for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).compat.forceAdaptiveThinking, true)
