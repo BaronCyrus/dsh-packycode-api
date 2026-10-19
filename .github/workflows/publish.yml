@@ -122,11 +122,9 @@ jobs:
             echo "The verified release artifact is missing"
             exit 1
           fi
-          # Straight to `latest`. Update buttons up to 1.3.2 still install
-          # whatever `latest` names past pnpm's minimumReleaseAge, and a profile
-          # that then holds a version younger than that refuses every later
-          # plugin install, so releases stay at least 24 hours apart while
-          # users remain on them (AGENTS.md, Release cadence).
+          # Straight to `latest`, which the update button and DSH's Plugins
+          # page install. Users on update buttons up to 1.3.2 install the exact
+          # version on the Plugins page instead (AGENTS.md, Old update buttons).
           npm publish "${artifact:?}" --access public
       - name: Hand the published tarball to the release job
         if: github.event_name != 'workflow_dispatch'
