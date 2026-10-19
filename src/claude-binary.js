@@ -14,17 +14,28 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { nvmBinDirs, pathFor, searchPath } from './locate.js'
+import { compareSemver } from './plugin-version.js'
 
 /** The npm package the official CLI ships as. */
 export const CLAUDE_NPM_PACKAGE = '@anthropic-ai/claude-code'
+
+/** The oldest CLI that takes every option the transport passes (`--permission-prompts` arrived in 2.1.259). */
+export const CLAUDE_MIN_VERSION = '2.1.259'
+
+/**
+ * Whether a detected CLI is older than the transport needs. An unknown
+ * version is not judged; a CLI that then refuses an option still says so.
+ * @param version - the version `claude --version` printed.
+ */
+export const isClaudeCliOutdated = version => compareSemver(version, CLAUDE_MIN_VERSION) === -1
 
 /** Isolated CLI home; the plugin owns the endpoint and key it runs with. */
 export const DEFAULT_CLAUDE_CONFIG_DIR = join(homedir(), '.dsh', 'packycode-claude-cli')
 
 /** What a request reports when no CLI could be started at all. */
 export const CLAUDE_MISSING_MESSAGE = '本机没有可用的 Claude Code CLI，而当前 Key 的 Claude 分组只接受官方 CLI 发出的请求。'
-  + '请在 设置 → PackyCode → Claude Code CLI 安装，或在终端运行 npm install -g @anthropic-ai/claude-code，然后重发。'
-  + ' / Claude Code CLI is not installed on this device, and this key\'s Claude group only serves the official CLI. Install it under Settings → PackyCode, or run: npm install -g @anthropic-ai/claude-code'
+  + '请在 设置 → PackyCode → Claude Code CLI 安装，或在终端运行 npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code，然后重发。'
+  + ' / Claude Code CLI is not installed on this device, and this key\'s Claude group only serves the official CLI. Install it under Settings → PackyCode, or run: npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code'
 
 /** The CLI's file names on PATH: the native installer ships an `.exe`, npm a `.cmd` launcher. */
 export const claudeFileNames = platform => (platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'])

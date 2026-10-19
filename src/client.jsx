@@ -156,10 +156,9 @@ function KeyGroups({ group, descriptions, loading, t }) {
 function ClaudeRoute({ group, t }) {
   const route = group.claudeTransport
   if (route === undefined || !CLAUDE_MODELS.some(id => group.coverage?.[id] === true)) return null
-  const pinned = route.reason === 'preference' ? t('keyClaudePinned') : ''
   const hint = route.transport === 'cli'
-    ? `${fill(t('keyClaudeCliHint'), { groups: (route.groups ?? []).join(' / ') || 'cc' })}${pinned}`
-    : `${t('keyClaudeHttpHint')}${pinned}`
+    ? fill(t('keyClaudeCliHint'), { groups: (route.groups ?? []).join(' / ') || 'cc' })
+    : t('keyClaudeHttpHint')
   return (
     <div className="pkc-groups">
       <span className="pkc-chip" data-tone={route.transport === 'cli' ? 'info' : 'neutral'} title={hint}>
@@ -553,22 +552,25 @@ const INSTALL_FAILURES = {
   network: () => 'cliNetwork',
   timeout: () => 'cliTimeout',
   'not-found-after-install': () => 'cliNotFoundAfterInstall',
+  'not-installed': () => 'cliUpdateNotInstalled',
+  'still-outdated': () => 'cliUpdateStillOutdated',
+  'broken-after-update': () => 'cliUpdateBroken',
 }
 
-/** The sentence explaining a failed install, by the code the host classified. */
+/** The sentence explaining a failed install or update, by the code the host classified. */
 function installFailure(cli, t) {
   const key = INSTALL_FAILURES[cli.install?.code]?.(cli)
-  return key === undefined ? undefined : fill(t(key), { command: cli.command ?? '' })
+  const command = cli.install?.action === 'update' ? cli.updateCommand : cli.command
+  return key === undefined ? undefined : fill(t(key), { command: command ?? '', minVersion: cli.minVersion ?? '' })
 }
 
 /**
- * Which route Claude requests take, whether this device has the Claude Code
- * CLI those on cc keys need, and — without one — an installer.
+ * Whether this device has the Claude Code CLI that Claude requests on cc
+ * keys go through: an installer without one, an updater for one too old.
  */
 function ClaudeCliCard({ call, t }) {
   const [cli, setCli] = react.useState()
   const [checking, setChecking] = react.useState(false)
-  const [saving, setSaving] = react.useState(false)
   const [error, setError] = react.useState()
 
   const check = react.useCallback((force = false) => {
@@ -603,19 +605,16 @@ function ClaudeCliCard({ call, t }) {
     setError(undefined)
     call('claude-cli/install').then(setCli).catch(failure => setError(clearMessage(failure)))
   }
-  const choose = transport => {
-    setSaving(true)
+  const update = () => {
     setError(undefined)
-    call('claude-cli/update', { transport })
-      .then(setCli)
-      .catch(failure => setError(`${t('cliTransportFailed')}: ${clearMessage(failure)}`))
-      .finally(() => setSaving(false))
+    call('claude-cli/update').then(setCli).catch(failure => setError(clearMessage(failure)))
   }
 
   const usable = cli?.installed === true && cli.version !== undefined
+  const outdated = usable && cli.outdated === true
+  const action = cli?.install?.action ?? 'install'
   const failed = cli?.install?.state === 'failed'
   const failure = cli === undefined ? undefined : installFailure(cli, t)
-  const transport = cli?.transport ?? 'auto'
   const processes = cli?.processes
   return (
     <Card
@@ -623,28 +622,8 @@ function ClaudeCliCard({ call, t }) {
       aside={<Button disabled={checking || running} onClick={() => check(true)}>{checking ? t('refreshing') : t('cliRecheck')}</Button>}
     >
       <p className="pkc-note">{t('cliIntro')}</p>
-      {cli !== undefined && (
-        <div className="pkc-setting">
-          <span className="pkc-label">{t('cliTransportTitle')}</span>
-          <div>
-            <Segmented
-              label={t('cliTransportTitle')}
-              value={transport}
-              disabled={saving || cli.writable !== true}
-              onChange={choose}
-              options={[
-                { value: 'auto', label: t('cliTransportAuto') },
-                { value: 'cli', label: t('cliTransportCli') },
-                { value: 'http', label: t('cliTransportHttp') },
-              ]}
-            />
-            <p className="pkc-note">{t({ auto: 'cliTransportAutoHint', cli: 'cliTransportCliHint', http: 'cliTransportHttpHint' }[transport] ?? 'cliTransportAutoHint')}</p>
-            {cli.writable !== true && <p className="pkc-note">{t('cliTransportNotWritable')}</p>}
-          </div>
-        </div>
-      )}
       {cli === undefined && error === undefined && <p className="pkc-note">{t('cliChecking')}</p>}
-      {usable && (
+      {usable && !outdated && (
         <>
           <div className="pkc-status">
             <span className="pkc-dot" data-tone="success" />
@@ -653,7 +632,32 @@ function ClaudeCliCard({ call, t }) {
           </div>
           <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
           {processes !== undefined && <span className="pkc-meta">{fill(t('cliProcesses'), processes)}</span>}
-          {cli.install?.state === 'succeeded' && <p className="pkc-note">{t('cliInstallSucceeded')}</p>}
+          {cli.install?.state === 'succeeded' && (
+            <p className="pkc-note">{action === 'update' ? fill(t('cliUpdateSucceeded'), { version: cli.install.to ?? cli.version }) : t('cliInstallSucceeded')}</p>
+          )}
+        </>
+      )}
+      {outdated && (
+        <div className="pkc-callout">
+          <div className="pkc-status">
+            <span className="pkc-dot" data-tone="warn" />
+            <b>{t('cliOutdated')}</b>
+            <span>{`${t('cliVersion')} ${cli.version}`}</span>
+          </div>
+          <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
+          <p className="pkc-note">{fill(t('cliOutdatedHint'), { minVersion: cli.minVersion ?? '' })}</p>
+          <div className="pkc-split">
+            <Button variant="primary" size="md" disabled={running || checking} onClick={update}>
+              {running && action === 'update' ? t('cliUpdating') : t('cliUpdate')}
+            </Button>
+          </div>
+          {cli.updateCommand !== undefined && <p className="pkc-note">{fill(t('cliUpdateCommand'), { command: cli.updateCommand })}</p>}
+        </div>
+      )}
+      {failed && action === 'update' && (
+        <>
+          <p className="pkc-error">{failure === undefined ? t('cliUpdateFailed') : `${t('cliUpdateFailed')} · ${failure}`}</p>
+          {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="pkc-detail">{cli.install.detail}</pre>}
         </>
       )}
       {cli !== undefined && !usable && (
@@ -672,7 +676,7 @@ function ClaudeCliCard({ call, t }) {
           <p className="pkc-note">{t('cliMissingHint')}</p>
           <div className="pkc-split">
             <Button variant="primary" size="md" disabled={running || checking} onClick={install}>
-              {running ? t('cliInstalling') : cli.installed ? t('cliReinstall') : t('cliInstall')}
+              {running && action === 'install' ? t('cliInstalling') : cli.installed ? t('cliReinstall') : t('cliInstall')}
             </Button>
           </div>
           <p className="pkc-note">
@@ -681,7 +685,7 @@ function ClaudeCliCard({ call, t }) {
           </p>
         </div>
       )}
-      {failed && !usable && (
+      {failed && action === 'install' && !usable && (
         <>
           <p className="pkc-error">{failure === undefined ? t('cliInstallFailed') : `${t('cliInstallFailed')} · ${failure}`}</p>
           {cli.install.detail !== undefined && cli.install.detail !== '' && <pre className="pkc-detail">{cli.install.detail}</pre>}

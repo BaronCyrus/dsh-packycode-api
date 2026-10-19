@@ -1,32 +1,45 @@
 /**
- * Detecting, and installing, the local Claude Code CLI.
+ * Detecting, installing and updating the local Claude Code CLI.
  *
  * Claude requests on a key whose group serves only the official client are
  * sent by this device's Claude Code CLI, so the settings panel shows whether
  * one is installed (and which version), and offers to install it with
  * `npm install -g @anthropic-ai/claude-code` — the same command on macOS and
- * Windows. Installation runs on the host, never in a shell built from user
- * text: npm's arguments are constants.
+ * Windows — or to update one older than the transport needs. Both run on the
+ * host, never in a shell built from user text: their arguments are constants.
+ *
+ * npm 12 skips install scripts unless they are allowed, and the CLI's
+ * postinstall is what puts its native binary in place, so every npm install
+ * allows the package's scripts (npm 10 and 11 accept the option as well).
  *
  * @module dsh-packycode-api/claude-install
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 
 import {
+  CLAUDE_MIN_VERSION,
   CLAUDE_NPM_PACKAGE,
   DEFAULT_CLAUDE_CONFIG_DIR,
   claudeFileNames,
+  isClaudeCliOutdated,
   locateClaudeBinary,
   resolveSpawnCommand,
 } from './claude-binary.js'
 import { nvmBinDirs, pathFor, searchPath, withProgramDirOnPath } from './locate.js'
 
-export const CLAUDE_INSTALL_COMMAND = `npm install -g ${CLAUDE_NPM_PACKAGE}`
+const ALLOW_SCRIPTS = `--allow-scripts=${CLAUDE_NPM_PACKAGE}`
+export const CLAUDE_INSTALL_COMMAND = `npm install -g ${CLAUDE_NPM_PACKAGE} ${ALLOW_SCRIPTS}`
+/** How an npm install of the CLI is updated. */
+export const CLAUDE_NPM_UPDATE_COMMAND = `npm install -g ${CLAUDE_NPM_PACKAGE}@latest ${ALLOW_SCRIPTS}`
+/** How any other install (the native installer's, Homebrew's) is updated: by the CLI itself. */
+export const CLAUDE_SELF_UPDATE_COMMAND = 'claude update'
 
-const INSTALL_ARGS = Object.freeze(['install', '-g', CLAUDE_NPM_PACKAGE])
+const INSTALL_ARGS = Object.freeze(['install', '-g', CLAUDE_NPM_PACKAGE, ALLOW_SCRIPTS])
+const NPM_UPDATE_ARGS = Object.freeze(['install', '-g', `${CLAUDE_NPM_PACKAGE}@latest`, ALLOW_SCRIPTS])
+const SELF_UPDATE_ARGS = Object.freeze(['update'])
 const PREFIX_ARGS = Object.freeze(['prefix', '-g'])
 const VERSION_TIMEOUT_MS = 20_000
 const PREFIX_TIMEOUT_MS = 20_000
@@ -93,6 +106,33 @@ export function locateNpm({ platform = process.platform, home = homedir(), env =
   if (onPath !== undefined) return onPath
   return npmCandidates({ platform, home, env, execPath, readdir }).find(candidate => exists(candidate))
 }
+
+/**
+ * Whether a located CLI is npm's global package. npm's own update must then
+ * be used: the CLI's `claude update` runs npm without allowing the package's
+ * scripts, which on npm 12 reports success and leaves no native binary.
+ * @param binary - the located CLI.
+ * @param options - platform and a realpath seam.
+ */
+export function isNpmClaudeInstall(binary, { platform = process.platform, realpath = realpathSync } = {}) {
+  if (typeof binary !== 'string' || binary === '') return false
+  if (platform === 'win32' && /\.(?:cmd|bat)$/iu.test(binary)) return true
+  let resolved = binary
+  try {
+    resolved = realpath(binary)
+  } catch {
+    // Unreadable link: judge the path as located.
+  }
+  return /[\\/]node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]/u.test(resolved)
+}
+
+/**
+ * The parent environment without the user's own Claude settings: a
+ * `DISABLE_AUTOUPDATER`, config directory or key there must not steer the
+ * plugin's update.
+ */
+const withoutClaudeSettings = env => Object.fromEntries(Object.entries(env ?? {})
+  .filter(([name, value]) => value !== undefined && !/^(?:ANTHROPIC_|CLAUDE_|CLAUDECODE|DISABLE_)/iu.test(name)))
 
 /**
  * Classify an npm failure so the panel can say what to do about it.
@@ -167,6 +207,7 @@ export function createClaudeCliManager({
   spawnImpl = spawn,
   exists = existsSync,
   readFile = file => readFileSync(file, 'utf8'),
+  realpath = realpathSync,
   readdir,
   now = () => Date.now(),
 } = {}) {
@@ -258,6 +299,7 @@ export function createClaudeCliManager({
     return detecting
   }
 
+  /** The install or update in flight or last finished; `action` says which. */
   let installation = { state: 'idle' }
   let installing
 
@@ -265,26 +307,90 @@ export function createClaudeCliManager({
     if (installing !== undefined) return installation
     const program = npm()
     if (program === undefined) {
-      installation = { state: 'failed', code: 'npm-missing', finishedAt: now() }
+      installation = { state: 'failed', action: 'install', code: 'npm-missing', finishedAt: now() }
       return installation
     }
-    installation = { state: 'running', startedAt: now(), npm: program }
+    installation = { state: 'running', action: 'install', startedAt: now(), npm: program }
     installing = runNpm(program, INSTALL_ARGS, INSTALL_TIMEOUT_MS)
       .then(async result => {
         // npm may have just created its global directory; read it again.
         globalBin = undefined
         if (result.code !== 0) {
-          installation = { state: 'failed', ...explainNpmFailure(result), finishedAt: now() }
+          installation = { state: 'failed', action: 'install', ...explainNpmFailure(result), finishedAt: now() }
           await detect({ force: true })
           return
         }
         const found = await detect({ force: true })
         installation = found.installed && found.version !== undefined
-          ? { state: 'succeeded', finishedAt: now() }
-          : { state: 'failed', code: 'not-found-after-install', detail: detailOf(result.stdout, result.stderr), finishedAt: now() }
+          ? { state: 'succeeded', action: 'install', finishedAt: now() }
+          : { state: 'failed', action: 'install', code: 'not-found-after-install', detail: detailOf(result.stdout, result.stderr), finishedAt: now() }
       })
       .catch(error => {
-        installation = { state: 'failed', code: 'failed', detail: error instanceof Error ? error.message : String(error), finishedAt: now() }
+        installation = { state: 'failed', action: 'install', code: 'failed', detail: error instanceof Error ? error.message : String(error), finishedAt: now() }
+      })
+      .finally(() => {
+        installing = undefined
+      })
+    return installation
+  }
+
+  /** npm for an npm install of the CLI: the one beside it shares its global prefix. */
+  const npmBeside = binary => {
+    const beside = path.join(path.dirname(binary), platform === 'win32' ? 'npm.cmd' : 'npm')
+    return exists(beside) ? beside : npm()
+  }
+
+  /**
+   * Update the located CLI the way it was installed: npm's global package
+   * through npm, anything else through `claude update` with the plugin's
+   * own CLI home. Success means the CLI now detected is new enough.
+   */
+  const runUpdate = async () => {
+    const before = await detect({ force: true })
+    if (!before.installed || typeof before.path !== 'string') {
+      installation = { state: 'failed', action: 'update', code: 'not-installed', finishedAt: now() }
+      return
+    }
+    let result
+    if (isNpmClaudeInstall(before.path, { platform, realpath })) {
+      const program = npmBeside(before.path)
+      if (program === undefined) {
+        installation = { state: 'failed', action: 'update', code: 'npm-missing', finishedAt: now() }
+        return
+      }
+      installation = { ...installation, npm: program }
+      result = await runNpm(program, NPM_UPDATE_ARGS, INSTALL_TIMEOUT_MS)
+      globalBin = undefined
+    } else {
+      const command = resolveSpawnCommand(before.path, { platform, exists, readFile })
+      result = await runCaptured(spawnImpl, command.command, [...command.args, ...SELF_UPDATE_ARGS], {
+        env: {
+          ...withProgramDirOnPath(withoutClaudeSettings(env), before.path, platform),
+          CLAUDE_CONFIG_DIR: configDir,
+          DISABLE_TELEMETRY: '1',
+          DISABLE_ERROR_REPORTING: '1',
+        },
+      }, INSTALL_TIMEOUT_MS)
+    }
+    const after = await detect({ force: true })
+    const from = before.version === undefined ? {} : { from: before.version }
+    if (after.version !== undefined && !isClaudeCliOutdated(after.version)) {
+      installation = { state: 'succeeded', action: 'update', ...from, to: after.version, finishedAt: now() }
+    } else if (result.code !== 0) {
+      installation = { state: 'failed', action: 'update', ...explainNpmFailure(result), finishedAt: now() }
+    } else if (after.version === undefined) {
+      installation = { state: 'failed', action: 'update', code: 'broken-after-update', detail: detailOf(after.error, result.stdout, result.stderr), finishedAt: now() }
+    } else {
+      installation = { state: 'failed', action: 'update', code: 'still-outdated', detail: detailOf(result.stdout, result.stderr), finishedAt: now() }
+    }
+  }
+
+  const update = () => {
+    if (installing !== undefined) return installation
+    installation = { state: 'running', action: 'update', startedAt: now() }
+    installing = runUpdate()
+      .catch(error => {
+        installation = { state: 'failed', action: 'update', code: 'failed', detail: error instanceof Error ? error.message : String(error), finishedAt: now() }
       })
       .finally(() => {
         installing = undefined
@@ -307,17 +413,23 @@ export function createClaudeCliManager({
     /** The last detection, without probing again; undefined before the first. */
     lastDetection: () => (detection === undefined ? undefined : { ...detection }),
     install,
-    /** Wait for an install in flight; for tests and scripts. */
+    update,
+    /** Wait for an install or update in flight; for tests and scripts. */
     settled: () => installing ?? Promise.resolve(),
     /**
-     * What the settings panel shows. While an install runs, the last detection
-     * stands instead of probing a half-written package.
+     * What the settings panel shows. While an install or update runs, the
+     * last detection stands instead of probing a half-written package.
      */
     async status({ force = false } = {}) {
       const value = installing === undefined ? await detect({ force }) : detection
       return {
         installed: value?.installed === true,
         ...(value?.version === undefined ? {} : { version: value.version }),
+        minVersion: CLAUDE_MIN_VERSION,
+        outdated: isClaudeCliOutdated(value?.version),
+        ...(value?.path === undefined ? {} : {
+          updateCommand: isNpmClaudeInstall(value.path, { platform, realpath }) ? CLAUDE_NPM_UPDATE_COMMAND : CLAUDE_SELF_UPDATE_COMMAND,
+        }),
         ...(value?.path === undefined ? {} : { path: value.path }),
         ...(value?.configuredPath === undefined ? {} : { configuredPath: value.configuredPath }),
         ...(value?.error === undefined ? {} : { error: value.error }),

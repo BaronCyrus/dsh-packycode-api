@@ -101,24 +101,26 @@ test('by group: a cc key\'s Claude turn runs through the Claude Code CLI, a cc-s
   assert.equal(cli.value.processes.opened, 1)
 })
 
-test('a pinned HTTP route keeps a cc key off the CLI, and a pinned CLI route takes a cc-sale key through it', async t => {
+test('the groups alone decide: a stored route pin is ignored, and a cc key never falls back to HTTP', async t => {
   const httpKeys = fakeGateway(t)
   const { ctx, seen } = context()
+  // Profiles from 1.3.4 may still hold a pin; it no longer means anything.
   apply(ctx, { claudeCliPath: '/nonexistent/packycode-wiring-cli', claudeTransport: 'http' })
   t.after(async () => { for (const dispose of seen.disposers) await dispose() })
   await seen.handler('keys/add', { key: CC_KEY, label: 'cc' })
-  const http = await turn(seen.adapter, 'claude-haiku-5-5')
-  assert.equal(http.finish.kind, 'stop')
-  assert.deepEqual(httpKeys, [CC_KEY])
-
-  const pinned = context()
-  apply(pinned.ctx, { claudeCliPath: '/nonexistent/packycode-wiring-cli', claudeTransport: 'cli' })
-  t.after(async () => { for (const dispose of pinned.seen.disposers) await dispose() })
-  await pinned.seen.handler('keys/add', { key: SALE_KEY, label: 'cc-sale' })
-  const missing = await turn(pinned.seen.adapter, 'claude-haiku-5-5')
+  await seen.handler('keys/add', { key: SALE_KEY, label: 'cc-sale' })
+  const missing = await turn(seen.adapter, 'claude-haiku-5-5')
   assert.equal(missing.finish.kind, 'error')
   assert.match(missing.finish.failure.message, /本机没有可用的 Claude Code CLI/u)
-  assert.deepEqual(httpKeys, [CC_KEY], 'no HTTP fallback when the CLI is pinned but missing')
-  // Other models never involve the CLI.
-  assert.equal((await pinned.seen.handler('claude-cli/status', {})).value.processes.opened, 0)
+  assert.deepEqual(httpKeys, [], 'no HTTP fallback for a cc key when the CLI is missing')
+
+  const status = await seen.handler('status', {})
+  await seen.handler('keys/select', { id: status.value.keys.find(key => key.label === 'cc-sale').id })
+  const http = await turn(seen.adapter, 'claude-haiku-5-5')
+  assert.equal(http.finish.kind, 'stop')
+  assert.deepEqual(httpKeys, [SALE_KEY])
+  const cli = (await seen.handler('claude-cli/status', {})).value
+  assert.equal(cli.processes.opened, 0)
+  assert.equal(Object.hasOwn(cli, 'transport'), false)
+  assert.equal(Object.hasOwn(cli, 'writable'), false)
 })

@@ -89,7 +89,7 @@ dsh-packycode-api@1.3.4
 
 **看余额。** 「账户与 Key」里每个 Key 显示它自己的剩余、已用与额度（额度 = 剩余 + 已用），不限额的 Key 显示「不限额度」；多个 Key 不相加成合计。API Key 只能读到自己的额度，读不到 PackyCode 账号的总余额，账号余额请到 PackyCode 控制台查看。读失败的 Key 会在它那一行注明原因；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
 
-**用 Claude。** 直接选择三个 Claude 模型之一。Key 在 `cc` 分组时，插件用本机的官方 Claude Code CLI 发出请求，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code`）；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，也可以在 CLI 卡片里固定为「始终用 CLI」或「始终用 HTTP」。无论哪条通道，工具都由 DSH 执行并按 DSH 的权限审批，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样。详见下方「Claude Code CLI 通道」。
+**用 Claude。** 直接选择三个 Claude 模型之一。Key 在 `cc` 分组时，插件用本机的官方 Claude Code CLI 发出请求，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code`），版本过低时在同一处点「更新 Claude Code CLI」；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，通道只由分组决定，不能手动切换。无论哪条通道，工具都由 DSH 执行并按 DSH 的权限审批，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样。详见下方「Claude Code CLI 通道」。
 
 **网页搜索。** DSH 的 `web_search` 默认调用 DeepSeek 官方接口（用 `DEEPSEEK_API_KEY` 计费）。在 **设置 → PackyCode → 网页搜索** 里可以改走 PackyCode：
 
@@ -139,9 +139,10 @@ PackyCode 的 `cc` 分组（「claude code专用」）只接受官方 Claude Cod
 - **提示与历史保持 DSH 原样。** DSH 的系统提示追加在 CLI 官方提示之后；历史（文字、图片、带签名的思考、工具调用与结果）由插件写成 CLI 的会话记录后续接，思考档位以 `--effort` 传入。
 - **一个会话一个常驻进程。** 同一个 DSH 会话、同一模型复用一个 CLI 进程：工具结果和下一轮消息直接续接，请求前缀不变，网关缓存照常命中。历史被压缩、切换计划模式或换 Key 时，用 DSH 的完整历史恢复一个新进程；会话标题和压缩用一次性进程。空闲 20 分钟的进程自动结束，最多同时保留 8 个。
 - **与你自己的 Claude Code 隔离。** 使用独立配置目录 `~/.dsh/packycode-claude-cli`，不读取 `~/.claude` 的设置、CLAUDE.md、MCP 配置和登录状态；只把插件保存的 Key 交给子进程。自动更新、遥测、自动压缩、自动记忆和模型回退都关闭，失败重试交还给 DSH 的重试策略（会按 Key 轮换）。
+- **版本过低一键更新。** 插件需要 Claude Code 2.1.259 或更新版本（插件传入的 `--permission-prompts` 从这一版开始提供）。更旧的 CLI 在请求发出前就被拦下并说明原因，CLI 卡片标出「版本过低」并提供「更新 Claude Code CLI」：官方安装器（`~/.local/bin/claude`）装的执行 `claude update`；npm 全局安装的执行 `npm install -g @anthropic-ai/claude-code@latest --allow-scripts=@anthropic-ai/claude-code`，因为 npm 12 默认不运行安装脚本，而 `claude update` 在 npm 安装上不会放行脚本，会留下一个无法运行的 CLI。只有点这个按钮时才会更新你的 Claude Code。
 - **出错会说清原因。** 未安装 CLI、CLI 版本过旧、官方 CLI 发出的请求仍被网关拒绝，分别给出说明和下一步，不会改走其它通道或提供商，也不会停用 Key。
 
-已知差异：新进程启动约 0.3–1 秒；在一轮工具调用中途恢复进程时，CLI 会按官方行为在工具结果后附上一句 “Continue from where you left off.”。需要 Claude Code 2.1 以上（实测 2.1.295）。Windows 上 Claude Code 还需要 Git for Windows。
+已知差异：新进程启动约 0.3–1 秒；在一轮工具调用中途恢复进程时，CLI 会按官方行为在工具结果后附上一句 “Continue from where you left off.”。需要 Claude Code 2.1.259 或更新版本（实测 2.1.295 与 2.1.303）。Windows 上 Claude Code 还需要 Git for Windows。
 
 ### 图片生成与编辑
 
@@ -198,13 +199,13 @@ Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses �
 - 除 `cc` 分组 Key 的 Claude 请求经本机 Claude Code CLI 发出外，其余模型均在插件内通过 HTTP 调用。Claude 使用 `anthropic-messages`，base URL 不带 `/v1`；SDK 会拼出 `/v1/messages`。模型、协议、上下文和档位映射保持不变。两条通道共用同一套请求构建：DSH 历史、附件、工具 schema 和签名回放先由插件转换成 Messages 请求，再交给 HTTP 或 CLI 发送，CLI 返回的原始流事件按同一协议解析。
 - 走 HTTP 的 Claude 请求带上实测通过的 CLI 兼容请求头、Bearer 认证、会话元数据和身份系统提示前缀，并保留原始 DSH 系统说明、工具 schema、附件及签名回放。兼容版本固定为 `2.1.295`。
 - Bearer 只来自插件保存并按模型选中的 Key；CLI 通道把同一个 Key 以 `ANTHROPIC_AUTH_TOKEN` 交给子进程，并清除继承环境里的 `ANTHROPIC_*` / `CLAUDE_*` 变量。不读取 CLI 登录状态、外部配置或环境 Key，不切换其它提供商。
-- 通道由当前 Key 的分组决定（或在 CLI 卡片里固定），不会因为某次拒绝而自动换通道。分组还没读到时按 HTTP 发送；带 Claude 的请求会先等待最多约 6 秒的首次分组读取。客户端政策拒绝会直接说明原因，不禁用 Key。服务端规则变化可能使兼容处理失效，详见 [PackyCode 分组政策](https://docs.packyapi.ai/docs/token/)。
+- 通道只由当前 Key 的分组决定，不能手动固定，也不会因为某次拒绝而自动换通道。分组还没读到时按 HTTP 发送；带 Claude 的请求会先等待最多约 6 秒的首次分组读取。客户端政策拒绝会直接说明原因，不禁用 Key。服务端规则变化可能使兼容处理失效，详见 [PackyCode 分组政策](https://docs.packyapi.ai/docs/token/)。
 - Haiku 与 Sonnet 的工具请求都已出现「客户端异常」403 后相同请求成功的情况。插件只对这一特定响应等待 1 秒、原样重发一次；Haiku 另覆盖已捕获的「客户端已授权，无需发送测试消息」403，两种错误共用一次上限。再次拒绝仍会报错。Opus、纯文本请求、普通「只允许官方 CLI」拒绝、429 和已经开始的响应流不触发这次重发。原始失败保留在实测记录中；这不是网关内部判定已得到修复的证明。
 - Claude 流收到 `message_stop` 后即可完成，不再等网关关闭 HTTP 连接；跨分片的 CRLF 换行保持完整。流内错误与取消仍会返回，未收到响应头的等待也不会被当作成功。
 - DSH 的 bash/read/write/edit/glob/grep 在 HTTP 请求中使用已声明的 CLI 标准名称（如 `Bash`、`Read`），其它工具使用 MCP 命名；经 CLI 时所有 DSH 工具都以 `mcp__dsh__<名称>` 提供，并在系统提示末尾说明 CLI 自带工具不可用。回到 DSH 时仅还原本次实际提供的工具名称，未知名称不会获得执行权限。工具参数、调用 id、结果和历史签名不变。思考展示采用 CLI 默认：Haiku 为 `omitted`，Sonnet / Opus 为 `updates`（附带相应 beta）。所选推理强度和输出上限不变，空思考块的签名仍完整回传；明确指定的显示模式优先。
 - Claude 请求中的旧工作目录句式会在与当前会话元数据一致时转换为单独的 JSON 路径，避免把提示语的句号复制进路径。真实目录名中的点、Windows 盘符、UNC、空格和反斜杠保持不变；命令参数不会被自动修剪。命令工具优先使用当前目录或 `workdir`，Windows 的 PowerShell 工具保持其原有语法。
 - 两条通道的 Claude 对话都保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题由 `claude-haiku-5-5` 生成（与对话走同一条通道）；GPT-6 Astra 与 GPT-5.6 Sol 的标题交给 GPT-6.1 Sol。
-- 1.2.x 的 `claude_code` 委派工具和 `claudeCliMode`、`claudeCliCwd` 设置不再恢复：CLI 现在只是传输通道，不再用自带工具代替 DSH 执行任务。`claudeCliPath` 重新生效，用于指定 CLI 位置（留空则按常见安装位置和 PATH 查找）；`claudeTransport` 为 `auto` / `cli` / `http`。用户独立安装的 Claude Code 不会被改动。
+- 1.2.x 的 `claude_code` 委派工具和 `claudeCliMode`、`claudeCliCwd` 设置不再恢复：CLI 现在只是传输通道，不再用自带工具代替 DSH 执行任务。`claudeCliPath` 重新生效，用于指定 CLI 位置（留空则按常见安装位置和 PATH 查找）。1.3.4 的 `claudeTransport` 已移除，profile 里残留的值会被忽略。除非你在 CLI 卡片里点「更新 Claude Code CLI」，用户独立安装的 Claude Code 不会被改动。
 - Codex 的 Responses 请求仍需要 `prompt_cache_key`；插件补上缺失的会话标识，其它 Responses 模型省略该字段。
 - 构建后可用 `node scripts/claude-check.mjs` 验证三个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注、中文标题和计划模式（只读查询 → `exit_plan_mode` 提交计划 → 审批），并核对业务答案；加 `--transport cli` 则全部经本机 Claude Code CLI 发出。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。
 - 连续对话可用 `node scripts/claude-conversation-check.mjs --model claude-haiku-5-5 --rounds 3 --key-label <备注名> --output .artifacts/claude-conversation.json`：同一插件适配器处理独立会话，每组保留六轮对话和完整工具历史，检查追问中的数值一致性、最终 JSON 和异常字符；遇到失败停止该批次并保留记录。单请求默认 65 秒、输出上限 2048 token；诊断可通过 `--timeout-ms`（5000–300000）和 `--max-tokens`（1024–128000）显式调整。`--capture-wire` 记录这组模拟业务的完整请求、非认证头和中断前的流事件，用于精确重放；不记录 Key。报告包含场景版本、适配器生命周期、所用上限、首响应和完整响应耗时。这些选项不修改插件的运行参数。
@@ -243,9 +244,11 @@ grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.
 
 **某个模型不可用，但 Key 是有效的？** 看「账户与 Key」里这个 Key 的分组和 ✓ / ✕：分组不覆盖这个模型时，换一个分组合适的 Key，或在 PackyCode 控制台给 Key 加上对应分组。存了分组合适的 Key 时，插件会自动用它跑这个模型。分组拒绝不会停用 Key。
 
-**Claude 报「只接受官方 Claude Code CLI」或「客户端存在异常」？** 这是网关的客户端政策拒绝，不等于 Key 失效。看这个 Key 下方标的是「Claude 经 HTTP」还是「经官方 CLI」：`cc` 分组的 Key 应该走 CLI，若 CLI 卡片被固定成了「始终用 HTTP」，改回「按分组自动」。经官方 CLI 发出的请求仍被拒时，错误里会附上网关原文（含 request id），先把 Claude Code 更新到最新版（`claude update`）再试，仍失败可发给 PackyCode 客服。插件不会因此禁用 Key 或切换提供商。
+**Claude 报「只接受官方 Claude Code CLI」或「客户端存在异常」？** 这是网关的客户端政策拒绝，不等于 Key 失效。看这个 Key 下方标的是「Claude 经 HTTP」还是「经官方 CLI」：`cc` 分组的 Key 总是走 CLI，其它分组走 HTTP。经官方 CLI 发出的请求仍被拒时，错误里会附上网关原文（含 request id），先把 Claude Code 更新到最新版（`claude update`）再试，仍失败可发给 PackyCode 客服。插件不会因此禁用 Key 或切换提供商。
 
-**提示「本机没有可用的 Claude Code CLI」？** 当前 Key 在 `cc` 分组，需要本机 CLI。到 **设置 → PackyCode → Claude Code CLI** 点「安装」，或在终端执行 `npm install -g @anthropic-ai/claude-code` 后点「重新检测」；装在非常规位置时可在配置里填 `claudeCliPath`。不想装的话，换用 `cc-sale` / `cc-expensive` 分组的 Key。
+**提示「本机没有可用的 Claude Code CLI」？** 当前 Key 在 `cc` 分组，需要本机 CLI。到 **设置 → PackyCode → Claude Code CLI** 点「安装」，或在终端执行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code` 后点「重新检测」；装在非常规位置时可在配置里填 `claudeCliPath`。不想装的话，换用 `cc-sale` / `cc-expensive` 分组的 Key。
+
+**提示「本机的 Claude Code CLI 版本过旧」？** 本机 CLI 低于 2.1.259。到 **设置 → PackyCode → Claude Code CLI** 点「更新 Claude Code CLI」，完成后重发；也可以在终端执行 `claude update`（npm 安装的执行卡片上显示的 npm 命令），再点「重新检测」。Homebrew 安装的用 `brew upgrade claude-code`。
 
 **余额对不上账号账单？** 设置页只显示这里列出的每个 Key 自己的额度，不含同账号下没添加到本插件的其它令牌。API Key 读不到账号的总余额，请到 PackyCode 控制台查看。个别 Key 读失败时会在它那一行注明。
 
@@ -259,7 +262,7 @@ grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.
 
 **网页搜索报「no stored API key's group covers …」？** 所选搜索后端的模型不在你的令牌分组里（或网关暂时把它路由到了别的供应商）。在 **设置 → PackyCode → 网页搜索** 换一个后端，或添加分组覆盖它的 Key。
 
-**需要安装 Claude Code 吗？** 只有 Key 在 `cc` 分组、又要用 Claude 模型时需要（或在 CLI 卡片里固定了「始终用 CLI」）。插件用独立配置目录运行它，不改动你自己的 Claude Code 安装、登录和设置；其它分组和其它模型都不需要。
+**需要安装 Claude Code 吗？** 只有 Key 在 `cc` 分组、又要用 Claude 模型时需要。插件用独立配置目录运行它，不改动你自己的 Claude Code 登录和设置；只有你点「更新 Claude Code CLI」时才会更新这份安装。其它分组和其它模型都不需要。
 
 **回答被截断（「已达到输出 token 上限」）、请求反复失败，怎么反馈？** 打开 **设置 → PackyCode → 诊断信息**，选出问题的会话（最近 20 个，按时间倒序，标着所在文件夹名），点「生成诊断信息」再点「复制」，把内容贴到 [Issue](https://github.com/BaronCyrus/dsh-packycode-api/issues) 或发给插件作者。内容只有设置和数字：插件版本、会话 id 与创建时间、每个 Key 的序号与分组（不含备注名和 Key 本身）、每次请求用的模型、推理档位和输出上限、最近若干步的 token 用量与结束原因，以及重试和失败的错误码（错误信息已脱敏并截短）。不含对话内容、文件路径和 Key。复制不可用时，文本会被全选，按 ⌘C 或 Ctrl+C 即可。
 

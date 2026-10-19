@@ -108,11 +108,12 @@ for (const host of hosts) {
       assert.equal(response.status, 200, method)
       assert.equal(host.responseSchema.parse(await response.json()).result.error.code, 'gateway/bad-request')
     }
-    // The CLI status is served from the first install (install itself runs npm, so it is not exercised here).
+    // The CLI status is served from the first install (install and update run npm or the CLI, so they are not exercised here).
     const cli = host.responseSchema.parse(await (await env.request('claude-cli/status')).json())
     assert.equal(cli.result.ok, true)
     assert.equal(cli.result.value.installed, false)
-    assert.equal(cli.result.value.transport, 'auto')
+    assert.equal(cli.result.value.minVersion, '2.1.259')
+    assert.equal(Object.hasOwn(cli.result.value, 'transport'), false)
     env.assertUnrestarted()
     await fiber.dispose()
     assert.equal((await env.request()).status, 405, 'uninstall removes this plugin route')

@@ -96,14 +96,16 @@ test('registers one route and one directory entry, and defers the browser surfac
   // for it, and the 1.2 delegation settings stay gone.
   assert.deepEqual(registered.tools, [])
   assert.ok(registered.effects.includes('packycode-api: Claude Code CLI processes'))
-  assert.equal(fieldValue(Config({}).claudeTransport), 'auto')
   assert.equal(fieldValue(Config({}).claudeCliPath), '')
-  for (const field of ['claudeCliMode', 'claudeCliCwd']) assert.equal(Object.hasOwn(Config.dict, field), false)
+  // The route follows the key's groups; 1.3.4's route pin is gone with the 1.2 settings.
+  for (const field of ['claudeTransport', 'claudeCliMode', 'claudeCliCwd']) assert.equal(Object.hasOwn(Config.dict, field), false)
+  assert.doesNotThrow(() => Config({ claudeTransport: 'http' }), 'a profile still holding the pin loads')
   const cli = await registered.rpc[0].handler('claude-cli/status')
   assert.equal(cli.ok, true)
   assert.equal(cli.value.installed, false)
   assert.equal(cli.value.configuredPath, NO_CLI)
-  assert.equal(cli.value.transport, 'auto')
+  assert.equal(Object.hasOwn(cli.value, 'transport'), false)
+  assert.equal(cli.value.minVersion, '2.1.259')
   assert.deepEqual(cli.value.processes, { live: 0, opened: 0, continued: 0 })
 })
 

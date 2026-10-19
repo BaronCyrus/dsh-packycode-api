@@ -10,14 +10,14 @@ import { anthropicStream } from './fixtures/anthropic.mjs'
 
 const KEY_CODEX = 'sk-codex-only-key-AAAA'
 const KEY_DEEPSEEK = 'sk-deepseek-key-BBBB'
-const KEY_CLAUDE = 'sk-claude-code-key-CCCC'
-const GROUPS = { [KEY_CODEX]: ['codex'], [KEY_DEEPSEEK]: ['deepseek-officially'], [KEY_CLAUDE]: ['cc'] }
+const KEY_CLAUDE = 'sk-claude-sale-key-CCCC'
+const GROUPS = { [KEY_CODEX]: ['codex'], [KEY_DEEPSEEK]: ['deepseek-officially'], [KEY_CLAUDE]: ['cc-sale'] }
 const PRICING = {
   data: [
     { model_name: 'deepseek-flash', enable_groups: ['deepseek-officially'] },
     { model_name: 'gpt-6.1-sol', enable_groups: ['codex'] },
-    { model_name: 'claude-opus-5-5', enable_groups: ['cc'] },
-    { model_name: 'claude-haiku-5-5', enable_groups: ['cc'] },
+    { model_name: 'claude-opus-5-5', enable_groups: ['cc', 'cc-sale'] },
+    { model_name: 'claude-haiku-5-5', enable_groups: ['cc', 'cc-sale'] },
   ],
   usable_group: { cc: 'claude code专用' },
 }
@@ -144,18 +144,18 @@ test('a native Claude turn after "use this key" uses that key, otherwise one wit
   const gateway = fakeGateway()
   t.after(gateway.restore)
   const { ctx, seen } = context()
-  // Key choice is transport-independent; pin HTTP so the cc key's Claude
-  // turns reach this fake gateway instead of a Claude Code CLI.
-  apply(ctx, { claudeTransport: 'http' })
+  // Key choice is transport-independent; a cc-sale key's Claude turns use
+  // HTTP, so they reach this fake gateway instead of a Claude Code CLI.
+  apply(ctx, {})
   await seen.handler('keys/add', { key: KEY_CODEX, label: 'codex' })
   await seen.handler('keys/add', { key: KEY_CLAUDE, label: 'claude' })
 
-  // Active key without Claude coverage: the native bearer uses the cc key.
+  // Active key without Claude coverage: the native bearer uses the Claude key.
   const passedOver = await turn(seen.adapter, 'claude-opus-5-5')
   assert.equal(passedOver.at(-1).reason.kind, 'stop')
   assert.deepEqual(gateway.chatKeys, [KEY_CLAUDE])
 
-  // "Use this key" on the cc key: the very next run uses it, named plainly.
+  // "Use this key" on the Claude key: the very next run uses it, named plainly.
   const status = await seen.handler('status', {})
   await seen.handler('keys/select', { id: status.value.keys.find(key => key.label === 'claude').id })
   const selected = await turn(seen.adapter, 'claude-opus-5-5')

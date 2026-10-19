@@ -7,9 +7,9 @@ import { baseUrlOf, CLI_TOOL_NOTE, describeRequest, dshSystemText, planContinuat
 import { startClaudeMcpBridge, toolResultToMcp } from '../src/claude-mcp-bridge.js'
 import { buildTranscript, canonicalMessage, splitConversation } from '../src/claude-transcript.js'
 import { cliToolName, createClaudeToolNames } from '../src/claude-tools.js'
-import { claudeTransportFor, CLI_ONLY_GROUPS, readClaudeTransport } from '../src/claude-transport.js'
+import { claudeTransportFor, CLI_ONLY_GROUPS } from '../src/claude-transport.js'
 
-test('cc keys use the CLI; cc-sale, cc-expensive, claude-officially, delisted claude-sale and unknown keys keep HTTP; a pin wins', () => {
+test('cc keys use the CLI; cc-sale, cc-expensive, claude-officially, delisted claude-sale and unknown keys keep HTTP; nothing pins a route', () => {
   assert.deepEqual(CLI_ONLY_GROUPS, ['cc'])
   assert.deepEqual(claudeTransportFor({ groups: ['codex', 'cc'] }), { transport: 'cli', reason: 'group', groups: ['cc'] })
   assert.equal(claudeTransportFor({ groups: ['claude-sale'] }).transport, 'http', 'claude-sale is delisted; it is added back when it returns')
@@ -18,9 +18,7 @@ test('cc keys use the CLI; cc-sale, cc-expensive, claude-officially, delisted cl
   assert.equal(claudeTransportFor({ groups: ['cc-expensive', 'codex'] }).transport, 'http')
   assert.deepEqual(claudeTransportFor({ groups: ['claude-officially', 'cc-sale'] }), { transport: 'http', reason: 'group', groups: ['claude-officially', 'cc-sale'] })
   assert.deepEqual(claudeTransportFor({ groups: undefined }), { transport: 'http', reason: 'unknown' })
-  assert.deepEqual(claudeTransportFor({ preference: 'cli', groups: ['cc-sale'] }), { transport: 'cli', reason: 'preference' })
-  assert.deepEqual(claudeTransportFor({ preference: 'http', groups: ['cc'] }), { transport: 'http', reason: 'preference' })
-  assert.equal(readClaudeTransport('sideways'), 'auto')
+  assert.deepEqual(claudeTransportFor({ preference: 'http', groups: ['cc'] }), { transport: 'cli', reason: 'group', groups: ['cc'] }, 'no pin overrides the groups')
 })
 
 test('tool names through the CLI are the MCP names the model sees, unambiguous and within 64 characters', () => {

@@ -2,7 +2,8 @@
 /**
  * Built Claude route checks with fixtures; no DSH changes. `--transport cli`
  * sends every request through this device's Claude Code CLI, as a cc key
- * does inside DSH, with an isolated CLI home.
+ * does inside DSH, with an isolated CLI home; `--cli-path` picks another CLI
+ * binary, e.g. an older release to check compatibility.
  */
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -19,7 +20,7 @@ export const CLAUDE_CHECK_KINDS = Object.freeze(['text', 'tool', 'image', 'title
 const BASE_SYSTEM = 'You are an assistant inside DeepSeek Harness. Follow the user request using only the supplied DSH tools.'
 
 /** One isolated in-memory ring. Stored credentials can never be changed. */
-export async function createClaudeCheck({ key, sessionId = randomUUID(), timeoutMs = 65_000, maxRetries = 0, retryDelayMs = 1500, transport = 'http', builtPath = new URL('../lib/index.js', import.meta.url) } = {}) {
+export async function createClaudeCheck({ key, sessionId = randomUUID(), timeoutMs = 65_000, maxRetries = 0, retryDelayMs = 1500, transport = 'http', cliPath, builtPath = new URL('../lib/index.js', import.meta.url) } = {}) {
   if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 2) throw new Error('Claude checks allow at most two transient retries')
   if (!['http', 'cli'].includes(transport)) throw new Error('Claude checks run over http or cli')
   const builtUrl = builtPath instanceof URL ? builtPath : pathToFileURL(resolve(builtPath))
@@ -34,7 +35,7 @@ export async function createClaudeCheck({ key, sessionId = randomUUID(), timeout
   const requests = []
   let cli
   if (transport === 'cli') {
-    const found = await createClaudeCliManager().detect({ force: true })
+    const found = await createClaudeCliManager({ explicitPath: () => cliPath ?? '' }).detect({ force: true })
     if (typeof found.path !== 'string') throw new Error('Claude Code CLI is not installed on this device')
     const sender = createClaudeCliTransport({ binary: async () => found.path, version: () => found.version })
     cli = {
@@ -187,7 +188,7 @@ async function main() {
   if (kind !== undefined && !CLAUDE_CHECK_KINDS.includes(kind)) throw new Error('Unknown Claude check kind')
   const transport = option('--transport', 'http')
   const key = await readStoredKey({ label: option('--key-label', undefined) })
-  const check = await createClaudeCheck({ key, transport, maxRetries: Number(option('--retry-transient', 0)) })
+  const check = await createClaudeCheck({ key, transport, cliPath: option('--cli-path', undefined), maxRetries: Number(option('--retry-transient', 0)) })
   try {
     console.log(`stored key: …${key.slice(-4)} · transport: ${transport}${check.cliVersion === undefined ? '' : ` (Claude Code ${check.cliVersion})`}`)
     for (const model of selected === undefined ? CLAUDE_MODELS : [selected]) {

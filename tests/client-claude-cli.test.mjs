@@ -12,7 +12,8 @@ const { act, create } = TestRenderer
 const settle = () => act(async () => { await new Promise(resolve => setImmediate(resolve)) })
 const text = node => typeof node === 'string' ? node : node.children.map(text).join('')
 
-const INSTALLED = { installed: true, version: '2.1.295', path: '/Users/u/.local/bin/claude', platform: 'darwin', command: 'npm install -g @anthropic-ai/claude-code', install: { state: 'idle' }, transport: 'auto', writable: true, processes: { live: 1, opened: 3, continued: 7 } }
+const INSTALLED = { installed: true, version: '2.1.295', minVersion: '2.1.259', outdated: false, path: '/Users/u/.local/bin/claude', platform: 'darwin', command: 'npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code', updateCommand: 'claude update', install: { state: 'idle' }, processes: { live: 1, opened: 3, continued: 7 } }
+const OUTDATED = { ...INSTALLED, version: '2.1.223', outdated: true, processes: { live: 0, opened: 0, continued: 0 } }
 const KEYS = [
   { id: 'cc', label: 'cc key', addedAt: 1, active: true, disabled: false },
   { id: 'sale', label: 'sale key', addedAt: 2, active: false, disabled: false },
@@ -36,7 +37,7 @@ async function page(t, cli) {
     }),
     'claude-cli/status': () => current,
     'claude-cli/install': () => (current = { ...current, install: { state: 'running', startedAt: 1 } }),
-    'claude-cli/update': payload => (current = { ...current, transport: payload.transport }),
+    'claude-cli/update': () => (current = { ...current, install: { state: 'running', action: 'update', startedAt: 1 } }),
   }
   const calls = []
   const rpc = { async call(_channel, endpoint, payload) {
@@ -69,30 +70,61 @@ async function page(t, cli) {
   await settle()
   t.after(() => act(async () => root.unmount()))
   const card = () => root.root.find(node => node.type === 'section' && node.findAll(child => child.type === 'h3' && text(child) === zh.cliTitle).length === 1)
+  const finish = next => { current = { ...current, ...next } }
   return {
-    root, calls, timers, card,
+    root, calls, timers, card, finish,
     radios: () => card().findAll(node => node.props.role === 'radio'),
     button: label => card().find(node => node.type === 'button' && text(node) === label),
     chips: () => root.root.findAll(node => node.type === 'span' && typeof node.props.className === 'string' && node.props.className.includes('pkc-chip')).map(node => [text(node), node.props.title]),
   }
 }
 
-test('the CLI card shows the installed CLI, its sessions, and saves the Claude route', async t => {
+test('the CLI card shows the installed CLI and its sessions, with no route to choose', async t => {
   const view = await page(t, INSTALLED)
   const content = text(view.card())
   assert.ok(content.includes(zh.cliIntro))
   assert.ok(content.includes('2.1.295'))
   assert.ok(content.includes('/Users/u/.local/bin/claude'))
   assert.ok(content.includes('运行中的 CLI 会话 1 个 · 已启动 3 次 · 续接 7 次'))
-  assert.deepEqual(view.radios().map(radio => [text(radio), radio.props['aria-checked']]), [[zh.cliTransportAuto, true], [zh.cliTransportCli, false], [zh.cliTransportHttp, false]])
-  assert.ok(content.includes(zh.cliTransportAutoHint))
-  await act(async () => view.radios()[1].props.onClick())
+  // A key's groups decide its route; the card offers no switch.
+  assert.deepEqual(view.radios(), [])
+  assert.ok(!content.includes('Claude 通道'))
+  assert.ok(!content.includes(zh.cliOutdated))
+  assert.equal(view.card().findAll(node => node.type === 'button' && text(node) === zh.cliUpdate).length, 0)
+  assert.equal(view.calls.some(([endpoint]) => endpoint === 'claude-cli/install' || endpoint === 'claude-cli/update'), false)
+})
+
+test('an outdated CLI offers the update, which polls its progress and reports the new version', async t => {
+  const view = await page(t, OUTDATED)
+  const content = text(view.card())
+  assert.ok(content.includes(zh.cliOutdated))
+  assert.ok(content.includes('2.1.223'))
+  assert.ok(content.includes('插件需要 2.1.259 或更新版本'))
+  assert.ok(content.includes('将在本机执行：claude update'))
+  await act(async () => view.button(zh.cliUpdate).props.onClick())
   await settle()
-  // The payload comes from the bundle's realm; compare its JSON.
-  assert.equal(JSON.stringify(view.calls.find(([endpoint]) => endpoint === 'claude-cli/update')), JSON.stringify(['claude-cli/update', { transport: 'cli' }]))
-  assert.equal(view.radios()[1].props['aria-checked'], true)
-  assert.ok(text(view.card()).includes(zh.cliTransportCliHint))
-  assert.equal(view.calls.some(([endpoint]) => endpoint === 'claude-cli/install'), false)
+  // The browser sends no payload: what runs is decided on the host.
+  assert.equal(JSON.stringify(view.calls.find(([endpoint]) => endpoint === 'claude-cli/update')), JSON.stringify(['claude-cli/update', {}]))
+  assert.ok(text(view.card()).includes(zh.cliUpdating))
+  const poll = view.timers.find(timer => timer.ms === 2_000)
+  assert.ok(poll !== undefined, 'the panel polls the update')
+
+  view.finish({ version: '2.1.303', outdated: false, install: { state: 'succeeded', action: 'update', from: '2.1.223', to: '2.1.303' } })
+  await act(async () => poll.fn())
+  await settle()
+  const updated = text(view.card())
+  assert.ok(updated.includes('已更新到 2.1.303。'))
+  assert.ok(!updated.includes(zh.cliOutdated))
+})
+
+test('a failed update says why and keeps the button', async t => {
+  const view = await page(t, { ...OUTDATED, install: { state: 'failed', action: 'update', code: 'still-outdated', detail: 'To update, run: brew upgrade claude-code' } })
+  const content = text(view.card())
+  assert.ok(content.includes(zh.cliUpdateFailed))
+  assert.ok(content.includes('版本仍低于 2.1.259'))
+  assert.ok(content.includes('brew upgrade claude-code'))
+  assert.ok(view.button(zh.cliUpdate) !== undefined)
+  assert.ok(!content.includes(zh.cliInstallFailed))
 })
 
 test('a missing CLI offers the install, which then polls its progress', async t => {
@@ -104,12 +136,6 @@ test('a missing CLI offers the install, which then polls its progress', async t 
   assert.ok(view.calls.some(([endpoint]) => endpoint === 'claude-cli/install'))
   assert.ok(text(view.card()).includes(zh.cliInstalling))
   assert.ok(view.timers.some(timer => timer.ms === 2_000), 'the panel polls the install')
-})
-
-test('an unwritable profile shows the route without letting it change', async t => {
-  const view = await page(t, { ...INSTALLED, writable: false })
-  assert.ok(view.radios().every(radio => radio.props.disabled === true))
-  assert.ok(text(view.card()).includes(zh.cliTransportNotWritable))
 })
 
 test('each key that reaches Claude says which route its Claude requests take', async t => {

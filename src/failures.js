@@ -12,6 +12,8 @@
  * @module dsh-packycode-api/failures
  */
 
+import { CLAUDE_MIN_VERSION } from './claude-binary.js'
+
 /** Terminal quota, balance, or credit wording, in the gateway's own languages. */
 const QUOTA_WORDING = /额度|余额|配额|欠费|insufficient[\s_-]+(?:quota|balance|credits?)|quota[\s_-]+(?:exceeded|exhausted|reached)|out[\s_-]+of[\s_-]+(?:credits?|budget)/iu
 /** A rejected key names itself; a bare 403 does not, and must not disable one. */
@@ -187,10 +189,10 @@ export function explainCliUnavailable(message) {
   const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_unavailable:?\s*/u, '').replace(/\b\d{3}\b/gu, '')
     .replace(/\b(?:network|connection|socket|fetch|timed?\s*out|timeout|terminated)\b/giu, '…').trim().slice(0, 300)
   return '本机没有可用的 Claude Code CLI，而当前 Key 所在的 Claude 分组（cc）只接受官方 Claude Code 客户端。'
-    + '请在 设置 → PackyCode → Claude Code CLI 一键安装，或在终端执行 npm install -g @anthropic-ai/claude-code，然后重发这条消息。'
+    + '请在 设置 → PackyCode → Claude Code CLI 一键安装，或在终端执行 npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code，然后重发这条消息。'
     + '也可以改用 cc-sale / cc-expensive 分组的 Key，它们走插件内置的 HTTP 通道。'
     + (detail === '' || detail === 'dsh_cli_unavailable' ? '' : `（启动失败：${detail}）`)
-    + ' / Claude Code CLI is not available, and this key\'s Claude group only serves the official client. Install it under Settings → PackyCode (npm install -g @anthropic-ai/claude-code), then resend.'
+    + ' / Claude Code CLI is not available, and this key\'s Claude group only serves the official client. Install it under Settings → PackyCode (npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code), then resend.'
 }
 
 /**
@@ -199,9 +201,11 @@ export function explainCliUnavailable(message) {
  * @returns the replacement sentence.
  */
 export function explainCliOutdated(message) {
-  const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_outdated:?\s*/u, '').replace(/\b\d{3}\b/gu, '').slice(0, 300)
-  return '本机的 Claude Code CLI 版本过旧，不支持插件所需的参数。请在终端执行 claude update，或 npm install -g @anthropic-ai/claude-code@latest 更新后重发。'
-    + ` / The installed Claude Code CLI is too old for this plugin; update it (claude update). CLI said: ${detail}`
+  // Bare status-like numbers go; the versions in a dotted x.y.z stay readable.
+  const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_outdated:?\s*/u, '').replace(/(?<![\d.])\d{3}(?!\d|\.\d)/gu, '').slice(0, 300)
+  return `本机的 Claude Code CLI 版本过旧，插件需要 ${CLAUDE_MIN_VERSION} 或更新版本。`
+    + '请在 设置 → PackyCode → Claude Code CLI 点「更新 Claude Code CLI」，或在终端执行 claude update，然后重发这条消息。'
+    + ` / The installed Claude Code CLI is too old for this plugin (needs ${CLAUDE_MIN_VERSION} or later). Update it under Settings → PackyCode, or run claude update, then resend. CLI said: ${detail}`
 }
 
 /**

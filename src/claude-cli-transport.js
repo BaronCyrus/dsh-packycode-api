@@ -22,11 +22,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { DEFAULT_CLAUDE_CONFIG_DIR } from './claude-binary.js'
+import { CLAUDE_MIN_VERSION, DEFAULT_CLAUDE_CONFIG_DIR, isClaudeCliOutdated } from './claude-binary.js'
 import { MCP_TOOL_PREFIX } from './claude-mcp-bridge.js'
 import { errorResponse, runDirectoryName, startClaudeCliSession } from './claude-cli-session.js'
 import { canonicalMessage, contentBlocks, splitConversation, toolUseIds, withoutCacheControl } from './claude-transcript.js'
-import { CLI_UNAVAILABLE } from './failures.js'
+import { CLI_OUTDATED, CLI_UNAVAILABLE } from './failures.js'
 
 /** Live processes kept at once; the least recently used one goes first. */
 export const MAX_LIVE_CLI_SESSIONS = 8
@@ -134,7 +134,9 @@ export function baseUrlOf(input) {
 /**
  * Create the transport.
  * @param options - how to find the CLI binary (`binary()` resolves a path or
- *   throws), the isolated CLI home, the version recorded in transcripts,
+ *   throws), the isolated CLI home, the detected CLI version (read once the
+ *   binary is resolved: an outdated one is refused, and it is recorded in
+ *   transcripts),
  *   limits, a logger, and process seams for tests.
  * @returns `{ fetch(input, init, meta), close(), stats() }`.
  */
@@ -194,24 +196,33 @@ export function createClaudeCliTransport({
     return fallback
   }
 
-  const open = async (request, meta, { oneShot }) => startClaudeCliSession({
-    binary,
-    configDir,
-    runDirectory: join(configDir, 'runs', runDirectoryName()),
-    baseUrl: meta.baseUrl,
-    apiKey: meta.apiKey,
-    request,
-    conversation: splitConversation(request.messages),
-    cwd: await workingDirectory(meta.cwd),
-    sessionId: oneShot ? randomUUID() : meta.sessionId,
-    cliVersion: version(),
-    oneShot,
-    logger,
-    ...(spawnImpl === undefined ? {} : { spawnImpl }),
-    ...(platform === undefined ? {} : { platform }),
-    ...(parentEnv === undefined ? {} : { parentEnv }),
-    ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
-  })
+  const open = async (request, meta, { oneShot }) => {
+    // Resolving the binary detects its version; a CLI too old for the
+    // options below is turned away before it starts.
+    const program = await binary()
+    const cliVersion = version()
+    if (isClaudeCliOutdated(cliVersion)) {
+      throw Object.assign(new Error(`Claude Code ${cliVersion} is older than ${CLAUDE_MIN_VERSION}`), { code: 'CLAUDE_CLI_OUTDATED' })
+    }
+    return startClaudeCliSession({
+      binary: async () => program,
+      configDir,
+      runDirectory: join(configDir, 'runs', runDirectoryName()),
+      baseUrl: meta.baseUrl,
+      apiKey: meta.apiKey,
+      request,
+      conversation: splitConversation(request.messages),
+      cwd: await workingDirectory(meta.cwd),
+      sessionId: oneShot ? randomUUID() : meta.sessionId,
+      cliVersion,
+      oneShot,
+      logger,
+      ...(spawnImpl === undefined ? {} : { spawnImpl }),
+      ...(platform === undefined ? {} : { platform }),
+      ...(parentEnv === undefined ? {} : { parentEnv }),
+      ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
+    })
+  }
 
   /**
    * Send one Messages request through the CLI.
@@ -257,7 +268,11 @@ export function createClaudeCliTransport({
       return await session.respond({ kind: 'start' }, init?.signal)
     } catch (error) {
       if (init?.signal?.aborted) throw error
-      // Every failure to start is local (no CLI, a broken launcher, an
+      if (error?.code === 'CLAUDE_CLI_OUTDATED') {
+        logger?.warn?.('packycode-api: %s', error.message)
+        return errorResponse(400, `${CLI_OUTDATED}: ${error.message}`, CLI_OUTDATED)
+      }
+      // Every other failure to start is local (no CLI, a broken launcher, an
       // unwritable home): explained once, never retried as a network fault.
       const reason = error?.code === 'CLAUDE_CLI_MISSING' ? '' : `: ${String(error?.message ?? error).slice(0, 300)}`
       logger?.warn?.('packycode-api: Claude Code CLI could not start%s', reason)

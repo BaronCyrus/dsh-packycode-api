@@ -96,8 +96,10 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       cli().install()
       return cli().status()
     },
-    'claude-cli/update': async payload => {
-      await cli().update({ transport: payload?.transport })
+    // Updates an outdated CLI; like the install it answers at once and the
+    // panel polls the status.
+    'claude-cli/update': () => {
+      cli().update()
       return cli().status()
     },
     'plugin/version': (payload, signal) => manager().read({ force: payload?.force === true, signal }),

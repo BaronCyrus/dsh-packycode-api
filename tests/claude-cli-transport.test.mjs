@@ -30,7 +30,7 @@ const text = result => result.blocks().filter(block => block.type === 'text').ma
  * processes are the fake CLI. The parent environment carries ambient Claude
  * settings that must never reach the child.
  */
-async function harness(t, script, { env = {}, binary } = {}) {
+async function harness(t, script, { env = {}, binary, version = () => '2.1.295' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'packy-fake-cli-'))
   const workspace = await mkdtemp(join(tmpdir(), 'packy-fake-workspace-'))
   await writeFile(join(dir, 'script.json'), JSON.stringify(script))
@@ -38,7 +38,7 @@ async function harness(t, script, { env = {}, binary } = {}) {
   const transport = createClaudeCliTransport({
     binary: binary ?? (async () => '/fixture/bin/claude'),
     configDir: join(dir, 'home'),
-    version: () => '2.1.295',
+    version,
     spawnImpl: (command, args, options) => {
       spawned.push({ command, args, options })
       return spawn(process.execPath, [FAKE_CLI, ...args], options)
@@ -274,6 +274,22 @@ test('a CLI too old for the plugin\'s options asks for an update', async t => {
   assert.equal(result.finish.kind, 'error')
   assert.equal(result.finish.failure.message, explainCliOutdated(`dsh_cli_outdated: error: unknown option '--permission-prompts'`))
   assert.equal(result.finish.failure.code, 'PI_AI_ERROR')
+})
+
+test('a CLI older than the plugin needs is turned away before it starts, by the version its detection found', async t => {
+  let detected
+  const { step, spawned } = await harness(t, [], {
+    // As in the plugin: the version is known once resolving the binary has detected it.
+    binary: async () => { detected = '2.1.223'; return '/fixture/bin/claude' },
+    version: () => detected,
+  })
+  const result = await step([user('整理一下')])
+  assert.equal(result.finish.kind, 'error')
+  assert.equal(result.finish.failure.message, explainCliOutdated('dsh_cli_outdated: Claude Code 2.1.223 is older than 2.1.259'))
+  assert.match(result.finish.failure.message, /CLI said: Claude Code 2\.1\.223 is older than 2\.1\.259$/u, 'versions survive the status-number scrub')
+  assert.match(result.finish.failure.message, /更新 Claude Code CLI/u)
+  assert.equal(result.finish.failure.code, 'PI_AI_ERROR', 'shown once, not retried')
+  assert.deepEqual(spawned, [])
 })
 
 test('aborting a step stops its CLI process', async t => {

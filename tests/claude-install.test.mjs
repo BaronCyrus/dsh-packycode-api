@@ -10,8 +10,11 @@ import { claudeBinaryCandidates, locateClaudeBinary, resolveSpawnCommand } from 
 import { createClaudeCliTransport } from '../src/claude-cli-transport.js'
 import {
   CLAUDE_INSTALL_COMMAND,
+  CLAUDE_NPM_UPDATE_COMMAND,
+  CLAUDE_SELF_UPDATE_COMMAND,
   createClaudeCliManager,
   explainNpmFailure,
+  isNpmClaudeInstall,
   locateNpm,
   parseClaudeVersion,
 } from '../src/claude-install.js'
@@ -179,6 +182,9 @@ test('detects an installed CLI and its version', async () => {
   assert.equal(status.path, '/Users/u/.local/bin/claude')
   assert.equal(status.command, CLAUDE_INSTALL_COMMAND)
   assert.equal(status.install.state, 'idle')
+  assert.equal(status.minVersion, '2.1.259')
+  assert.equal(status.outdated, true, '2.1.3 lacks options the transport passes')
+  assert.equal(status.updateCommand, CLAUDE_SELF_UPDATE_COMMAND)
   assert.deepEqual(calls[0].args, ['--version'])
   // The probe runs in the plugin's isolated config home, never the user's.
   assert.equal(calls[0].options.env.CLAUDE_CONFIG_DIR, '/tmp/cfg')
@@ -226,7 +232,7 @@ test('installs with npm install -g and detects the result', async () => {
   const fs = filesystem(['/usr/bin/npm'])
   const { spawnImpl, calls } = scriptedSpawn((command, args) => {
     if (args.join(' ') === 'prefix -g') return { stdout: '/usr\n' }
-    if (args.join(' ') === 'install -g @anthropic-ai/claude-code') {
+    if (args.join(' ') === 'install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code') {
       return { effect: () => fs.set.add('/usr/bin/claude'), stdout: 'added 3 packages in 4s\n' }
     }
     if (args[0] === '--version') return { stdout: '2.1.3 (Claude Code)\n' }
@@ -245,7 +251,8 @@ test('installs with npm install -g and detects the result', async () => {
   assert.equal(status.install.state, 'succeeded')
   assert.equal(status.installed, true)
   assert.equal(status.version, '2.1.3')
-  assert.equal(calls.filter(call => call.args.join(' ') === 'install -g @anthropic-ai/claude-code').length, 1)
+  assert.equal(calls.filter(call => call.args.join(' ') === 'install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code').length, 1)
+  assert.equal(CLAUDE_INSTALL_COMMAND, 'npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code', 'npm 12 runs the postinstall that places the native binary only when allowed')
   assert.equal(calls.find(call => call.args[0] === 'install').options.shell, false)
 })
 
@@ -258,7 +265,7 @@ test('on Windows npm runs through its .cmd launcher with constant arguments', as
   await cli.settled()
   const call = calls.find(entry => entry.args[0] === 'install')
   assert.equal(call.command, `"${npm}"`)
-  assert.deepEqual(call.args, ['install', '-g', '@anthropic-ai/claude-code'])
+  assert.deepEqual(call.args, ['install', '-g', '@anthropic-ai/claude-code', '--allow-scripts=@anthropic-ai/claude-code'])
   assert.equal(call.options.shell, true)
   const status = await cli.status()
   assert.equal(status.platform, 'win32')
@@ -297,18 +304,143 @@ test('a broken Windows npm launcher is reported as an unavailable CLI before any
   } finally { await transport.close() }
 })
 
-test('the RPC surface reports the CLI, starts its install and saves the Claude route', async () => {
+/**
+ * A CLI whose version the scripted `update` (or npm install) changes; every
+ * spawn is recorded.
+ */
+function updatableCli({ version, onUpdate }) {
+  const state = { version }
+  const { spawnImpl, calls } = scriptedSpawn((command, args) => {
+    if (args.at(-1) === '--version') return state.version === undefined ? { code: 1, stderr: 'Error: claude native binary not installed.' } : { stdout: `${state.version} (Claude Code)\n` }
+    return onUpdate(command, args, state) ?? { code: 1 }
+  })
+  return { state, spawnImpl, calls }
+}
+
+test('an outdated native CLI updates itself in the plugin\'s CLI home, without the user\'s Claude settings', async () => {
+  const binary = '/Users/u/.local/bin/claude'
+  const fs = filesystem([binary])
+  const { spawnImpl, calls } = updatableCli({
+    version: '2.1.223',
+    onUpdate: (command, args, state) => (command === binary && args.join(' ') === 'update'
+      ? { effect: () => { state.version = '2.1.303' }, stdout: 'Successfully updated from 2.1.223 to version 2.1.303\n' }
+      : undefined),
+  })
+  const cli = createClaudeCliManager({
+    ...MAC, exists: fs.exists, spawnImpl, configDir: '/Users/u/.dsh/packycode-claude-cli',
+    realpath: () => '/Users/u/.local/share/claude/versions/2.1.223',
+    env: { PATH: '/usr/bin', HTTPS_PROXY: 'http://proxy', DISABLE_AUTOUPDATER: '1', CLAUDE_CONFIG_DIR: '/Users/u/.claude', ANTHROPIC_API_KEY: 'sk-ambient' },
+  })
+  const before = await cli.status()
+  assert.equal(before.outdated, true)
+  assert.equal(before.updateCommand, 'claude update')
+
+  const started = cli.update()
+  assert.equal(started.state, 'running')
+  assert.equal(started.action, 'update')
+  assert.equal(cli.update(), started, 'a second click joins the update in flight')
+  assert.equal(cli.install().action, 'update', 'an install cannot start while the update runs')
+  await cli.settled()
+
+  const after = await cli.status()
+  assert.equal(after.version, '2.1.303')
+  assert.equal(after.outdated, false)
+  assert.equal(after.install.state, 'succeeded')
+  assert.equal(after.install.action, 'update')
+  assert.equal(after.install.from, '2.1.223')
+  assert.equal(after.install.to, '2.1.303')
+  const run = calls.find(call => call.args.join(' ') === 'update')
+  assert.equal(run.command, binary)
+  assert.equal(run.options.env.CLAUDE_CONFIG_DIR, '/Users/u/.dsh/packycode-claude-cli')
+  assert.equal(run.options.env.DISABLE_AUTOUPDATER, undefined, 'an ambient switch must not stop the update')
+  assert.equal(run.options.env.ANTHROPIC_API_KEY, undefined)
+  assert.equal(run.options.env.HTTPS_PROXY, 'http://proxy', 'the user\'s proxy still applies')
+  assert.equal(run.options.shell, undefined)
+  assert.equal(calls.filter(call => call.command.endsWith('npm')).length, 0)
+})
+
+test('an npm install of the CLI is updated by npm itself, allowing the package\'s scripts', async () => {
+  const binary = '/usr/local/bin/claude'
+  const fs = filesystem([binary, '/usr/local/bin/npm', '/usr/bin/npm'])
+  const { spawnImpl, calls } = updatableCli({
+    version: '2.1.223',
+    onUpdate: (command, args, state) => (command === '/usr/local/bin/npm' && args.join(' ') === 'install -g @anthropic-ai/claude-code@latest --allow-scripts=@anthropic-ai/claude-code'
+      ? { effect: () => { state.version = '2.1.303' }, stdout: 'changed 2 packages\n' }
+      : undefined),
+  })
+  const cli = createClaudeCliManager({ ...MAC, env: { PATH: '/usr/bin' }, exists: fs.exists, spawnImpl,
+    realpath: () => '/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe' })
+  assert.equal((await cli.status()).updateCommand, CLAUDE_NPM_UPDATE_COMMAND)
+  cli.update()
+  await cli.settled()
+  const after = await cli.status()
+  assert.equal(after.install.state, 'succeeded')
+  assert.equal(after.version, '2.1.303')
+  // npm beside the CLI owns its global prefix; the CLI's own updater would run
+  // npm without --allow-scripts and leave no native binary on npm 12.
+  assert.equal(calls.filter(call => call.args.join(' ') === 'update').length, 0)
+  assert.equal(calls.filter(call => call.command === '/usr/bin/npm').length, 0)
+  assert.equal(CLAUDE_NPM_UPDATE_COMMAND, 'npm install -g @anthropic-ai/claude-code@latest --allow-scripts=@anthropic-ai/claude-code')
+})
+
+test('an update that leaves the CLI old, broken, or unreached says so', async () => {
+  const binary = '/Users/u/.local/bin/claude'
+  const fs = filesystem([binary])
+  const options = { ...MAC, env: { PATH: '/usr/bin' }, exists: fs.exists, realpath: () => '/opt/homebrew/Caskroom/claude-code/2.1.223/claude' }
+
+  const homebrew = updatableCli({ version: '2.1.223', onUpdate: () => ({ stdout: 'Claude is managed by Homebrew.\nTo update, run:\n  brew upgrade claude-code\n' }) })
+  const stale = createClaudeCliManager({ ...options, spawnImpl: homebrew.spawnImpl })
+  stale.update()
+  await stale.settled()
+  const old = (await stale.status()).install
+  assert.equal(old.code, 'still-outdated')
+  assert.match(old.detail, /brew upgrade claude-code/u)
+
+  const breaking = updatableCli({ version: '2.1.223', onUpdate: (_command, _args, state) => ({ effect: () => { state.version = undefined }, stdout: 'Successfully updated\n' }) })
+  const broken = createClaudeCliManager({ ...options, spawnImpl: breaking.spawnImpl })
+  broken.update()
+  await broken.settled()
+  const result = await broken.status()
+  assert.equal(result.install.code, 'broken-after-update')
+  assert.match(result.install.detail, /native binary not installed/u)
+  assert.equal(result.installed, true)
+
+  const offline = updatableCli({ version: '2.1.223', onUpdate: () => ({ code: 1, stderr: 'Error: getaddrinfo ENOTFOUND storage.googleapis.com' }) })
+  const unreached = createClaudeCliManager({ ...options, spawnImpl: offline.spawnImpl })
+  unreached.update()
+  await unreached.settled()
+  assert.equal((await unreached.status()).install.code, 'network')
+
+  const nothing = createClaudeCliManager({ ...MAC, env: { PATH: '' }, execPath: '/x/node', exists: () => false, spawnImpl: offline.spawnImpl })
+  nothing.update()
+  await nothing.settled()
+  assert.equal((await nothing.status()).install.code, 'not-installed')
+})
+
+test('npm installs are told apart from native ones by where the CLI really lives', () => {
+  assert.equal(isNpmClaudeInstall('/usr/local/bin/claude', { platform: 'darwin', realpath: () => '/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js' }), true)
+  assert.equal(isNpmClaudeInstall('/Users/u/.local/bin/claude', { platform: 'darwin', realpath: () => '/Users/u/.local/share/claude/versions/2.1.303' }), false)
+  assert.equal(isNpmClaudeInstall('/Users/u/.local/bin/claude', { platform: 'darwin', realpath: () => { throw new Error('ENOENT') } }), false)
+  assert.equal(isNpmClaudeInstall('C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd', { platform: 'win32' }), true)
+  assert.equal(isNpmClaudeInstall('C:\\Users\\u\\.local\\bin\\claude.exe', { platform: 'win32', realpath: path => path }), false)
+})
+
+test('the RPC surface reports the CLI and starts its install or update', async () => {
   const seen = []
   const claude = {
     status: async options => {
       seen.push(['status', options])
-      return { installed: false, command: CLAUDE_INSTALL_COMMAND, transport: 'auto', install: { state: seen.some(([kind]) => kind === 'install') ? 'running' : 'idle' } }
+      const last = seen.findLast(([kind]) => kind === 'install' || kind === 'update')?.[0]
+      return { installed: false, command: CLAUDE_INSTALL_COMMAND, install: last === undefined ? { state: 'idle' } : { state: 'running', action: last } }
     },
     install: () => {
       seen.push(['install'])
-      return { state: 'running' }
+      return { state: 'running', action: 'install' }
     },
-    update: async patch => { seen.push(['update', patch]) },
+    update: payload => {
+      seen.push(['update', payload])
+      return { state: 'running', action: 'update' }
+    },
     transportFor: names => ({ transport: names?.includes('cc') ? 'cli' : 'http', reason: 'group' }),
   }
   const groups = { read: async () => ({ keys: [{ id: 'a', groups: ['cc'] }, { id: 'b', groups: ['cc-sale'] }], descriptions: {} }) }
@@ -318,10 +450,12 @@ test('the RPC surface reports the CLI, starts its install and saves the Claude r
   assert.equal(status.value.installed, false)
   assert.deepEqual(seen[0], ['status', { force: true }])
   const installed = await handler('claude-cli/install', {})
-  assert.equal(installed.value.install.state, 'running')
-  const updated = await handler('claude-cli/update', { transport: 'cli' })
+  assert.deepEqual(installed.value.install, { state: 'running', action: 'install' })
+  // The browser cannot steer the update: no payload reaches it.
+  const updated = await handler('claude-cli/update', { transport: 'http', command: 'rm -rf /' })
   assert.equal(updated.ok, true)
-  assert.deepEqual(seen.find(([kind]) => kind === 'update'), ['update', { transport: 'cli' }])
+  assert.deepEqual(updated.value.install, { state: 'running', action: 'update' })
+  assert.deepEqual(seen.find(([kind]) => kind === 'update'), ['update', undefined])
   // Each key's groups name the route its Claude requests take.
   const reading = await handler('groups', {})
   assert.deepEqual(reading.value.keys.map(key => key.claudeTransport.transport), ['cli', 'http'])
