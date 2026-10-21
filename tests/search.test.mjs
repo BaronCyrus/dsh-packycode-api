@@ -6,11 +6,14 @@ import {
   buildSearchRequest,
   createPackyCodeAutoSearchProvider,
   createPackyCodeSearchProvider,
+  DEFAULT_RETRY_DELAY_MS,
   DEFAULT_SEARCH_BACKEND,
   PACKYCODE_AUTO_SEARCH_PROVIDER_ID,
   PACKYCODE_SEARCH_PROVIDER_ID,
   parseMessagesSearchResponse,
   parseResponsesSearchResponse,
+  readResponsesStream,
+  transientRetryDelay,
   WebError,
 } from '../src/search.js'
 import { fakeCredentials } from './helpers.mjs'
@@ -108,6 +111,277 @@ test('a Responses answer lists cited sources first, then the URLs its search act
   assert.throws(() => parseResponsesSearchResponse({ output: [RESPONSES_ANSWER.output[3]] }), /did not run a web search/u)
 })
 
+test('a Responses body with no output at all says the result was lost, not that no search ran', () => {
+  // What the Codex channel answers a non-streaming request with.
+  assert.throws(
+    () => parseResponsesSearchResponse({ status: 'completed', output: [], tool_usage: { web_search: { num_requests: 1 } } }),
+    error => error instanceof WebError && error.code === 'WEB_PROVIDER_ERROR'
+      && /no output items \(status completed\); the gateway did not pass the search result on/u.test(error.message),
+  )
+})
+
+/** Serialize events the way the gateway streams them. */
+const sse = events => events.map((event, index) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number: index })}\n\n`).join('')
+
+/** The event order a live `gpt-6.1-sol` search streamed, with the empty final output it ended on. */
+function searchEvents(output = RESPONSES_ANSWER.output, finalOutput = []) {
+  const response = { id: 'resp_search', object: 'response', status: 'in_progress', instructions: 'x'.repeat(2000), output: [] }
+  const events = [{ type: 'response.created', response }, { type: 'response.in_progress', response }]
+  output.forEach((item, index) => {
+    events.push({ type: 'response.output_item.added', output_index: index, item: { ...item, status: 'in_progress' } })
+    if (item.type === 'message') events.push({ type: 'response.output_text.delta', output_index: index, content_index: 0, delta: item.content[0].text })
+    if (item.type === 'web_search_call') events.push({ type: 'response.web_search_call.completed', output_index: index, item_id: 'ws' })
+    events.push({ type: 'response.output_item.done', output_index: index, item })
+  })
+  events.push({ type: 'response.metadata', metadata: {} })
+  events.push({ type: 'response.completed', response: { ...response, status: 'completed', output: finalOutput, usage: { input_tokens: 17590, output_tokens: 221 } } })
+  return events
+}
+
+/** A capacity refusal the way the Codex channel relays it inside a 200 stream. */
+function capacityEvents(message = 'Temporary capacity limit. Please try again in 2s.') {
+  const response = { id: 'resp_busy', object: 'response', status: 'in_progress', output: [] }
+  const error = { type: 'service_unavailable_error', code: 'rate_limit_exceeded', message, param: null }
+  return [
+    { type: 'response.created', response },
+    { type: 'response.in_progress', response },
+    { type: 'response.metadata', metadata: {} },
+    { type: 'error', error: { ...error, headers: { 'x-retry-metadata': 'NO_MORE_RETRY' } } },
+    { type: 'response.failed', response: { ...response, status: 'failed', error } },
+  ]
+}
+
+/** A 200 event-stream answer, delivered in chunks of `size` bytes. */
+function streamAnswer(body, { size = Infinity } = {}) {
+  const bytes = new TextEncoder().encode(body)
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (let offset = 0; offset < bytes.length; offset += size) controller.enqueue(bytes.slice(offset, offset + size))
+      controller.close()
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } })
+}
+
+test('a streamed answer rebuilds its output from the items the stream completed', async () => {
+  const body = await readResponsesStream(streamAnswer(sse(searchEvents())))
+  assert.equal(body.status, 'completed')
+  assert.deepEqual(body.output, RESPONSES_ANSWER.output)
+  assert.deepEqual(parseResponsesSearchResponse(body), parseResponsesSearchResponse(RESPONSES_ANSWER))
+})
+
+test('the stream reader survives CRLF and chunks that split lines, line endings and characters', async () => {
+  const output = [...RESPONSES_ANSWER.output.slice(0, 3), {
+    type: 'message',
+    content: [{ type: 'output_text', text: 'Node.js 26.11.1 — 发布于十月', annotations: [{ type: 'url_citation', url: 'https://nodejs.org/zh-cn/', title: 'Node.js 中文网' }] }],
+  }]
+  const wire = sse(searchEvents(output)).replace(/\n/gu, '\r\n')
+  for (const size of [1, 2, 7, 64]) {
+    const body = await readResponsesStream(streamAnswer(wire, { size }))
+    assert.deepEqual(body.output, output, `chunks of ${size} bytes`)
+  }
+  // Bare CR line endings, and a last event without its blank line.
+  const bare = sse(searchEvents(output)).replace(/\n/gu, '\r').replace(/\r\r$/u, '')
+  assert.deepEqual((await readResponsesStream(streamAnswer(bare, { size: 5 }))).output, output)
+})
+
+test('the stream reader keeps the final event\'s own output, orders items by index, and skips noise', async () => {
+  const [preamble, search, open, answer] = RESPONSES_ANSWER.output
+  const own = await readResponsesStream(streamAnswer(sse(searchEvents([preamble, search], [search, answer]))))
+  assert.deepEqual(own.output, [search, answer])
+
+  const shuffled = [
+    { type: 'response.created', response: { status: 'in_progress', output: [] } },
+    { type: 'response.output_item.done', output_index: 2, item: open },
+    { type: 'response.output_item.done', output_index: 0, item: search },
+    { type: 'response.output_item.done', output_index: 1, item: answer },
+    { type: 'response.completed', response: { status: 'completed', output: [] } },
+  ]
+  const wire = `: keep-alive\n\ndata: not json\n\n${sse(shuffled)}data: [DONE]\n\n`
+  assert.deepEqual((await readResponsesStream(streamAnswer(wire))).output, [search, answer, open])
+})
+
+test('the stream reader turns a relayed failure into the body error and needs a final event', async () => {
+  const failed = await readResponsesStream(streamAnswer(sse(capacityEvents())))
+  assert.equal(failed.error.code, 'rate_limit_exceeded')
+  assert.match(failed.error.message, /Temporary capacity limit/u)
+  // Only response.failed, as some channels send it.
+  const only = await readResponsesStream(streamAnswer(sse([{ type: 'response.failed', response: { status: 'failed', error: { code: 'server_error', message: 'boom' } } }])))
+  assert.deepEqual(only.error, { code: 'server_error', message: 'boom' })
+
+  const cut = searchEvents().slice(0, -1)
+  await assert.rejects(readResponsesStream(streamAnswer(sse(cut))), error => error instanceof WebError && /ended before the response completed/u.test(error.message))
+})
+
+test('only an upstream hiccup is resent, after the pause it names', () => {
+  assert.equal(transientRetryDelay({ type: 'service_unavailable_error', code: 'rate_limit_exceeded', message: 'Temporary capacity limit. Please try again in 2s.' }), 2000)
+  assert.equal(transientRetryDelay({ code: 'rate_limit_exceeded', message: 'Rate limit reached. Please try again in 1.898s.' }), 1898)
+  assert.equal(transientRetryDelay({ code: 'rate_limit_exceeded', message: 'Please try again in 28ms.' }), 28)
+  assert.equal(transientRetryDelay({ type: 'server_error', code: 'server_error', message: 'An error occurred while processing your request.' }), DEFAULT_RETRY_DELAY_MS)
+  assert.equal(transientRetryDelay({ code: 'server_error', message: 'boom' }, 5), 5)
+  // A pause longer than the search budget allows is reported instead.
+  assert.equal(transientRetryDelay({ code: 'rate_limit_exceeded', message: 'Please try again in 30s.' }), undefined)
+  // Request, quota and key failures are not resent.
+  assert.equal(transientRetryDelay({ type: 'invalid_request_error', code: 'invalid_value', message: 'Invalid tool_choice' }), undefined)
+  assert.equal(transientRetryDelay({ code: 'rate_limit_exceeded', message: '该令牌额度已用尽' }), undefined)
+  assert.equal(transientRetryDelay({ type: 'insufficient_quota', code: 'insufficient_quota', message: 'You exceeded your current quota, please check your plan and billing details.' }), undefined)
+  assert.equal(transientRetryDelay(undefined), undefined)
+})
+
+test('a GPT search streams and returns the items the stream completed', async () => {
+  const ring = await ringWith('sk-first-key-0001')
+  const calls = []
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init })
+      return streamAnswer(sse(searchEvents()), { size: 97 })
+    },
+  })
+  const result = await provider.search({ query: 'latest Node.js release' })
+  assert.deepEqual(result, parseResponsesSearchResponse(RESPONSES_ANSWER))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://gw.example/v1/responses')
+  assert.equal(calls[0].init.headers.accept, 'text/event-stream')
+  assert.equal(JSON.parse(calls[0].init.body).stream, true)
+  assert.equal(calls[0].init.redirect, 'error')
+})
+
+test('a GPT search always sends a prompt cache key, which the Codex group requires', async () => {
+  const ring = await ringWith('sk-first-key-0001')
+  const keys = []
+  let session
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    resolveSessionId: () => session,
+    fetchImpl: async (_url, init) => {
+      keys.push(JSON.parse(init.body).prompt_cache_key)
+      return streamAnswer(sse(searchEvents()))
+    },
+  })
+  await provider.search({ query: 'q' })
+  session = ''
+  await provider.search({ query: 'q' })
+  session = 'session-1'
+  await provider.search({ query: 'q' })
+  await provider.search({ query: 'q', sessionId: 'mcp-session' })
+  // Without a session, one id per provider, the way the model route falls back.
+  assert.match(keys[0], /^packycode-api-search-[0-9a-f-]{36}$/u)
+  assert.equal(keys[1], keys[0])
+  assert.deepEqual(keys.slice(2), ['session-1', 'mcp-session'])
+})
+
+test('a capacity refusal inside the stream is resent on the same key, which is never blamed', async () => {
+  const ring = await ringWith('sk-first-key-0001', 'sk-second-key-0002')
+  const failures = []
+  const used = []
+  const started = Date.now()
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    onKeyFailure: kind => failures.push(kind),
+    fetchImpl: async (_url, init) => {
+      used.push(init.headers.authorization)
+      return streamAnswer(sse(used.length === 1 ? capacityEvents('Temporary capacity limit. Please try again in 30ms.') : searchEvents()))
+    },
+  })
+  const result = await provider.search({ query: 'q' })
+  assert.equal(result.sources.length, 3)
+  assert.deepEqual(used, ['Bearer sk-first-key-0001', 'Bearer sk-first-key-0001'])
+  assert.ok(Date.now() - started >= 25, 'waited the advised pause')
+  assert.deepEqual(failures, [])
+})
+
+test('a capacity refusal that persists is reported after three attempts with what to do', async () => {
+  const ring = await ringWith('sk-first-key-0001', 'sk-second-key-0002')
+  const failures = []
+  let calls = 0
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    retryDelayMs: 1,
+    onKeyFailure: kind => failures.push(kind),
+    fetchImpl: async () => {
+      calls += 1
+      // No pause named: the configured one applies.
+      return streamAnswer(sse([{ type: 'error', error: { type: 'server_error', code: 'server_error', message: 'An error occurred while processing your request.' } }]))
+    },
+  })
+  await assert.rejects(provider.search({ query: 'q' }), error => {
+    assert.equal(error.code, 'WEB_PROVIDER_ERROR')
+    assert.match(error.message, /gpt-6\.1-sol stayed unavailable upstream after 3 attempts \(server_error: An error occurred/u)
+    assert.match(error.message, /switch the search backend to "deepseek"/u)
+    return true
+  })
+  assert.equal(calls, 3)
+  assert.deepEqual(failures, [])
+  assert.equal((await ring.list()).keys.every(key => !key.disabled), true)
+})
+
+test('any other failure inside the stream is reported at once, without a status', async () => {
+  const ring = await ringWith('sk-secret-key-123456')
+  let calls = 0
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    fetchImpl: async () => {
+      calls += 1
+      return streamAnswer(sse([{ type: 'error', error: { type: 'invalid_request_error', code: 'invalid_value', message: 'bad input for sk-secret-key-123456' } }]))
+    },
+  })
+  await assert.rejects(provider.search({ query: 'q' }), error => {
+    assert.equal(error.message, 'PackyCode search failed upstream: invalid_value: bad input for …3456')
+    return true
+  })
+  assert.equal(calls, 1)
+})
+
+test('a search cancelled during the pause before a resend stops there', async () => {
+  const ring = await ringWith('sk-first-key-0001')
+  const controller = new AbortController()
+  let calls = 0
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    fetchImpl: async () => {
+      calls += 1
+      setTimeout(() => controller.abort(), 10)
+      return streamAnswer(sse(capacityEvents('Temporary capacity limit. Please try again in 2s.')))
+    },
+  })
+  const started = Date.now()
+  await assert.rejects(provider.search({ query: 'q' }, controller.signal), error => error.code === 'WEB_ABORTED')
+  assert.ok(Date.now() - started < 1000, 'did not sit out the pause')
+  assert.equal(calls, 1)
+})
+
+test('a search cancelled while its stream is arriving stops reading', async () => {
+  const ring = await ringWith('sk-first-key-0001')
+  const controller = new AbortController()
+  let cancelled = false
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode(sse(searchEvents()).slice(0, 300)))
+        setTimeout(() => controller.abort(), 10)
+      },
+      cancel() { cancelled = true },
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+  })
+  await assert.rejects(provider.search({ query: 'q' }, controller.signal), error => error.code === 'WEB_ABORTED')
+  assert.equal(cancelled, true)
+})
+
 test('each backend builds its own protocol request against the configured host', () => {
   const deepseek = buildSearchRequest('deepseek', { apiHost: 'https://gw.example', query: 'q', sessionId: 's1' })
   assert.equal(deepseek.url, 'https://gw.example/v1/messages')
@@ -123,6 +397,9 @@ test('each backend builds its own protocol request against the configured host',
   assert.deepEqual(gpt.body.tools, [{ type: 'web_search' }])
   assert.equal(gpt.body.tool_choice, 'required')
   assert.equal(gpt.body.store, false)
+  // The Codex channel's non-streaming answer carries an empty output.
+  assert.equal(gpt.body.stream, true)
+  assert.equal(deepseek.body.stream, undefined)
   assert.equal(gpt.body.prompt_cache_key, 's1')
   // The Codex group refuses a bare string input on some channels.
   assert.ok(Array.isArray(gpt.body.input))
