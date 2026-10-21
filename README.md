@@ -89,7 +89,7 @@ dsh-packycode-api@1.3.6
 
 **看余额。** 「账户与 Key」里每个 Key 显示它自己的剩余、已用与额度（额度 = 剩余 + 已用），不限额的 Key 显示「不限额度」；多个 Key 不相加成合计。API Key 只能读到自己的额度，读不到 PackyCode 账号的总余额，账号余额请到 PackyCode 控制台查看。读失败的 Key 会在它那一行注明原因；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
 
-**用 Claude。** 直接选择三个 Claude 模型之一。Key 在 `cc` 分组时，插件用本机的官方 Claude Code CLI 发出请求，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code`），版本过低时在同一处点「更新 Claude Code CLI」；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，通道只由分组决定，不能手动切换。无论哪条通道，工具都由 DSH 执行并按 DSH 的权限审批，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样。详见下方「Claude Code CLI 通道」。
+**用 Claude。** 直接选择三个 Claude 模型之一。Key 在 `cc` 分组时，插件用本机的官方 Claude Code CLI 发出请求，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code`），版本过低或有新版本时在同一处点「更新 Claude Code CLI」；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，通道只由分组决定，不能手动切换。无论哪条通道，工具都由 DSH 执行并按 DSH 的权限审批，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样。详见下方「Claude Code CLI 通道」。
 
 **网页搜索。** DSH 的 `web_search` 默认调用 DeepSeek 官方接口（用 `DEEPSEEK_API_KEY` 计费）。在 **设置 → PackyCode → 网页搜索** 里可以改走 PackyCode：
 
@@ -139,7 +139,7 @@ PackyCode 的 `cc` 分组（「claude code专用」）只接受官方 Claude Cod
 - **提示与历史保持 DSH 原样。** DSH 的系统提示追加在 CLI 官方提示之后；历史（文字、图片、带签名的思考、工具调用与结果）由插件写成 CLI 的会话记录后续接，思考档位以 `--effort` 传入。
 - **一个会话一个常驻进程。** 同一个 DSH 会话、同一模型复用一个 CLI 进程：工具结果和下一轮消息直接续接，请求前缀不变，网关缓存照常命中。历史被压缩、切换计划模式或换 Key 时，用 DSH 的完整历史恢复一个新进程；会话标题和压缩用一次性进程。空闲 20 分钟的进程自动结束，最多同时保留 8 个。
 - **与你自己的 Claude Code 隔离。** 使用独立配置目录 `~/.dsh/packycode-claude-cli`，不读取 `~/.claude` 的设置、CLAUDE.md、MCP 配置和登录状态；只把插件保存的 Key 交给子进程。自动更新、遥测、自动压缩、自动记忆和模型回退都关闭，失败重试交还给 DSH 的重试策略（会按 Key 轮换）。
-- **版本过低一键更新。** 插件需要 Claude Code 2.1.259 或更新版本（插件传入的 `--permission-prompts` 从这一版开始提供）。更旧的 CLI 在请求发出前就被拦下并说明原因，CLI 卡片标出「版本过低」并提供「更新 Claude Code CLI」：官方安装器（`~/.local/bin/claude`）装的执行 `claude update`；npm 全局安装的执行 `npm install -g @anthropic-ai/claude-code@latest --allow-scripts=@anthropic-ai/claude-code`，因为 npm 12 默认不运行安装脚本，而 `claude update` 在 npm 安装上不会放行脚本，会留下一个无法运行的 CLI。只有点这个按钮时才会更新你的 Claude Code。
+- **版本过低一键更新。** 插件需要 Claude Code 2.1.259 或更新版本（插件传入的 `--permission-prompts` 从这一版开始提供）。更旧的 CLI 在请求发出前就被拦下并说明原因，CLI 卡片标出「版本过低」并提供「更新 Claude Code CLI」：官方安装器（`~/.local/bin/claude`）装的执行 `claude update`；npm 全局安装的执行 `npm install -g @anthropic-ai/claude-code@latest --allow-scripts=@anthropic-ai/claude-code`，因为 npm 12 默认不运行安装脚本，而 `claude update` 在 npm 安装上不会放行脚本，会留下一个无法运行的 CLI。CLI 能用但不是最新版时，卡片也会提示新版本并提供同一个按钮：插件在本机读取 npm 上 `@anthropic-ai/claude-code` 的 `latest`（与官方安装器的 `latest` 通道是同一版本），30 分钟内最多读一次，点「重新检测」立即重读；读不到时不提示。只有点这个按钮时才会更新你的 Claude Code。
 - **出错会说清原因。** 未安装 CLI、CLI 版本过旧、官方 CLI 发出的请求仍被网关拒绝，分别给出说明和下一步，不会改走其它通道或提供商，也不会停用 Key。
 
 已知差异：新进程启动约 0.3–1 秒；在一轮工具调用中途恢复进程时，CLI 会按官方行为在工具结果后附上一句 “Continue from where you left off.”。需要 Claude Code 2.1.259 或更新版本（实测 2.1.295 与 2.1.303）。Windows 上 Claude Code 还需要 Git for Windows。

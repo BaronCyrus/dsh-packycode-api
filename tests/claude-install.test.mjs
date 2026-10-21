@@ -10,9 +10,11 @@ import { claudeBinaryCandidates, locateClaudeBinary, resolveSpawnCommand } from 
 import { createClaudeCliTransport } from '../src/claude-cli-transport.js'
 import {
   CLAUDE_INSTALL_COMMAND,
+  CLAUDE_NPM_LATEST_URL,
   CLAUDE_NPM_UPDATE_COMMAND,
   CLAUDE_SELF_UPDATE_COMMAND,
   createClaudeCliManager,
+  createClaudeLatestReader,
   explainNpmFailure,
   isNpmClaudeInstall,
   locateNpm,
@@ -415,6 +417,136 @@ test('an update that leaves the CLI old, broken, or unreached says so', async ()
   nothing.update()
   await nothing.settled()
   assert.equal((await nothing.status()).install.code, 'not-installed')
+})
+
+test('the newest CLI release is read from npm with a timeout, no redirects, and a cache', async () => {
+  let clock = 1_000
+  const requests = []
+  let answer = () => Response.json({ name: '@anthropic-ai/claude-code', version: '2.1.303' })
+  const reader = createClaudeLatestReader({
+    now: () => clock,
+    fetchImpl: async (url, init) => {
+      requests.push({ url, redirect: init.redirect, signal: init.signal })
+      return answer()
+    },
+  })
+  assert.equal(reader.peek(), undefined)
+  assert.equal(await reader.read(), '2.1.303')
+  assert.equal(requests[0].url, CLAUDE_NPM_LATEST_URL)
+  assert.equal(CLAUDE_NPM_LATEST_URL, 'https://registry.npmjs.org/@anthropic-ai/claude-code/latest')
+  assert.equal(requests[0].redirect, 'error')
+  assert.ok(requests[0].signal instanceof AbortSignal, 'the read is bounded by a timeout')
+  // Cached for half an hour; a forced read (the panel's refresh) goes out again.
+  clock += 29 * 60_000
+  assert.equal(await reader.read(), '2.1.303')
+  assert.equal(requests.length, 1)
+  assert.equal(await reader.read({ force: true }), '2.1.303')
+  assert.equal(requests.length, 2)
+  assert.equal(reader.peek(), '2.1.303')
+
+  // No answer offers nothing, never throws, and is retried after two minutes.
+  for (const failing of [
+    () => { throw new TypeError('fetch failed') },
+    () => new Response('nope', { status: 503 }),
+    () => new Response('{not json', { status: 200 }),
+    () => Response.json({ version: 'latest' }),
+  ]) {
+    answer = failing
+    assert.equal(await reader.read({ force: true }), undefined)
+  }
+  const failed = requests.length
+  clock += 60_000
+  assert.equal(await reader.read(), undefined)
+  assert.equal(requests.length, failed)
+  answer = () => Response.json({ version: '2.1.304' })
+  clock += 61_000
+  assert.equal(await reader.read(), '2.1.304')
+})
+
+/** A newest-release reader that answers `version` and counts its reads. */
+const latestAt = version => {
+  const reads = []
+  return { reads, read: async options => { reads.push(options); return version }, peek: () => version }
+}
+
+test('a usable CLI behind npm\'s latest offers the update; a current one does not', async () => {
+  const binary = '/Users/u/.local/bin/claude'
+  const fs = filesystem([binary])
+  const options = { ...MAC, env: { PATH: '/usr/bin' }, exists: fs.exists, realpath: () => '/Users/u/.local/share/claude/versions/2.1.295' }
+  const latest = latestAt('2.1.303')
+  const behind = createClaudeCliManager({ ...options, spawnImpl: updatableCli({ version: '2.1.295', onUpdate: () => undefined }).spawnImpl, latestReader: latest })
+  const status = await behind.status()
+  assert.equal(status.outdated, false)
+  assert.equal(status.latest, '2.1.303')
+  assert.equal(status.updateAvailable, true)
+  assert.equal(status.updateCommand, CLAUDE_SELF_UPDATE_COMMAND)
+  await behind.status({ force: true })
+  assert.deepEqual(latest.reads, [{ force: false }, { force: true }], 'the panel\'s refresh re-reads the newest release')
+
+  const current = createClaudeCliManager({ ...options, spawnImpl: updatableCli({ version: '2.1.303', onUpdate: () => undefined }).spawnImpl, latestReader: latestAt('2.1.303') })
+  assert.equal((await current.status()).updateAvailable, false)
+  const unknown = createClaudeCliManager({ ...options, spawnImpl: updatableCli({ version: '2.1.295', onUpdate: () => undefined }).spawnImpl, latestReader: latestAt(undefined) })
+  const offline = await unknown.status()
+  assert.equal(offline.updateAvailable, false)
+  assert.equal(Object.hasOwn(offline, 'latest'), false)
+  const without = createClaudeCliManager({ ...options, spawnImpl: updatableCli({ version: '2.1.295', onUpdate: () => undefined }).spawnImpl })
+  assert.equal((await without.status()).updateAvailable, false)
+})
+
+test('a CLI behind npm\'s latest updates the way it was installed and reports the new version', async () => {
+  const binary = '/Users/u/.local/bin/claude'
+  const fs = filesystem([binary])
+  const { spawnImpl, calls } = updatableCli({
+    version: '2.1.295',
+    onUpdate: (command, args, state) => (command === binary && args.join(' ') === 'update'
+      ? { effect: () => { state.version = '2.1.303' }, stdout: 'Successfully updated from 2.1.295 to version 2.1.303\n' }
+      : undefined),
+  })
+  const latest = latestAt('2.1.303')
+  const cli = createClaudeCliManager({ ...MAC, env: { PATH: '/usr/bin' }, exists: fs.exists, spawnImpl, latestReader: latest,
+    realpath: () => '/Users/u/.local/share/claude/versions/2.1.295' })
+  assert.equal((await cli.status()).updateAvailable, true)
+  cli.update()
+  const during = await cli.status()
+  assert.equal(during.install.state, 'running')
+  assert.equal(during.latest, '2.1.303', 'a poll during the update shows the last reading')
+  const readsBefore = latest.reads.length
+  await cli.settled()
+  const after = await cli.status()
+  assert.deepEqual([after.install.state, after.install.from, after.install.to], ['succeeded', '2.1.295', '2.1.303'])
+  assert.equal(after.updateAvailable, false)
+  assert.ok(latest.reads.length > readsBefore)
+  assert.equal(calls.filter(call => call.args.join(' ') === 'update').length, 1)
+})
+
+test('an update that leaves a usable CLI where it was says so instead of claiming success', async () => {
+  const binary = '/Users/u/.local/bin/claude'
+  const fs = filesystem([binary])
+  const options = { ...MAC, env: { PATH: '/usr/bin' }, exists: fs.exists, realpath: () => '/opt/homebrew/Caskroom/claude-code/2.1.295/claude' }
+
+  // The command exited cleanly but the CLI is still behind: the installer's own words come back.
+  const homebrew = updatableCli({ version: '2.1.295', onUpdate: () => ({ stdout: 'Claude is managed by Homebrew.\nTo update, run:\n  brew upgrade claude-code\n' }) })
+  const held = createClaudeCliManager({ ...options, spawnImpl: homebrew.spawnImpl, latestReader: latestAt('2.1.303') })
+  held.update()
+  await held.settled()
+  const stayed = (await held.status()).install
+  assert.deepEqual([stayed.state, stayed.code, stayed.latest], ['failed', 'not-updated', '2.1.303'])
+  assert.match(stayed.detail, /brew upgrade claude-code/u)
+
+  // A failed command that changed nothing is that failure, not a success.
+  const offline = updatableCli({ version: '2.1.295', onUpdate: () => ({ code: 1, stderr: 'Error: getaddrinfo ENOTFOUND storage.googleapis.com' }) })
+  const unreached = createClaudeCliManager({ ...options, spawnImpl: offline.spawnImpl, latestReader: latestAt('2.1.303') })
+  unreached.update()
+  await unreached.settled()
+  assert.deepEqual([(await unreached.status()).install.state, (await unreached.status()).install.code], ['failed', 'network'])
+
+  // With the newest release unknown, a clean run that changed nothing is reported as such.
+  const quiet = updatableCli({ version: '2.1.295', onUpdate: () => ({ stdout: 'Claude Code is up to date (2.1.295)\n' }) })
+  const unknown = createClaudeCliManager({ ...options, spawnImpl: quiet.spawnImpl, latestReader: latestAt(undefined) })
+  unknown.update()
+  await unknown.settled()
+  const same = (await unknown.status()).install
+  assert.deepEqual([same.state, same.from, same.to], ['succeeded', '2.1.295', '2.1.295'])
 })
 
 test('npm installs are told apart from native ones by where the CLI really lives', () => {

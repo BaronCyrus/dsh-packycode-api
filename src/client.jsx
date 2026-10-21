@@ -554,6 +554,7 @@ const INSTALL_FAILURES = {
   'not-found-after-install': () => 'cliNotFoundAfterInstall',
   'not-installed': () => 'cliUpdateNotInstalled',
   'still-outdated': () => 'cliUpdateStillOutdated',
+  'not-updated': () => 'cliUpdateNotUpdated',
   'broken-after-update': () => 'cliUpdateBroken',
 }
 
@@ -561,12 +562,18 @@ const INSTALL_FAILURES = {
 function installFailure(cli, t) {
   const key = INSTALL_FAILURES[cli.install?.code]?.(cli)
   const command = cli.install?.action === 'update' ? cli.updateCommand : cli.command
-  return key === undefined ? undefined : fill(t(key), { command: command ?? '', minVersion: cli.minVersion ?? '' })
+  return key === undefined ? undefined : fill(t(key), {
+    command: command ?? '',
+    minVersion: cli.minVersion ?? '',
+    version: cli.version ?? '',
+    latest: cli.install?.latest ?? cli.latest ?? '',
+  })
 }
 
 /**
  * Whether this device has the Claude Code CLI that Claude requests on cc
- * keys go through: an installer without one, an updater for one too old.
+ * keys go through: an installer without one, an updater for one too old or
+ * behind npm's latest.
  */
 function ClaudeCliCard({ call, t }) {
   const [cli, setCli] = react.useState()
@@ -612,6 +619,7 @@ function ClaudeCliCard({ call, t }) {
 
   const usable = cli?.installed === true && cli.version !== undefined
   const outdated = usable && cli.outdated === true
+  const updateAvailable = usable && !outdated && cli.updateAvailable === true
   const action = cli?.install?.action ?? 'install'
   const failed = cli?.install?.state === 'failed'
   const failure = cli === undefined ? undefined : installFailure(cli, t)
@@ -633,7 +641,20 @@ function ClaudeCliCard({ call, t }) {
           <span className="pkc-meta">{t('cliPath')} <span className="pkc-mono">{cli.path}</span></span>
           {processes !== undefined && <span className="pkc-meta">{fill(t('cliProcesses'), processes)}</span>}
           {cli.install?.state === 'succeeded' && (
-            <p className="pkc-note">{action === 'update' ? fill(t('cliUpdateSucceeded'), { version: cli.install.to ?? cli.version }) : t('cliInstallSucceeded')}</p>
+            <p className="pkc-note">{action === 'update'
+              ? fill(t(cli.install.from !== undefined && cli.install.from === cli.install.to ? 'cliUpdateUnchanged' : 'cliUpdateSucceeded'), { version: cli.install.to ?? cli.version })
+              : t('cliInstallSucceeded')}</p>
+          )}
+          {updateAvailable && (
+            <>
+              <p className="pkc-note">{fill(t('cliUpdateAvailable'), { latest: cli.latest ?? '' })}</p>
+              <div className="pkc-split">
+                <Button size="md" disabled={running || checking} onClick={update}>
+                  {running && action === 'update' ? t('cliUpdating') : t('cliUpdate')}
+                </Button>
+              </div>
+              {cli.updateCommand !== undefined && <p className="pkc-note">{fill(t('cliUpdateCommand'), { command: cli.updateCommand })}</p>}
+            </>
           )}
         </>
       )}

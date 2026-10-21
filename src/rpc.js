@@ -96,8 +96,8 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       cli().install()
       return cli().status()
     },
-    // Updates an outdated CLI; like the install it answers at once and the
-    // panel polls the status.
+    // Updates a CLI that is too old or behind npm's latest; like the install
+    // it answers at once and the panel polls the status.
     'claude-cli/update': () => {
       cli().update()
       return cli().status()

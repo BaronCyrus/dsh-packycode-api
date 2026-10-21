@@ -20,7 +20,7 @@ import z from '@deepseek-ai/schemastery'
 
 import { createBalanceReader } from './balance.js'
 import { isClaudeCliOutdated } from './claude-binary.js'
-import { createClaudeCliManager } from './claude-install.js'
+import { createClaudeCliManager, createClaudeLatestReader } from './claude-install.js'
 import { createClaudeCliTransport } from './claude-cli-transport.js'
 import { claudeTransportFor, isClaudeModel } from './claude-transport.js'
 import {
@@ -151,7 +151,10 @@ export function apply(ctx, config) {
    * requests through this device's Claude Code CLI. DSH's agent loop, tools,
    * permissions and plan mode are unchanged; only the transport differs.
    */
-  const claudeCli = createClaudeCliManager({ explicitPath: () => fieldValue(source()?.claudeCliPath) })
+  const claudeCli = createClaudeCliManager({
+    explicitPath: () => fieldValue(source()?.claudeCliPath),
+    latestReader: createClaudeLatestReader(),
+  })
   const cliTransport = createClaudeCliTransport({
     binary: async () => {
       let found = await claudeCli.detect()
@@ -365,7 +368,7 @@ export function apply(ctx, config) {
 export { CLAUDE_MIN_VERSION, CLAUDE_MISSING_MESSAGE, CLAUDE_NPM_PACKAGE, claudeBinaryCandidates, DEFAULT_CLAUDE_CONFIG_DIR, isClaudeCliOutdated, locateClaudeBinary, resolveSpawnCommand } from './claude-binary.js'
 export { baseUrlOf, CLI_SESSION_IDLE_MS, CLI_TOOL_NOTE, createClaudeCliTransport, describeRequest, dshSystemText, MAX_LIVE_CLI_SESSIONS, planContinuation } from './claude-cli-transport.js'
 export { buildCliArgs, buildCliEnvironment, cliErrorMessage, startClaudeCliSession } from './claude-cli-session.js'
-export { CLAUDE_INSTALL_COMMAND, CLAUDE_NPM_UPDATE_COMMAND, CLAUDE_SELF_UPDATE_COMMAND, createClaudeCliManager, explainNpmFailure, isNpmClaudeInstall, locateNpm, parseClaudeVersion } from './claude-install.js'
+export { CLAUDE_INSTALL_COMMAND, CLAUDE_NPM_LATEST_URL, CLAUDE_NPM_UPDATE_COMMAND, CLAUDE_SELF_UPDATE_COMMAND, createClaudeCliManager, createClaudeLatestReader, explainNpmFailure, isNpmClaudeInstall, locateNpm, parseClaudeVersion } from './claude-install.js'
 export { MCP_SERVER_NAME, MCP_TOOL_PREFIX, startClaudeMcpBridge, toolResultToMcp } from './claude-mcp-bridge.js'
 export { buildTranscript, canonicalMessage, splitConversation } from './claude-transcript.js'
 export { cliToolName, createClaudeToolNames } from './claude-tools.js'

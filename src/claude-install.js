@@ -5,8 +5,9 @@
  * sent by this device's Claude Code CLI, so the settings panel shows whether
  * one is installed (and which version), and offers to install it with
  * `npm install -g @anthropic-ai/claude-code` — the same command on macOS and
- * Windows — or to update one older than the transport needs. Both run on the
- * host, never in a shell built from user text: their arguments are constants.
+ * Windows — or to update one older than the transport needs or than npm's
+ * `latest`. Both run on the host, never in a shell built from user text:
+ * their arguments are constants.
  *
  * npm 12 skips install scripts unless they are allowed, and the CLI's
  * postinstall is what puts its native binary in place, so every npm install
@@ -29,6 +30,8 @@ import {
   resolveSpawnCommand,
 } from './claude-binary.js'
 import { nvmBinDirs, pathFor, searchPath, withProgramDirOnPath } from './locate.js'
+import { compareSemver, parseSemver } from './plugin-version.js'
+import { ambientFetch, boundedFetch } from './request.js'
 
 const ALLOW_SCRIPTS = `--allow-scripts=${CLAUDE_NPM_PACKAGE}`
 export const CLAUDE_INSTALL_COMMAND = `npm install -g ${CLAUDE_NPM_PACKAGE} ${ALLOW_SCRIPTS}`
@@ -36,6 +39,11 @@ export const CLAUDE_INSTALL_COMMAND = `npm install -g ${CLAUDE_NPM_PACKAGE} ${AL
 export const CLAUDE_NPM_UPDATE_COMMAND = `npm install -g ${CLAUDE_NPM_PACKAGE}@latest ${ALLOW_SCRIPTS}`
 /** How any other install (the native installer's, Homebrew's) is updated: by the CLI itself. */
 export const CLAUDE_SELF_UPDATE_COMMAND = 'claude update'
+/**
+ * The newest CLI release. npm's `latest` tag and the native installer's
+ * `latest` channel name the same version, and both updates above install it.
+ */
+export const CLAUDE_NPM_LATEST_URL = `https://registry.npmjs.org/${CLAUDE_NPM_PACKAGE}/latest`
 
 const INSTALL_ARGS = Object.freeze(['install', '-g', CLAUDE_NPM_PACKAGE, ALLOW_SCRIPTS])
 const NPM_UPDATE_ARGS = Object.freeze(['install', '-g', `${CLAUDE_NPM_PACKAGE}@latest`, ALLOW_SCRIPTS])
@@ -47,6 +55,11 @@ const INSTALL_TIMEOUT_MS = 15 * 60 * 1000
 /** A detection is reused this long; the panel's refresh and an install bypass it. */
 const DETECTION_TTL_MS = 5 * 60 * 1000
 const MAX_CAPTURE_CHARS = 64 * 1024
+const LATEST_TIMEOUT_MS = 10_000
+/** The newest release is read again after this long; the panel's refresh bypasses it. */
+const LATEST_TTL_MS = 30 * 60 * 1000
+/** An unanswered read is retried sooner, so one network blip does not hide an update for long. */
+const LATEST_RETRY_MS = 2 * 60 * 1000
 const DETAIL_LINES = 8
 const DETAIL_CHARS = 800
 
@@ -148,6 +161,52 @@ export function explainNpmFailure(result) {
 }
 
 /**
+ * The newest Claude Code CLI version on npm, read host-side with a timeout
+ * and redirects refused. A read never throws: no answer is `undefined`, which
+ * offers no update.
+ * @param options - fetch, registry URL, timeout, cache lifetimes and clock.
+ * @returns `{ read({ force }), peek() }`.
+ */
+export function createClaudeLatestReader({
+  fetchImpl = ambientFetch,
+  url = CLAUDE_NPM_LATEST_URL,
+  timeoutMs = LATEST_TIMEOUT_MS,
+  ttlMs = LATEST_TTL_MS,
+  retryMs = LATEST_RETRY_MS,
+  now = () => Date.now(),
+} = {}) {
+  let cached
+  let inFlight
+  const load = async () => {
+    let version
+    try {
+      const response = await boundedFetch(url, { headers: { Accept: 'application/json' } }, { fetchImpl, timeoutMs })
+      if (response.ok) version = (await response.json())?.version
+    } catch {
+      version = undefined
+    }
+    return { version: parseSemver(version) === undefined ? undefined : version, fetchedAt: now() }
+  }
+  return Object.freeze({
+    async read({ force = false } = {}) {
+      const lifetime = cached?.version === undefined ? retryMs : ttlMs
+      if (!force && cached !== undefined && now() - cached.fetchedAt < lifetime) return cached.version
+      if (inFlight === undefined) {
+        inFlight = load().then(value => {
+          cached = value
+          return value
+        }).finally(() => {
+          inFlight = undefined
+        })
+      }
+      return (await inFlight).version
+    },
+    /** The last version read, without a request. */
+    peek: () => cached?.version,
+  })
+}
+
+/**
  * Run a command to completion and capture its output. Never rejects: a
  * missing program or a timeout comes back as `error`.
  */
@@ -194,11 +253,14 @@ function runCaptured(spawnImpl, command, args, options, timeoutMs) {
 /**
  * The CLI manager behind the settings panel and the runner.
  * @param options - the configured CLI path (a function, so a settings change
- *   applies without a restart), plus platform, environment, and process seams.
+ *   applies without a restart), the newest-release reader (none: no update
+ *   is offered for a CLI the transport can use), plus platform, environment,
+ *   and process seams.
  * @returns `{ binary, detect, install, status }`.
  */
 export function createClaudeCliManager({
   explicitPath = () => '',
+  latestReader,
   platform = process.platform,
   home = homedir(),
   env = process.env,
@@ -340,10 +402,17 @@ export function createClaudeCliManager({
     return exists(beside) ? beside : npm()
   }
 
+  /** The newest release, or undefined when unknown. */
+  const latestVersion = ({ force = false } = {}) => latestReader?.read({ force }) ?? Promise.resolve(undefined)
+  /** Whether a version is older than the newest release; false when either is unknown. */
+  const behind = (version, latest) => latest !== undefined && compareSemver(version, latest) === -1
+
   /**
    * Update the located CLI the way it was installed: npm's global package
    * through npm, anything else through `claude update` with the plugin's
-   * own CLI home. Success means the CLI now detected is new enough.
+   * own CLI home. Success means the CLI now detected is new enough and either
+   * changed or was not behind the newest release; a command that exited
+   * cleanly but left it behind says so.
    */
   const runUpdate = async () => {
     const before = await detect({ force: true })
@@ -373,15 +442,19 @@ export function createClaudeCliManager({
       }, INSTALL_TIMEOUT_MS)
     }
     const after = await detect({ force: true })
+    const latest = await latestVersion()
     const from = before.version === undefined ? {} : { from: before.version }
-    if (after.version !== undefined && !isClaudeCliOutdated(after.version)) {
+    const changed = after.version !== undefined && after.version !== before.version
+    if (after.version !== undefined && !isClaudeCliOutdated(after.version) && (changed || (result.code === 0 && !behind(after.version, latest)))) {
       installation = { state: 'succeeded', action: 'update', ...from, to: after.version, finishedAt: now() }
     } else if (result.code !== 0) {
       installation = { state: 'failed', action: 'update', ...explainNpmFailure(result), finishedAt: now() }
     } else if (after.version === undefined) {
       installation = { state: 'failed', action: 'update', code: 'broken-after-update', detail: detailOf(after.error, result.stdout, result.stderr), finishedAt: now() }
-    } else {
+    } else if (isClaudeCliOutdated(after.version)) {
       installation = { state: 'failed', action: 'update', code: 'still-outdated', detail: detailOf(result.stdout, result.stderr), finishedAt: now() }
+    } else {
+      installation = { state: 'failed', action: 'update', code: 'not-updated', latest, detail: detailOf(result.stdout, result.stderr), finishedAt: now() }
     }
   }
 
@@ -418,15 +491,20 @@ export function createClaudeCliManager({
     settled: () => installing ?? Promise.resolve(),
     /**
      * What the settings panel shows. While an install or update runs, the
-     * last detection stands instead of probing a half-written package.
+     * last detection and the last newest-release reading stand instead of
+     * probing a half-written package. The two reads run side by side.
      */
     async status({ force = false } = {}) {
-      const value = installing === undefined ? await detect({ force }) : detection
+      const [value, latest] = installing === undefined
+        ? await Promise.all([detect({ force }), latestVersion({ force })])
+        : [detection, latestReader?.peek()]
       return {
         installed: value?.installed === true,
         ...(value?.version === undefined ? {} : { version: value.version }),
         minVersion: CLAUDE_MIN_VERSION,
         outdated: isClaudeCliOutdated(value?.version),
+        ...(latest === undefined ? {} : { latest }),
+        updateAvailable: value?.version !== undefined && behind(value.version, latest),
         ...(value?.path === undefined ? {} : {
           updateCommand: isNpmClaudeInstall(value.path, { platform, realpath }) ? CLAUDE_NPM_UPDATE_COMMAND : CLAUDE_SELF_UPDATE_COMMAND,
         }),

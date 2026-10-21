@@ -127,6 +127,45 @@ test('a failed update says why and keeps the button', async t => {
   assert.ok(!content.includes(zh.cliInstallFailed))
 })
 
+test('a usable CLI behind npm\'s latest offers the update without marking it too old', async t => {
+  const view = await page(t, { ...INSTALLED, latest: '2.1.303', updateAvailable: true })
+  const content = text(view.card())
+  assert.ok(content.includes('有新版本 2.1.303，可以更新。当前版本仍可正常使用。'))
+  assert.ok(content.includes('2.1.295'))
+  assert.ok(!content.includes(zh.cliOutdated))
+  assert.ok(content.includes('将在本机执行：claude update'))
+  assert.ok(content.includes('运行中的 CLI 会话 1 个'))
+  await act(async () => view.button(zh.cliUpdate).props.onClick())
+  await settle()
+  assert.equal(JSON.stringify(view.calls.find(([endpoint]) => endpoint === 'claude-cli/update')), JSON.stringify(['claude-cli/update', {}]))
+  assert.ok(text(view.card()).includes(zh.cliUpdating))
+  const poll = view.timers.find(timer => timer.ms === 2_000)
+  assert.ok(poll !== undefined, 'the panel polls the update')
+
+  view.finish({ version: '2.1.303', updateAvailable: false, install: { state: 'succeeded', action: 'update', from: '2.1.295', to: '2.1.303' } })
+  await act(async () => poll.fn())
+  await settle()
+  const updated = text(view.card())
+  assert.ok(updated.includes('已更新到 2.1.303。'))
+  assert.ok(!updated.includes('有新版本'))
+  assert.equal(view.card().findAll(node => node.type === 'button' && text(node) === zh.cliUpdate).length, 0)
+})
+
+test('an update that left the CLI behind says so and keeps the button; a no-op run is not called an update', async t => {
+  const held = await page(t, { ...INSTALLED, latest: '2.1.303', updateAvailable: true, install: { state: 'failed', action: 'update', code: 'not-updated', latest: '2.1.303', detail: 'To update, run: brew upgrade claude-code' } })
+  const content = text(held.card())
+  assert.ok(content.includes(zh.cliUpdateFailed))
+  assert.ok(content.includes('版本仍是 2.1.295，最新版是 2.1.303'))
+  assert.ok(content.includes('brew upgrade claude-code'))
+  assert.ok(held.button(zh.cliUpdate) !== undefined)
+  assert.ok(!content.includes(zh.cliOutdated))
+
+  const same = await page(t, { ...INSTALLED, install: { state: 'succeeded', action: 'update', from: '2.1.295', to: '2.1.295' } })
+  const quiet = text(same.card())
+  assert.ok(quiet.includes('更新命令已执行，版本仍是 2.1.295。'))
+  assert.ok(!quiet.includes('已更新到'))
+})
+
 test('a missing CLI offers the install, which then polls its progress', async t => {
   const view = await page(t, { ...INSTALLED, installed: false, version: undefined, path: undefined, processes: { live: 0, opened: 0, continued: 0 } })
   assert.ok(text(view.card()).includes(zh.cliMissing))
