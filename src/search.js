@@ -32,6 +32,7 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 
 import { PROVIDER } from './constants.js'
 import { classifyClientPolicy, classifyCoverage, classifyGatewayFailure, classifyUpstreamServerError, explainClientPolicyFailure } from './failures.js'
+import { orderKeysFor } from './key-chooser.js'
 import { ambientFetch, boundedFetch } from './request.js'
 
 /** Search provider that always searches through PackyCode. */
@@ -544,7 +545,7 @@ export function createPackyCodeSearchProvider({
         sessionId: named(searchRequest?.sessionId) ?? named(resolveSessionId?.()) ?? fallbackSessionId,
       })
 
-      const candidates = await orderedKeys(ring, request.model, covers)
+      const candidates = await orderKeysFor(ring, request.model, covers)
       const other = chosen === SEARCH_BACKEND_GPT ? SEARCH_BACKEND_DEEPSEEK : SEARCH_BACKEND_GPT
       let lastFailure
       let uncovered = false
@@ -598,31 +599,6 @@ export function createPackyCodeSearchProvider({
       throw new WebError(`PackyCode search: every usable key was refused (${lastFailure ?? 'no detail'})`, 'WEB_PROVIDER_CREDENTIAL_MISSING')
     },
   })
-}
-
-/**
- * The keys one search tries, in order: the active key, then the other usable
- * keys in ring order — except that a key the group reading shows cannot reach
- * the backend's model goes last, behind every key that can or may.
- * @param ring - the key ring.
- * @param modelId - the backend's model.
- * @param covers - `(keyId, modelId) => true | false | undefined`, optional.
- * @returns the candidates, without key material beyond what the request needs.
- */
-async function orderedKeys(ring, modelId, covers) {
-  const active = await ring.activeKey()
-  if (active === undefined) return []
-  const usable = typeof ring.secrets === 'function' ? (await ring.secrets()).filter(entry => !entry.disabled) : []
-  const start = usable.findIndex(entry => entry.id === active.id)
-  const rest = start < 0 ? usable.filter(entry => entry.id !== active.id) : [...usable.slice(start + 1), ...usable.slice(0, start)]
-  const rank = entry => {
-    const value = covers?.(entry.id, modelId)
-    return value === true ? 0 : value === false ? 2 : 1
-  }
-  return [active, ...rest]
-    .map((entry, index) => ({ entry, index, rank: index === 0 && rank(entry) !== 2 ? -1 : rank(entry) }))
-    .sort((left, right) => left.rank - right.rank || left.index - right.index)
-    .map(({ entry }) => ({ id: entry.id, label: entry.label, key: entry.key }))
 }
 
 /** Marks a request already passing through the auto provider's fallback. */

@@ -23,6 +23,7 @@ const PRICING = {
     { model_name: 'claude-sonnet-5-5', enable_groups: ['cc-expensive', 'claude-officially', 'cc-sale', 'cc'] },
     { model_name: 'claude-haiku-5-5', enable_groups: ['claude-officially', 'cc'] },
     { model_name: 'grok-4.6', enable_groups: ['grok-sale'] },
+    { model_name: 'jev-latest', enable_groups: ['typesafe-officially'], supported_endpoint_types: ['systemone'] },
   ],
   usable_group: { cc: 'claude code专用', codex: 'codex专用', 'kimi-sale': ' 便宜的kimi分组，非逆向', '<script>': 'x' },
 }
@@ -40,7 +41,9 @@ test('the token groups are read out of the gateway refusal', () => {
 
 test('pricing keeps the catalog models\' groups and each group\'s description', () => {
   const pricing = parsePricing(PRICING)
-  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'gpt-6-astra', 'gpt-6.1-sol'])
+  // jev-latest is not in the picker, but auto review asks it, so its group counts.
+  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'gpt-6-astra', 'gpt-6.1-sol', 'jev-latest'])
+  assert.deepEqual(pricing.modelGroups['jev-latest'], ['typesafe-officially'])
   assert.deepEqual(pricing.modelGroups['claude-haiku-5-5'], ['cc', 'claude-officially'])
   assert.deepEqual(pricing.descriptions, { cc: 'claude code专用', codex: 'codex专用', 'kimi-sale': '便宜的kimi分组，非逆向' })
   assert.equal(parsePricing({ nope: true }), undefined)
@@ -55,7 +58,10 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,
+    'jev-latest': false,
   })
+  // Only typesafe-officially reaches Jev.
+  assert.equal(catalogCoverage({ groups: ['typesafe-officially'], modelGroups })['jev-latest'], true)
   // cc-sale serves Opus and Sonnet but not Haiku.
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-haiku-5-5'], false)
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-opus-5-5'], true)
@@ -74,6 +80,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,
+    'jev-latest': false,
   })
 })
 

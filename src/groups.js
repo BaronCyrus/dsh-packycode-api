@@ -23,7 +23,7 @@
  */
 
 import { createCachedRead } from './cached-read.js'
-import { PACKYCODE_MODEL_IDS } from './catalog.js'
+import { PACKYCODE_COVERED_MODEL_IDS } from './catalog.js'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './constants.js'
 import { statusHostOrder } from './hosts.js'
 import { ambientFetch, boundedFetch } from './request.js'
@@ -78,7 +78,7 @@ export function parseSelectedGroups(message) {
 }
 
 /**
- * Normalize `/api/pricing`: the groups each catalog model is enabled in, and
+ * Normalize `/api/pricing`: the groups each covered model is enabled in, and
  * each group's public description.
  * @param payload - the parsed pricing body.
  * @returns `{ modelGroups, descriptions }`, or undefined when unrecognized.
@@ -87,7 +87,7 @@ export function parsePricing(payload) {
   if (!record(payload) || !Array.isArray(payload.data)) return undefined
   const modelGroups = {}
   for (const item of payload.data) {
-    if (!record(item) || !PACKYCODE_MODEL_IDS.includes(item.model_name) || !Array.isArray(item.enable_groups)) continue
+    if (!record(item) || !PACKYCODE_COVERED_MODEL_IDS.includes(item.model_name) || !Array.isArray(item.enable_groups)) continue
     modelGroups[item.model_name] = [...new Set(item.enable_groups.filter(name => typeof name === 'string' && GROUP_NAME.test(name)))].sort()
   }
   const descriptions = {}
@@ -102,15 +102,15 @@ export function parsePricing(payload) {
 }
 
 /**
- * Which catalog models a key can reach. Either source decides: a model the
+ * Which covered models a key can reach. Either source decides: a model the
  * key's groups are enabled for, or one its model list shows. A model is only
  * marked unreachable on evidence; with neither source it is left unknown.
  * @param options - the key's groups, its model ids, and pricing's model groups.
- * @returns catalog model id → reachable, for the models with evidence.
+ * @returns covered model id → reachable, for the models with evidence.
  */
 export function catalogCoverage({ groups, models, modelGroups }) {
   const coverage = {}
-  for (const id of PACKYCODE_MODEL_IDS) {
+  for (const id of PACKYCODE_COVERED_MODEL_IDS) {
     const enabled = modelGroups?.[id]
     const byGroups = groups === undefined || enabled === undefined ? undefined : enabled.some(name => groups.includes(name))
     const byModels = models === undefined ? undefined : models.has(id)
@@ -245,7 +245,7 @@ export function createGroupReader({
       if (value?.rejected === true) {
         // Evidence, not a failed read: a rejected key reaches nothing.
         lastGood.delete(entry.id)
-        return { id: entry.id, rejected: true, coverage: Object.fromEntries(PACKYCODE_MODEL_IDS.map(id => [id, false])), error: new RejectedKeyError().message }
+        return { id: entry.id, rejected: true, coverage: Object.fromEntries(PACKYCODE_COVERED_MODEL_IDS.map(id => [id, false])), error: new RejectedKeyError().message }
       }
       if (value !== undefined) {
         const reading = {

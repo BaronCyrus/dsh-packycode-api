@@ -18,6 +18,32 @@ import { pickKeyForModel } from './groups.js'
 export const DEFAULT_GROUP_WAIT_MS = 6_000
 
 /**
+ * The keys one host-side request (a web search, an auto review) tries, in
+ * order: the active key, then the other usable keys in ring order — except
+ * that a key the group reading shows cannot reach the model goes last, behind
+ * every key that can or may.
+ * @param ring - the key ring.
+ * @param modelId - the model the request asks.
+ * @param covers - `(keyId, modelId) => true | false | undefined`, optional.
+ * @returns the candidates, without key material beyond what the request needs.
+ */
+export async function orderKeysFor(ring, modelId, covers) {
+  const active = await ring.activeKey()
+  if (active === undefined) return []
+  const usable = typeof ring.secrets === 'function' ? (await ring.secrets()).filter(entry => !entry.disabled) : []
+  const start = usable.findIndex(entry => entry.id === active.id)
+  const rest = start < 0 ? usable.filter(entry => entry.id !== active.id) : [...usable.slice(start + 1), ...usable.slice(0, start)]
+  const rank = entry => {
+    const value = covers?.(entry.id, modelId)
+    return value === true ? 0 : value === false ? 2 : 1
+  }
+  return [active, ...rest]
+    .map((entry, index) => ({ entry, index, rank: index === 0 && rank(entry) !== 2 ? -1 : rank(entry) }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ entry }) => ({ id: entry.id, label: entry.label, key: entry.key }))
+}
+
+/**
  * @param options - the key ring, the group reader, what to do after a key
  *   moved aside, a logger, and how long to wait for the first group reading.
  * @returns the chooser.

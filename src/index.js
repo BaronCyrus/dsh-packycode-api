@@ -18,6 +18,8 @@ import { join } from 'node:path'
 
 import z from '@deepseek-ai/schemastery'
 
+import { AUTO_REVIEW_MODELS, createAutoReviewer, DEFAULT_AUTO_REVIEW_MODEL } from './auto-review.js'
+import { createAutoReviewController } from './auto-review-controller.js'
 import { createBalanceReader } from './balance.js'
 import { isClaudeCliOutdated } from './claude-binary.js'
 import { createClaudeCliManager, createClaudeLatestReader } from './claude-install.js'
@@ -79,6 +81,10 @@ export const Config = z.object({
   imageQuality: live(z.union([...IMAGE_QUALITIES]).default('auto')),
   /** Path to the Claude Code CLI; empty means "the usual install places, then PATH". */
   claudeCliPath: live(z.string().default('')),
+  /** Offer 自动审查 in the permission menu, reviewed by the model below. */
+  autoReview: live(z.boolean().default(true)),
+  /** Which PackyCode model reviews each tool call under 自动审查. */
+  autoReviewModel: live(z.union([...AUTO_REVIEW_MODELS]).default(DEFAULT_AUTO_REVIEW_MODEL)),
 })
 
 export function apply(ctx, config) {
@@ -98,6 +104,8 @@ export function apply(ctx, config) {
     imageModel: fieldValue(config?.imageModel),
     imageQuality: fieldValue(config?.imageQuality),
     claudeCliPath: fieldValue(config?.claudeCliPath),
+    autoReview: fieldValue(config?.autoReview),
+    autoReviewModel: fieldValue(config?.autoReviewModel),
   })
   const hosts = () => {
     const current = source() ?? {}
@@ -208,6 +216,7 @@ export function apply(ctx, config) {
   const hostPreference = unwritable('PackyCode host overrides are not writable in this profile')
   const searchPreference = { writable: false, set: undefined }
   const imagePreference = { writable: false, set: undefined }
+  const autoReviewPreference = { writable: false, set: undefined }
   const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== ''
     ? process.env.DSH_HOME
     : join(homedir(), '.dsh')
@@ -248,6 +257,21 @@ export function apply(ctx, config) {
     logger: ctx.logger,
   })
 
+  /**
+   * 自动审查: the permission menu's review option, reviewed by the model the
+   * user picked here with this plugin's keys. It needs DSH's permission,
+   * approval, session and tool services; a profile without them never sees it.
+   */
+  const autoReview = createAutoReviewController({
+    reviewer: createAutoReviewer({ ring, hosts, covers: keys.covers, onKeyFailure: keys.onKeyFailure }),
+    readPreference: () => source() ?? {},
+    writePreference: patch => autoReviewPreference.set(patch),
+    isWritable: () => autoReviewPreference.writable === true && typeof autoReviewPreference.set === 'function',
+    loaderEntry,
+    logger: ctx.logger,
+  })
+  ctx.inject(['permissionPresets', 'approval', 'sessions', 'tools'], reviewCtx => autoReview.mount(reviewCtx))
+
   ctx.inject(['settings'], settingsCtx => connectSettings(settingsCtx, {
     ctx,
     Config,
@@ -261,11 +285,13 @@ export function apply(ctx, config) {
       modelSelection.reconcile()
       void images.reconcile().catch(() => undefined)
       void search.reconcile()
+      void autoReview.reconcile()
     },
     hostPreference,
     searchPreference,
     modelPreference,
     imagePreference,
+    autoReviewPreference,
   }))
   // A volatile field changed (the PackyCode panel, or a hand edit of the
   // profile patch): follow it without restarting the route.
@@ -273,6 +299,7 @@ export function apply(ctx, config) {
     modelSelection.reconcile()
     void images.reconcile().catch(() => undefined)
     void search.reconcile()
+    void autoReview.reconcile()
   })
 
   /**
@@ -317,6 +344,7 @@ export function apply(ctx, config) {
       transportFor: names => claudeTransportFor({ groups: names }),
     }),
     search,
+    autoReview,
     modelSelection,
     images,
     imageOriginals: createImageOriginalReader({
@@ -373,9 +401,31 @@ export { MCP_SERVER_NAME, MCP_TOOL_PREFIX, startClaudeMcpBridge, toolResultToMcp
 export { buildTranscript, canonicalMessage, splitConversation } from './claude-transcript.js'
 export { cliToolName, createClaudeToolNames } from './claude-tools.js'
 export { claudeTransportFor, CLI_ONLY_GROUPS, HTTP_CLAUDE_GROUPS } from './claude-transport.js'
+export {
+  AUTO_REVIEW_FLASH,
+  AUTO_REVIEW_JEV,
+  AUTO_REVIEW_LIMITS,
+  AUTO_REVIEW_MODEL_NAMES,
+  AUTO_REVIEW_MODELS,
+  AUTO_REVIEW_TIMEOUT_MS,
+  buildReviewRequest,
+  createAutoReviewer,
+  decideFromFlash,
+  decideFromJev,
+  DEFAULT_AUTO_REVIEW_MODEL,
+  JEV_ALLOW_THRESHOLD,
+  JEV_HIGH_RISK_LIMIT,
+  JEV_QUESTIONS,
+  REVIEW_POLICY,
+  reviewLimits,
+  reviewText,
+  snapshotAutoReview,
+  snapshotFromSession,
+} from './auto-review.js'
+export { AUTO_PRESET, createAutoReviewController, DSH_AUTO_REVIEW_ROW, readAutoReviewChoice } from './auto-review-controller.js'
 export { createBalanceReader, parseTokenUsage } from './balance.js'
 export { normalizeHost, statusHostOrder } from './hosts.js'
-export { PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
+export { PACKYCODE_CLASSIFIER_MODELS, PACKYCODE_COVERED_MODEL_IDS, PACKYCODE_MODELS, PACKYCODE_MODEL_IDS } from './catalog.js'
 export {
   CHANNEL,
   DEFAULT_API_HOST,
@@ -403,7 +453,7 @@ export {
 } from './failures.js'
 export { createDiagnostics, DIAGNOSTICS_FORMAT, DIAGNOSTICS_LIMITS, summarizeSessionEvents } from './diagnostics.js'
 export { catalogCoverage, createGroupReader, parsePricing, parseSelectedGroups, pickKeyForModel } from './groups.js'
-export { createKeyChooser } from './key-chooser.js'
+export { createKeyChooser, orderKeysFor } from './key-chooser.js'
 export { createModelSelectionController, readHiddenModels } from './model-selection.js'
 export { DEFAULT_IMAGE_MODEL, IMAGE_MODELS, IMAGE_MODEL_IDS, IMAGE_QUALITIES, validateImageOptions } from './image-models.js'
 export { createImageController, readImagePreference } from './image-settings.js'

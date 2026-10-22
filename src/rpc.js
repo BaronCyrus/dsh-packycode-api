@@ -4,7 +4,8 @@
  * Every reply carries only what this plugin owns: key labels and state, the
  * balance and group projections the host built, host overrides, whether this
  * device has the Claude Code CLI and which transport Claude requests take, the
- * plugin version, web search preferences and model visibility, bounded
+ * plugin version, web search, auto review and model visibility preferences
+ * with the auto review counts, bounded
  * session-authorized original PNG chunks, or a numbers-only session
  * diagnosis. Key material never crosses this boundary.
  *
@@ -32,7 +33,7 @@ const keyId = payload => String(payload?.id ?? '')
  *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claude, pluginManager, search, modelSelection, images, imageOriginals, diagnostics }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claude, pluginManager, search, autoReview, modelSelection, images, imageOriginals, diagnostics }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
@@ -40,6 +41,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
   const cli = () => need(claude, 'PackyCode Claude Code CLI support is unavailable in this runtime')
   const manager = () => need(pluginManager, 'PackyCode plugin version is unavailable')
   const webSearch = () => need(search, 'PackyCode web search is unavailable in this runtime')
+  const review = () => need(autoReview, 'PackyCode auto review is unavailable in this runtime')
   const groupReader = () => need(groups, 'PackyCode key groups are unavailable in this runtime')
   const models = () => need(modelSelection, 'PackyCode model selection is unavailable in this runtime')
   const imageSupport = () => need(images, 'PackyCode images are unavailable in this runtime')
@@ -108,6 +110,11 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     'search/update': payload => webSearch().update({
       searchProvider: payload?.searchProvider,
       searchBackend: payload?.searchBackend,
+    }),
+    'auto-review/status': () => review().status(),
+    'auto-review/update': payload => review().update({
+      autoReview: payload?.autoReview,
+      autoReviewModel: payload?.autoReviewModel,
     }),
     'models/status': () => models().status(),
     'models/update': payload => models().update({ selectedIds: payload?.selectedIds }),

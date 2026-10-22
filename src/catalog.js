@@ -238,3 +238,31 @@ export const PACKYCODE_MODELS = Object.freeze([
 
 /** Every model id this catalog advertises, in picker order. */
 export const PACKYCODE_MODEL_IDS = Object.freeze(PACKYCODE_MODELS.map(model => model.id))
+
+/**
+ * Models the plugin calls host-side and never lists in the picker. TypeSafe's
+ * Jev is a classifier, not a chat model: it answers typed questions about a
+ * JSON state over the System One protocol, which PackyCode lists as the
+ * `systemone` endpoint (`POST /v1/systemone`) in the `typesafe-officially`
+ * group. Auto review asks it whether a tool call may run. The descriptor
+ * follows pi-ai's own TypeSafe catalog entry (64K context, text only).
+ */
+export const PACKYCODE_CLASSIFIER_MODELS = Object.freeze([
+  Object.freeze({
+    type: 'classifier',
+    id: 'jev-latest',
+    name: 'Jev',
+    api: 'typesafe-system-one',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    input: Object.freeze(['text']),
+    cost: NO_COST,
+    contextWindow: 64_000,
+  }),
+])
+
+/** Every model whose group coverage is read for each key: the picker's, then the classifiers. */
+export const PACKYCODE_COVERED_MODEL_IDS = Object.freeze([
+  ...PACKYCODE_MODEL_IDS,
+  ...PACKYCODE_CLASSIFIER_MODELS.map(model => model.id),
+])

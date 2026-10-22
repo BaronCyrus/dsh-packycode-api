@@ -27,6 +27,8 @@ const INVITE_URL = 'https://www.packyapi.ai/register?aff=Im3l'
 const SEARCH_SETTLE_MS = 1_500
 /** While the CLI installs, the panel polls its status this often. */
 const INSTALL_POLL_MS = 2_000
+/** The auto review counts are re-read this often while the page is open. */
+const REVIEW_POLL_MS = 5_000
 const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 const OWN_SEARCH_IDS = { auto: 'packycode-api-auto', packycode: 'packycode-api' }
 const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
@@ -37,6 +39,8 @@ const MODEL_FAMILIES = [
   ['Grok', ['grok-4.7']],
   ['Gemini', ['gemini-4-argon', 'gemini-3.8-flash']],
   ['Claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
+  // Not in the picker: auto review's classifier.
+  ['Jev', ['jev-latest']],
 ]
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -544,6 +548,129 @@ function SearchCard({ call, t }) {
   )
 }
 
+// ── auto review ─────────────────────────────────────────────────────────────
+
+const REVIEW_BLOCKED = { 'dsh-integration': 'reviewBlockedDsh', occupied: 'reviewBlockedOccupied', unsupported: 'reviewUnsupported' }
+const REVIEW_OUTCOMES = { allowed: 'reviewOutcomeAllowed', asked: 'reviewOutcomeAsked', denied: 'reviewOutcomeDenied', failed: 'reviewOutcomeFailed' }
+const REVIEW_HINTS = { 'jev-latest': 'reviewModelJevHint', 'deepseek-flash': 'reviewModelFlashHint' }
+
+function AutoReviewCard({ call, t }) {
+  const [state, setState] = react.useState()
+  const [groups, setGroups] = react.useState()
+  const [busy, setBusy] = react.useState(false)
+  const [error, setError] = react.useState()
+  const generation = react.useRef(0)
+
+  const read = react.useCallback(() => {
+    const current = ++generation.current
+    return call('auto-review/status').then(value => {
+      if (generation.current === current) setState(value)
+    }).catch(failure => {
+      if (generation.current === current) setError(clearMessage(failure))
+    })
+  }, [call])
+
+  react.useEffect(() => {
+    let live = true
+    read()
+    // Which keys reach the reviewer: the host's cached group reading.
+    call('groups').then(value => {
+      if (live) setGroups(value)
+    }).catch(() => undefined)
+    const timer = window.setInterval(read, REVIEW_POLL_MS)
+    return () => {
+      live = false
+      generation.current += 1
+      window.clearInterval(timer)
+    }
+  }, [call, read])
+
+  const update = patch => {
+    if (busy || state?.writable !== true) return
+    setBusy(true)
+    setError(undefined)
+    generation.current += 1
+    call('auto-review/update', patch)
+      .then(value => setState(value))
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setBusy(false))
+  }
+
+  const model = state?.model
+  const modelName = state?.models?.find(entry => entry.id === model)?.name ?? model ?? ''
+  const keys = groups?.keys ?? []
+  const uncovered = model !== undefined && keys.length > 0 && keys.every(entry => entry.coverage?.[model] === false)
+  const blocked = state?.blocked === undefined ? undefined : REVIEW_BLOCKED[state.blocked]
+  const counts = state?.counts
+  const last = state?.last
+  const disabled = busy || state?.writable !== true
+
+  return (
+    <Card
+      title={t('reviewTitle')}
+      aside={state !== undefined && (
+        <span className="pkc-chip" data-tone={state.offered ? 'success' : 'neutral'}>{state.offered ? t('reviewOffered') : t('reviewNotOffered')}</span>
+      )}
+    >
+      <p className="pkc-note">{t('reviewIntro')}</p>
+      {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('reviewChecking')}</p>}
+      {state !== undefined && (
+        <>
+          <div className="pkc-setting">
+            <span className="pkc-label">{t('reviewMenuTitle')}</span>
+            <div>
+              <Segmented
+                label={t('reviewMenuTitle')}
+                value={state.enabled ? 'on' : 'off'}
+                disabled={disabled}
+                onChange={value => update({ autoReview: value === 'on' })}
+                options={[
+                  { value: 'on', label: t('reviewMenuOn') },
+                  { value: 'off', label: t('reviewMenuOff') },
+                ]}
+              />
+              {!state.enabled && <p className="pkc-note">{t('reviewMenuOffHint')}</p>}
+            </div>
+          </div>
+          <div className="pkc-setting">
+            <span className="pkc-label">{t('reviewModelTitle')}</span>
+            <div>
+              <Segmented
+                label={t('reviewModelTitle')}
+                value={model}
+                disabled={disabled}
+                onChange={value => update({ autoReviewModel: value })}
+                options={(state.models ?? []).map(entry => ({ value: entry.id, label: entry.name }))}
+              />
+              {REVIEW_HINTS[model] !== undefined && <p className="pkc-note">{t(REVIEW_HINTS[model])}</p>}
+            </div>
+          </div>
+          {uncovered && <p className="pkc-warn">{fill(t('reviewUncovered'), { model: modelName })}</p>}
+          {state.enabled && blocked !== undefined && <p className="pkc-warn">{t(blocked)}</p>}
+          {state.enabled && blocked === undefined && state.available !== true && <p className="pkc-note">{t('reviewUnavailable')}</p>}
+          {counts !== undefined && counts.reviewed > 0 && (
+            <div className="pkc-status">
+              <span className="pkc-dot" data-tone={counts.failed > 0 ? 'warn' : 'success'} />
+              <span className="pkc-meta">{fill(t('reviewCounts'), counts)}</span>
+            </div>
+          )}
+          {last !== undefined && (
+            <p className="pkc-meta">{fill(t('reviewLast'), {
+              tool: last.tool ?? '',
+              outcome: t(REVIEW_OUTCOMES[last.outcome] ?? 'reviewOutcomeFailed'),
+              model: state.models?.find(entry => entry.id === last.model)?.name ?? last.model ?? '',
+              seconds: typeof last.ms === 'number' ? (last.ms / 1000).toFixed(1) : '?',
+            })}</p>
+          )}
+          {state.writable !== true && <p className="pkc-note">{t('searchNotWritable')}</p>}
+          <p className="pkc-note">{t('reviewMenuNote')}</p>
+        </>
+      )}
+      {error !== undefined && <p className="pkc-error" role="alert">{`${t('reviewLoadFailed')}: ${error}`}</p>}
+    </Card>
+  )
+}
+
 // ── Claude Code CLI ─────────────────────────────────────────────────────────
 
 const INSTALL_FAILURES = {
@@ -828,6 +955,7 @@ function PackyCodeSection({ rpc, t }) {
       <ClaudeCliCard call={call} t={t} />
       <ModelsCard call={call} t={t} />
       <SearchCard call={call} t={t} />
+      <AutoReviewCard call={call} t={t} />
       <VersionCard call={call} t={t} />
       <DiagnosticsCard call={call} t={t} />
     </div>

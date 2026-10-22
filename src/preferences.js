@@ -8,7 +8,8 @@
  *   plugin's own row, read through a live reference, written through
  *   `settings.update(rowId, patch)`, and announced by `loader/volatile-update`.
  *   Only volatile fields are writable there, so the host overrides stay
- *   read-only while web search, model visibility and images are editable.
+ *   read-only while web search, model visibility, images and auto review
+ *   are editable.
  *
  * @module dsh-packycode-api/preferences
  */
@@ -57,7 +58,7 @@ export function unwritable(message) {
  *   current source and how to replace it, what to do when the section changes,
  *   and the preference targets this fills in (host overrides, search, models).
  */
-export function connectSettings(settingsCtx, { ctx, Config, namespace, source, setSource, onChange, hostPreference, searchPreference, modelPreference, imagePreference }) {
+export function connectSettings(settingsCtx, { ctx, Config, namespace, source, setSource, onChange, hostPreference, searchPreference, modelPreference, imagePreference, autoReviewPreference }) {
   const settings = settingsCtx.settings
   if (typeof settings?.installSection === 'function') {
     try {
@@ -74,6 +75,7 @@ export function connectSettings(settingsCtx, { ctx, Config, namespace, source, s
         Object.assign(searchPreference, target)
         Object.assign(modelPreference, target)
         if (imagePreference !== undefined) Object.assign(imagePreference, target)
+        if (autoReviewPreference !== undefined) Object.assign(autoReviewPreference, target)
       }
     } catch (error) {
       ctx.logger?.warn?.('packycode-api: host overrides unavailable, defaults stand: %s', error.message)
@@ -86,6 +88,7 @@ export function connectSettings(settingsCtx, { ctx, Config, namespace, source, s
   Object.assign(searchPreference, target)
   Object.assign(modelPreference, target)
   if (imagePreference !== undefined) Object.assign(imagePreference, target)
+  if (autoReviewPreference !== undefined) Object.assign(autoReviewPreference, target)
   if (typeof settings.configure === 'function') {
     // The PackyCode panel is the editor; no generated duplicate page.
     const scope = typeof settingsCtx.effect === 'function' ? settingsCtx : ctx
