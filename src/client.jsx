@@ -836,6 +836,12 @@ function readDateTime(ms) {
   catch { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') }
 }
 
+/** Copy for an update pnpm could not fetch: the source still syncing, or unreachable; with and without its host. */
+const UPDATE_BLOCKED = {
+  syncing: ['versionUpdateSyncing', 'versionUpdateSyncingFrom'],
+  unreachable: ['versionUpdateUnreachable', 'versionUpdateUnreachableFrom'],
+}
+
 function VersionCard({ call, t }) {
   const [info, setInfo] = react.useState()
   const [loading, setLoading] = react.useState(true)
@@ -844,6 +850,8 @@ function VersionCard({ call, t }) {
   const [updateFailed, setUpdateFailed] = react.useState(false)
   /** A version pnpm still holds back under the profile's release-age policy. */
   const [pending, setPending] = react.useState()
+  /** A version pnpm could not fetch: its install source still syncing, or unreachable. */
+  const [blocked, setBlocked] = react.useState()
   const [updated, setUpdated] = react.useState()
   const [restartHint, setRestartHint] = react.useState(false)
   const generation = react.useRef(0)
@@ -870,9 +878,14 @@ function VersionCard({ call, t }) {
     setUpdating(true)
     setUpdateFailed(false)
     setPending(undefined)
+    setBlocked(undefined)
     call('plugin/update').then(value => {
       if (value?.pending === true) {
         setPending(value)
+        return
+      }
+      if (UPDATE_BLOCKED[value?.failed] !== undefined) {
+        setBlocked(value)
         return
       }
       setUpdated(value)
@@ -908,6 +921,12 @@ function VersionCard({ call, t }) {
       {showStatus && installKind === 'link' && <p className="pkc-note">{t('versionLinked')}</p>}
       {showStatus && info.updateAvailable && installKind === 'unknown' && <p className="pkc-note">{t('versionManual')}</p>}
       {updateFailed && <p className="pkc-error" role="alert">{t('versionUpdateFailed')}</p>}
+      {blocked !== undefined && (
+        // Still syncing is a wait, like the release cooldown; an unreachable source is a failure.
+        <p className={blocked.failed === 'syncing' ? 'pkc-note' : 'pkc-error'} role={blocked.failed === 'syncing' ? 'status' : 'alert'}>
+          {fill(t(UPDATE_BLOCKED[blocked.failed][typeof blocked.registry === 'string' ? 1 : 0]), { version: blocked.version, registry: blocked.registry })}
+        </p>
+      )}
       {pending !== undefined && <p className="pkc-note" role="status">{typeof pending.availableAt === 'number'
         ? fill(t('versionCoolingUntil'), { version: pending.version, time: readDateTime(pending.availableAt) })
         : fill(t('versionCooling'), { version: pending.version })}</p>}

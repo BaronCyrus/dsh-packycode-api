@@ -8,6 +8,7 @@ import test from 'node:test'
 import {
   compareSemver,
   createPackyCodePluginManager,
+  installFailure,
   NPM_REGISTRY_LATEST_URL,
   PACKAGE_NAME,
   parseSemver,
@@ -399,4 +400,71 @@ test('loopback RPC exposes version and update endpoints with sanitized errors', 
     ok: false,
     error: { code: 'packycode/request-failed', message: 'PackyCode plugin version is unavailable', details: {} },
   })
+})
+
+/** What DSH's bundled pnpm 11.28.5 printed on 2026-10-22, shortly after 1.3.8 was published. */
+const MIRROR_NOT_SYNCED = `? Verifying lockfile against supply-chain policies (1 entry)...
+\u001b[32m✓\u001b[39m Lockfile passes supply-chain policies (1 entry in 2ms)
+[ERR_PNPM_NO_MATCHING_VERSION] No matching version found for dsh-packycode-api@1.3.8 while fetching it from https://registry.npmmirror.com/
+This error happened while installing a direct dependency of /Users/someone/.dsh/profiles/desktop
+The latest release of dsh-packycode-api is "1.3.7". Published at 10/21/2026 4:49:59 PM`
+const TARBALL_NOT_SERVED = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/dsh-packycode-api/-/dsh-packycode-api-1.3.8.tgz: Not Found - 404\nNo authorization header was set for the request.'
+const SOURCE_UNREACHABLE = '[ERR_PNPM_META_FETCH_FAIL] GET https://registry.npmjs.org/dsh-packycode-api: fetch failed\nThis error happened while installing a direct dependency of /Users/someone/.dsh/profiles/desktop'
+
+test('pnpm\'s output says whether the install source is still syncing or out of reach', () => {
+  assert.deepEqual(installFailure(MIRROR_NOT_SYNCED), { reason: 'syncing', registry: 'registry.npmmirror.com' })
+  assert.deepEqual(installFailure(TARBALL_NOT_SERVED), { reason: 'syncing', registry: 'registry.npmjs.org' })
+  assert.deepEqual(installFailure(SOURCE_UNREACHABLE), { reason: 'unreachable', registry: 'registry.npmjs.org' })
+  assert.deepEqual(installFailure('ERR_PNPM_META_FETCH_FAIL  GET http://127.0.0.1:9/dsh-packycode-api: request failed, reason: connect ECONNREFUSED'), { reason: 'unreachable', registry: '127.0.0.1:9' })
+  assert.deepEqual(installFailure('getaddrinfo ENOTFOUND registry.npmjs.org'), { reason: 'unreachable' })
+  // Only the host leaves the machine, never credentials or a path.
+  assert.deepEqual(installFailure('[ERR_PNPM_META_FETCH_FAIL] GET https://user:secret@npm.corp.example:8443/dsh-packycode-api: fetch failed'), { reason: 'unreachable', registry: 'npm.corp.example:8443' })
+  // Another package's 404 and any other failure are not this update's.
+  assert.equal(installFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/left-pad/-/left-pad-9.9.9.tgz: Not Found - 404'), undefined)
+  assert.equal(installFailure('pnpm exploded with secret-ish output'), undefined)
+  assert.equal(installFailure(undefined), undefined)
+})
+
+test('an update the install source cannot serve yet, or cannot be reached for, says so instead of failing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packy-version-source-'))
+  const ownPackageJsonUrl = await npmInstall(root, '1.3.7')
+  const managerFor = runCommand => createPackyCodePluginManager({ env: { DSH_HOME: root }, ownPackageJsonUrl, fetchImpl: registryOk('1.3.8'), runCommand })
+  assert.deepEqual(await managerFor(async () => ({ code: 1, stdout: '', stderr: MIRROR_NOT_SYNCED })).update(), {
+    version: '1.3.8', profile: 'web', failed: 'syncing', registry: 'registry.npmmirror.com',
+  })
+  assert.deepEqual(await managerFor(async () => ({ code: 1, stdout: SOURCE_UNREACHABLE, stderr: '' })).update(), {
+    version: '1.3.8', profile: 'web', failed: 'unreachable', registry: 'registry.npmjs.org',
+  })
+  // A pnpm that would not even start is still a plain failure.
+  await assert.rejects(() => managerFor(async () => { throw Object.assign(new Error('spawn pnpm ENOENT'), { code: 'ENOENT' }) }).update(), /^Error: PackyCode plugin update failed$/u)
+})
+
+test('a pnpm that hangs past the update\'s bound reads as an unreachable source', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packy-version-hang-'))
+  const ownPackageJsonUrl = await npmInstall(root, '1.3.7')
+  // A pnpm that never answers, started by the real spawn: Node reports the
+  // bound's abort as its own AbortError, which must not hide the reason.
+  const pnpm = join(root, 'runtime', 'pnpm', 'bin', 'pnpm.mjs')
+  await mkdir(join(pnpm, '..'), { recursive: true })
+  await writeFile(pnpm, 'setInterval(() => {}, 1000)\n')
+  const manager = createPackyCodePluginManager({
+    env: { DSH_HOME: root },
+    ownPackageJsonUrl,
+    fetchImpl: registryOk('1.3.8'),
+    execPath: process.execPath,
+    argv: [process.execPath, pnpm],
+    updateTimeoutMs: 300,
+  })
+  assert.deepEqual(await manager.update(), { version: '1.3.8', profile: 'web', failed: 'unreachable' })
+  // A cancel is still a cancel, not an unreachable source.
+  const cancelled = new AbortController()
+  setTimeout(() => cancelled.abort(new Error('stopped by the test')), 100)
+  await assert.rejects(() => createPackyCodePluginManager({
+    env: { DSH_HOME: root },
+    ownPackageJsonUrl,
+    fetchImpl: registryOk('1.3.8'),
+    execPath: process.execPath,
+    argv: [process.execPath, pnpm],
+    updateTimeoutMs: 60_000,
+  }).update({ signal: cancelled.signal }), /^Error: stopped by the test$/u)
 })

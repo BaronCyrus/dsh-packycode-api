@@ -87,3 +87,22 @@ test('a completed update still reports the installed version', async t => {
   assert.ok(text(page.card()).includes(fill(zh.versionUpdated, { version: '1.3.3' })))
   assert.equal(text(page.card()).includes(fill(zh.versionCooling, { version: '1.3.3' })), false)
 })
+
+test('an install source still syncing reads as a wait, naming the source', async t => {
+  const page = await versionFixture(t, { version: '1.3.3', profile: 'desktop', failed: 'syncing', registry: 'registry.npmmirror.com' })
+  await page.update()
+  const body = text(page.card())
+  assert.ok(body.includes(fill(zh.versionUpdateSyncingFrom, { version: '1.3.3', registry: 'registry.npmmirror.com' })))
+  assert.equal(body.includes(zh.versionUpdateFailed), false)
+  assert.equal(page.card().findAll(node => node.props?.role === 'alert').length, 0, 'a wait is not an alert')
+  assert.equal(page.updateButton().length, 1, 'the button stays for the next try')
+})
+
+test('an unreachable install source asks to check the network', async t => {
+  const page = await versionFixture(t, { version: '1.3.3', profile: 'desktop', failed: 'unreachable' })
+  await page.update()
+  const body = text(page.card())
+  assert.ok(body.includes(fill(zh.versionUpdateUnreachable, { version: '1.3.3' })))
+  assert.equal(body.includes(zh.versionUpdateFailed), false)
+  assert.equal(page.card().findAll(node => node.props?.role === 'alert').length, 1)
+})
