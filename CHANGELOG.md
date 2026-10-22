@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.8
 
 - **DSH's official 自动审查 can review with jev-latest or DeepSeek Flash.** DSH ships an experimental "自动授权审查" plugin (`@deepseek-ai/dsh-experimental-auto-review`, row `auto-review`, off by default). Switched on, it adds 自动审查 to the composer's permission menu and reviews every tool call of a session in that mode with one hand-built `llm.stream` request on the session's own model. The plugin now listens on DSH's `llm/stream` waterfall, which every model request passes. It recognizes that request by its fixed `REVIEW_POLICY` system prompt and four-section message, and answers it with the reviewer chosen under Settings → PackyCode → 自动审查 (`autoReviewModel`: `jev-latest` by default, `deepseek-flash`, or `session` to leave it alone). What is reviewed, the policy, asking the user, final denials in children, and refusing a call whose review failed all stay the official plugin's. Every other request goes on untouched. The plugin registers no permission preset and no tool gate of its own.
 - **DeepSeek Flash gets the official request itself**, re-addressed to `packycode/deepseek-flash`; the official reviewer reads its answer.
