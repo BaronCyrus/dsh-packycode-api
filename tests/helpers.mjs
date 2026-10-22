@@ -4,6 +4,29 @@
 
 import * as piAi from '@earendil-works/pi-ai'
 
+import { CLAUDE_NPM_LATEST_URL } from '../src/claude-install.js'
+
+/**
+ * Answer the Claude Code CLI card's read of the newest CLI release in
+ * process. `claude-cli/status` waits for that npm request (up to its 10 s
+ * timeout), so a test calling it would wait on the network; a slow npm once
+ * outlasted a fixture's 5 s request timeout in CI. Any other request is
+ * refused and recorded.
+ * @param t - the test whose mock scope restores `fetch`.
+ * @param version - the newest release npm should seem to name.
+ * @returns the URLs of refused requests, for the test to check.
+ */
+export function stubClaudeLatest(t, version = '2.1.303') {
+  const refused = []
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = String(input?.url ?? input)
+    if (url === CLAUDE_NPM_LATEST_URL) return Response.json({ version })
+    refused.push(url)
+    throw new TypeError(`no network in this test: ${url}`)
+  })
+  return refused
+}
+
 /**
  * The route's pi-ai provider, called the way DSH's pi-ai `Models` calls it.
  * pi-ai 1.x (DSH 0.2.1) folds a context's `systemPrompt` and `tools` into a

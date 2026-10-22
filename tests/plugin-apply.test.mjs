@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { apply, Config, inject, name } from '../src/index.js'
-import { fakeCredentials } from './helpers.mjs'
+import { fakeCredentials, stubClaudeLatest } from './helpers.mjs'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { fieldValue } from '../src/preferences.js'
 import { anthropicStream } from './fixtures/anthropic.mjs'
@@ -61,7 +61,9 @@ function stubContext() {
 /** A configured CLI path that cannot exist, so no test starts a real Claude Code CLI. */
 const NO_CLI = '/nonexistent/packycode-test-claude-cli'
 
-test('registers one route and one directory entry, and defers the browser surface', async () => {
+test('registers one route and one directory entry, and defers the browser surface', async t => {
+  // The CLI status below waits for npm's newest Claude Code release.
+  const refused = stubClaudeLatest(t)
   const { ctx, registered } = stubContext()
   apply(ctx, { claudeCliPath: NO_CLI })
 
@@ -106,7 +108,9 @@ test('registers one route and one directory entry, and defers the browser surfac
   assert.equal(cli.value.configuredPath, NO_CLI)
   assert.equal(Object.hasOwn(cli.value, 'transport'), false)
   assert.equal(cli.value.minVersion, '2.1.259')
+  assert.equal(cli.value.latest, '2.1.303', 'the newest release came from the stub, not npm')
   assert.deepEqual(cli.value.processes, { live: 0, opened: 0, continued: 0 })
+  assert.deepEqual(refused, [], 'nothing else reached the network')
 })
 
 test('native image generation remains registered after CLI delegation is removed', async () => {

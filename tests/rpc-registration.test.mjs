@@ -7,7 +7,7 @@ import { HostConnectionService, serverResponseSchema } from '@deepseek-ai/dsh-cl
 import { Context as Context020, HostConnectionService as Connection020, serverResponseSchema as response020 } from 'packycode-host-v020-fixture'
 
 import * as packycode from '../src/index.js'
-import { fakeCredentials } from './helpers.mjs'
+import { fakeCredentials, stubClaudeLatest } from './helpers.mjs'
 
 const hosts = [
   { name: 'DSH 0.2.0-rc.2', Context: Context020, Connection: Connection020, responseSchema: response020 },
@@ -23,6 +23,10 @@ const COOKIE = 'fixture-session=authenticated'
  * on the root would accidentally authorize reads without an inject.
  */
 async function runningHost(t, { Context, Connection }, { withWebServer = true } = {}) {
+  // The settings routes make one network request, npm's newest Claude Code
+  // release for the CLI card; answered here, no request below waits on npm.
+  const refused = stubClaudeLatest(t)
+  t.after(() => assert.deepEqual(refused, [], 'the settings routes made no other request'))
   const ctx = new Context()
   const routes = new Map()
   let connectionStarts = 0
@@ -113,6 +117,7 @@ for (const host of hosts) {
     assert.equal(cli.result.ok, true)
     assert.equal(cli.result.value.installed, false)
     assert.equal(cli.result.value.minVersion, '2.1.259')
+    assert.equal(cli.result.value.latest, '2.1.303', 'the newest release came from the stub, not npm')
     assert.equal(Object.hasOwn(cli.result.value, 'transport'), false)
     env.assertUnrestarted()
     await fiber.dispose()
