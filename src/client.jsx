@@ -550,10 +550,11 @@ function SearchCard({ call, t }) {
 
 // ── auto review ─────────────────────────────────────────────────────────────
 
-const REVIEW_BLOCKED = { 'dsh-integration': 'reviewBlockedDsh', occupied: 'reviewBlockedOccupied', unsupported: 'reviewUnsupported' }
-const REVIEW_OUTCOMES = { allowed: 'reviewOutcomeAllowed', asked: 'reviewOutcomeAsked', denied: 'reviewOutcomeDenied', failed: 'reviewOutcomeFailed' }
-const REVIEW_HINTS = { 'jev-latest': 'reviewModelJevHint', 'deepseek-flash': 'reviewModelFlashHint' }
+const REVIEW_OUTCOMES = { allowed: 'reviewOutcomeAllowed', denied: 'reviewOutcomeDenied', failed: 'reviewOutcomeFailed' }
+const REVIEW_LABELS = { 'jev-latest': 'reviewModelJev', 'deepseek-flash': 'reviewModelFlash', session: 'reviewModelSession' }
+const REVIEW_HINTS = { 'jev-latest': 'reviewModelJevHint', 'deepseek-flash': 'reviewModelFlashHint', session: 'reviewModelSessionHint' }
 
+/** Which model DSH's official auto review uses; the official plugin owns the rest. */
 function AutoReviewCard({ call, t }) {
   const [state, setState] = react.useState()
   const [groups, setGroups] = react.useState()
@@ -596,11 +597,11 @@ function AutoReviewCard({ call, t }) {
       .finally(() => setBusy(false))
   }
 
+  const label = id => (REVIEW_LABELS[id] === undefined ? id : t(REVIEW_LABELS[id]))
   const model = state?.model
-  const modelName = state?.models?.find(entry => entry.id === model)?.name ?? model ?? ''
+  const enabled = state?.official?.enabled === true
   const keys = groups?.keys ?? []
-  const uncovered = model !== undefined && keys.length > 0 && keys.every(entry => entry.coverage?.[model] === false)
-  const blocked = state?.blocked === undefined ? undefined : REVIEW_BLOCKED[state.blocked]
+  const uncovered = model !== undefined && model !== 'session' && keys.length > 0 && keys.every(entry => entry.coverage?.[model] === false)
   const counts = state?.counts
   const last = state?.last
   const disabled = busy || state?.writable !== true
@@ -609,29 +610,14 @@ function AutoReviewCard({ call, t }) {
     <Card
       title={t('reviewTitle')}
       aside={state !== undefined && (
-        <span className="pkc-chip" data-tone={state.offered ? 'success' : 'neutral'}>{state.offered ? t('reviewOffered') : t('reviewNotOffered')}</span>
+        <span className="pkc-chip" data-tone={enabled ? 'success' : 'neutral'}>{enabled ? t('reviewOfficialOn') : t('reviewOfficialOff')}</span>
       )}
     >
       <p className="pkc-note">{t('reviewIntro')}</p>
       {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('reviewChecking')}</p>}
       {state !== undefined && (
         <>
-          <div className="pkc-setting">
-            <span className="pkc-label">{t('reviewMenuTitle')}</span>
-            <div>
-              <Segmented
-                label={t('reviewMenuTitle')}
-                value={state.enabled ? 'on' : 'off'}
-                disabled={disabled}
-                onChange={value => update({ autoReview: value === 'on' })}
-                options={[
-                  { value: 'on', label: t('reviewMenuOn') },
-                  { value: 'off', label: t('reviewMenuOff') },
-                ]}
-              />
-              {!state.enabled && <p className="pkc-note">{t('reviewMenuOffHint')}</p>}
-            </div>
-          </div>
+          {!enabled && <p className="pkc-warn">{t('reviewEnableHint')}</p>}
           <div className="pkc-setting">
             <span className="pkc-label">{t('reviewModelTitle')}</span>
             <div>
@@ -640,14 +626,12 @@ function AutoReviewCard({ call, t }) {
                 value={model}
                 disabled={disabled}
                 onChange={value => update({ autoReviewModel: value })}
-                options={(state.models ?? []).map(entry => ({ value: entry.id, label: entry.name }))}
+                options={(state.models ?? []).map(entry => ({ value: entry.id, label: label(entry.id) }))}
               />
               {REVIEW_HINTS[model] !== undefined && <p className="pkc-note">{t(REVIEW_HINTS[model])}</p>}
             </div>
           </div>
-          {uncovered && <p className="pkc-warn">{fill(t('reviewUncovered'), { model: modelName })}</p>}
-          {state.enabled && blocked !== undefined && <p className="pkc-warn">{t(blocked)}</p>}
-          {state.enabled && blocked === undefined && state.available !== true && <p className="pkc-note">{t('reviewUnavailable')}</p>}
+          {uncovered && <p className="pkc-warn">{fill(t('reviewUncovered'), { model: label(model) })}</p>}
           {counts !== undefined && counts.reviewed > 0 && (
             <div className="pkc-status">
               <span className="pkc-dot" data-tone={counts.failed > 0 ? 'warn' : 'success'} />
@@ -658,7 +642,7 @@ function AutoReviewCard({ call, t }) {
             <p className="pkc-meta">{fill(t('reviewLast'), {
               tool: last.tool ?? '',
               outcome: t(REVIEW_OUTCOMES[last.outcome] ?? 'reviewOutcomeFailed'),
-              model: state.models?.find(entry => entry.id === last.model)?.name ?? last.model ?? '',
+              model: last.version ?? label(last.model),
               seconds: typeof last.ms === 'number' ? (last.ms / 1000).toFixed(1) : '?',
             })}</p>
           )}

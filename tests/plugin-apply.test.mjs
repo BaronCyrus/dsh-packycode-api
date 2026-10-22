@@ -87,7 +87,7 @@ test('registers one route and one directory entry, and defers the browser surfac
   // `webServer` rides with `connection`: channel registration writes through
   // `owner.webServer`, so a scope holding only `connection` cannot register.
   // `web` carries the search providers; a profile without it still boots.
-  assert.deepEqual(ctx.injected, [['permissionPresets', 'approval', 'sessions', 'tools'], ['settings'], ['web'], ['connection', 'webServer'], ['tools', 'attachments']])
+  assert.deepEqual(ctx.injected, [['settings'], ['web'], ['connection', 'webServer'], ['tools', 'attachments']])
   assert.equal(registered.rpc.length, 1)
   assert.equal(registered.rpc[0].channel, '/packycode-api')
   assert.ok(registered.effects.some(label => label.includes('loopback')))
@@ -227,4 +227,18 @@ test('original image RPC uses a cancellable read-only session observation and al
   broken = true
   assert.equal((await rpc('images/original', request, signal)).ok, false)
   assert.equal(released, 2)
+})
+
+test('the plugin listens on llm/stream and leaves every request it does not own to the waterfall', () => {
+  const { ctx } = stubContext()
+  const listeners = []
+  ctx.on = (event, listener) => {
+    listeners.push({ event, listener })
+    return () => true
+  }
+  apply(ctx, Config({ claudeCliPath: NO_CLI }))
+  const review = listeners.filter(entry => entry.event === 'llm/stream')
+  assert.equal(review.length, 1)
+  const request = { provider: 'packycode', model: 'deepseek-flash', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }
+  assert.equal(review[0].listener(request, () => 'next'), 'next')
 })

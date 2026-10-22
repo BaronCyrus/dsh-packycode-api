@@ -18,7 +18,7 @@ import { join } from 'node:path'
 
 import z from '@deepseek-ai/schemastery'
 
-import { AUTO_REVIEW_MODELS, createAutoReviewer, DEFAULT_AUTO_REVIEW_MODEL } from './auto-review.js'
+import { AUTO_REVIEW_MODELS, createJevReviewer, DEFAULT_AUTO_REVIEW_MODEL } from './auto-review.js'
 import { createAutoReviewController } from './auto-review-controller.js'
 import { createBalanceReader } from './balance.js'
 import { isClaudeCliOutdated } from './claude-binary.js'
@@ -81,9 +81,10 @@ export const Config = z.object({
   imageQuality: live(z.union([...IMAGE_QUALITIES]).default('auto')),
   /** Path to the Claude Code CLI; empty means "the usual install places, then PATH". */
   claudeCliPath: live(z.string().default('')),
-  /** Offer 自动审查 in the permission menu, reviewed by the model below. */
-  autoReview: live(z.boolean().default(true)),
-  /** Which PackyCode model reviews each tool call under 自动审查. */
+  /**
+   * Which model DSH's official 自动审查 reviews with: `jev-latest` or
+   * `deepseek-flash` through PackyCode, or `session` for its own default.
+   */
   autoReviewModel: live(z.union([...AUTO_REVIEW_MODELS]).default(DEFAULT_AUTO_REVIEW_MODEL)),
 })
 
@@ -104,7 +105,6 @@ export function apply(ctx, config) {
     imageModel: fieldValue(config?.imageModel),
     imageQuality: fieldValue(config?.imageQuality),
     claudeCliPath: fieldValue(config?.claudeCliPath),
-    autoReview: fieldValue(config?.autoReview),
     autoReviewModel: fieldValue(config?.autoReviewModel),
   })
   const hosts = () => {
@@ -258,19 +258,21 @@ export function apply(ctx, config) {
   })
 
   /**
-   * 自动审查: the permission menu's review option, reviewed by the model the
-   * user picked here with this plugin's keys. It needs DSH's permission,
-   * approval, session and tool services; a profile without them never sees it.
+   * DSH's official 自动审查 reviews each tool call with one model request; the
+   * `llm/stream` listener answers it with the reviewer picked here, using this
+   * plugin's keys. The official plugin keeps the menu entry and the outcomes.
    */
   const autoReview = createAutoReviewController({
-    reviewer: createAutoReviewer({ ring, hosts, covers: keys.covers, onKeyFailure: keys.onKeyFailure }),
+    jev: createJevReviewer({ ring, hosts, covers: keys.covers, onKeyFailure: keys.onKeyFailure }),
+    stream: options => ctx.llm.stream(options),
     readPreference: () => source() ?? {},
     writePreference: patch => autoReviewPreference.set(patch),
     isWritable: () => autoReviewPreference.writable === true && typeof autoReviewPreference.set === 'function',
     loaderEntry,
+    presetNames: () => ctx.get?.('permissionPresets')?.names ?? [],
     logger: ctx.logger,
   })
-  ctx.inject(['permissionPresets', 'approval', 'sessions', 'tools'], reviewCtx => autoReview.mount(reviewCtx))
+  ctx.on?.('llm/stream', autoReview.listener)
 
   ctx.inject(['settings'], settingsCtx => connectSettings(settingsCtx, {
     ctx,
@@ -285,7 +287,6 @@ export function apply(ctx, config) {
       modelSelection.reconcile()
       void images.reconcile().catch(() => undefined)
       void search.reconcile()
-      void autoReview.reconcile()
     },
     hostPreference,
     searchPreference,
@@ -299,7 +300,6 @@ export function apply(ctx, config) {
     modelSelection.reconcile()
     void images.reconcile().catch(() => undefined)
     void search.reconcile()
-    void autoReview.reconcile()
   })
 
   /**
@@ -402,25 +402,25 @@ export { buildTranscript, canonicalMessage, splitConversation } from './claude-t
 export { cliToolName, createClaudeToolNames } from './claude-tools.js'
 export { claudeTransportFor, CLI_ONLY_GROUPS, HTTP_CLAUDE_GROUPS } from './claude-transport.js'
 export {
+  answerChunks,
   AUTO_REVIEW_FLASH,
   AUTO_REVIEW_JEV,
-  AUTO_REVIEW_LIMITS,
   AUTO_REVIEW_MODEL_NAMES,
   AUTO_REVIEW_MODELS,
+  AUTO_REVIEW_SESSION,
   AUTO_REVIEW_TIMEOUT_MS,
-  buildReviewRequest,
-  createAutoReviewer,
-  decideFromFlash,
+  createJevReviewer,
   decideFromJev,
   DEFAULT_AUTO_REVIEW_MODEL,
+  failureChunk,
+  isOfficialReviewRequest,
   JEV_ALLOW_THRESHOLD,
   JEV_HIGH_RISK_LIMIT,
+  JEV_LIMITS,
   JEV_QUESTIONS,
-  REVIEW_POLICY,
-  reviewLimits,
-  reviewText,
-  snapshotAutoReview,
-  snapshotFromSession,
+  jevState,
+  officialAnswer,
+  readReviewSections,
 } from './auto-review.js'
 export { AUTO_PRESET, createAutoReviewController, DSH_AUTO_REVIEW_ROW, readAutoReviewChoice } from './auto-review-controller.js'
 export { createBalanceReader, parseTokenUsage } from './balance.js'

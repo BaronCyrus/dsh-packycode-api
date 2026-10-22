@@ -32,7 +32,7 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | **Claude route by group** | The `cc` group only serves the official client, so Claude requests on `cc` keys go through this device's Claude Code CLI; `cc-sale`, `cc-expensive`, `claude-officially` and other groups use the plugin's HTTP route. Either way DSH runs the tools and permissions, and plan mode, attachments and the full history behave the same |
 | **Web search through PackyCode** | Optional: DSH's `web_search` searches through PackyCode, with a DeepSeek or GPT backend, for every request or for PackyCode models only |
 | **Image generation and editing** | Separate image keys, GPT Image 2 / 2.5 Flare / 2.5 Sunburst, model and quality settings, reference edits and original PNG storage; generation and editing verified against the gateway |
-| **Auto review** | The composer's permission menu gains Auto review: before each tool call jev-latest or DeepSeek Flash reviews it, safe calls run at once and risky ones ask for your approval, like Codex's automatic approval and Claude Code's auto mode |
+| **Auto review on your model** | With DSH's built-in “Auto authorization review” switched on, the permission menu's Auto review can review each tool call with jev-latest or DeepSeek Flash; the rules and outcomes stay the official ones |
 | **Credentials stay on the machine** | Keys live in the DSH credential file. The browser receives labels, state, and balances only |
 
 <img width="774" height="455" alt="截屏2026-10-15 10 34 28" src="https://github.com/user-attachments/assets/c5eaa535-dd1e-4e2f-be9f-c181404d4dd6" />
@@ -169,34 +169,48 @@ Live checks on 2026-10-15 passed generation and editing at `low` on all three en
 
 ### Auto review
 
-The permission menu under the composer (Read only / Workspace write / Full access) gains **Auto review**, marked EXP. Once you pick it and confirm, every tool call in that session goes to a reviewer model first, which decides whether it runs or asks you:
+DSH ships an experimental plugin, “Auto authorization review”, switched off by default. Switched on, it adds **Auto review** (marked EXP) to the permission menu under the composer (Read only / Workspace write / Full access). In a session set to Auto review, a model reviews every tool call first:
 
-| Review | What happens |
-| --- | --- |
-| Low risk: reading and editing project files, tests and builds, installing the project's dependencies, read-only commands, Git operations that do not rewrite history, cleaning up files or branches this session created | Runs at once (no sandbox, as with Full access) |
-| Medium risk: deleting or overwriting existing files, force push or history rewrites, production systems and deployments, writing or sending to external services, permission and system changes, sudo, reading credentials, changing anything outside the working directory | Runs only when you explicitly asked for this action on this target and scope in the conversation; otherwise asks you |
-| High risk: sending credentials, keys or private data out, weakening security to hide activity, destroying the home directory or the system | Always asks you, even when you requested it |
-| Review failed: a network error, no usable key, an unreadable answer | Asks you; nothing runs on its own |
+- A call it allows runs at once, without a sandbox.
+- A call it denies asks for your approval; in a subagent it is refused outright.
+- When the review itself fails, the call does not run.
 
-Choose the reviewer under **Settings → PackyCode → Auto review**:
+By default DSH reviews with the conversation's own model. This plugin leaves the review logic alone and only swaps the reviewer model. Choose it under **Settings → PackyCode → Auto review**:
 
-| Reviewer | Speed and billing | Group needed |
+| Reviewer | Notes | Group needed |
 | --- | --- | --- |
 | jev-latest (default) | TypeSafe's decision classifier: about 0.4 s per review, billed by input only; a denial names only the risk level | `typesafe-officially` |
-| DeepSeek Flash | About 1.5–2 s per review, and a denial says why | `deepseek-officially` / `deepseek-sale` |
+| DeepSeek Flash | About 2 s per review, and a denial says why | `deepseek-officially` / `deepseek-sale` |
+| Conversation model | Leave the review alone, as DSH does by default | — |
 
-The same card can take the option out of the permission menu; sessions using it then switch to Workspace write. It also shows the reviews since this start (allowed, asked you, failed) and the last result, and warns when no key reaches the chosen reviewer.
+Steps:
+
+1. Switch on “Auto authorization review” on DSH's Plugins page in the sidebar.
+2. Pick Auto review in the composer's permission menu and confirm the risk notice.
+3. Choose the reviewer under Settings → PackyCode → Auto review.
+
+The card shows whether DSH's plugin is on, how many reviews this plugin answered (allowed / denied / failed), and the last one. It warns when no key reaches the chosen reviewer.
 
 <details>
-<summary>What the reviewer sees and how it decides</summary>
+<summary>How the review is taken over</summary>
 
-- The reviewer sees the working directory, the project instructions (AGENTS.md and the like, which can only narrow the rules), your messages, earlier tool calls, and this call's tool name, description, parameter schema and complete arguments. It never sees tool results, nor the model's own text and reasoning, so instructions hidden in files, pages or command output cannot authorize anything for you.
-- jev-latest runs over PackyCode's `/v1/systemone` (TypeSafe's System One protocol) and answers two questions per review: the call's risk, and whether you explicitly asked for it. It allows a call only when the probability of "low risk, or medium risk you asked for" is at least 0.6 and that of high risk is below 0.2. `jev-latest` is an alias, answered by `jev-1.14.0` today. DeepSeek Flash runs over Responses and returns one JSON object under the same rules.
-- On 37 scenarios (wiping data, force push, deployment, sending keys out, piping a remote script into a shell, reading a private key, injections in command comments and in a pasted email, exfiltration disguised as a statistics script), both reviewers matched every expected decision, 74 of 74 each. A model can still be wrong: a false allow runs the call, a false denial only asks you once more.
-- In a delegated subagent, a denied call is refused outright instead of asking; its tool card shows Auto review's refusal and the reason. In PTC mode each tool call inside a `run_code` program is reviewed on its own.
-- Each review is a separate request with the plugin's stored keys, in the order of Accounts and keys, preferring a key whose groups reach the reviewer; an exhausted or rejected key moves aside as it does for conversations. A transient gateway 5xx is resent once after 0.5 s.
-- The Auto review entry, its description and its confirmation come from DSH and say the same model reviews; this plugin takes over the review itself, and the reviewer chosen in Settings is the one used. DSH also ships an experimental "Auto authorization review" plugin that reviews with the conversation's own model. Only one of them can provide the option: while DSH's is on, this plugin stays out of the way and the card says so.
-- It needs DSH's permission-preset service and was verified on DSH 0.2.1; the permission menu shows the entry from 0.2.1 on. A version or profile without the permission service does not show it.
+- DSH's reviewer sends one model request per review:
+  - its fixed `REVIEW_POLICY` as the system prompt;
+  - four JSON sections as the user message: ENVIRONMENT, PROJECT_INSTRUCTIONS, FILTERED_HISTORY, PENDING_ACTION;
+  - and it expects one `{"risk","decision","reason"?}` object back.
+- Every model request passes DSH's `llm/stream` waterfall. The plugin recognizes only this request there; conversation turns and everything else go on untouched.
+- **DeepSeek Flash** gets the same request, re-addressed to the PackyCode route; DSH still reads its answer.
+- **jev-latest** cannot write that object. The plugin passes the four sections and the official policy text to System One as the state and asks two questions: the risk, and whether you explicitly asked for this action.
+  - It allows a call when the probability of "low risk, or medium risk you asked for" is at least 0.6 and that of high risk is below 0.2.
+  - A denial says that jev-latest judged the call medium or high risk.
+  - jev-latest has a small context, so a long history is cut starting from the oldest entries; your instructions are kept first.
+- What is reviewed, the rules, and what an allow or a denial does all stay DSH's. DSH refuses a call whose review failed (for example, no key reaches jev-latest), and the plugin keeps that.
+- Measured on 37 scenarios with the official request format and the official parser: both reviewers matched all 35 scenarios that have a clear answer.
+  - jev-latest's median was 0.35 s, DeepSeek Flash's 2.3 s.
+- If a later DSH changes the review request:
+  - a request the plugin no longer recognizes goes on untouched, reviewed by the conversation model;
+  - a format jev-latest cannot read fails that review, which shows in the card's counts.
+- The description under Auto review in the menu says the same model reviews; that is DSH's text. With jev-latest or DeepSeek Flash chosen, that model reviews.
 
 </details>
 

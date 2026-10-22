@@ -112,10 +112,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       searchBackend: payload?.searchBackend,
     }),
     'auto-review/status': () => review().status(),
-    'auto-review/update': payload => review().update({
-      autoReview: payload?.autoReview,
-      autoReviewModel: payload?.autoReviewModel,
-    }),
+    'auto-review/update': payload => review().update({ autoReviewModel: payload?.autoReviewModel }),
     'models/status': () => models().status(),
     'models/update': payload => models().update({ selectedIds: payload?.selectedIds }),
     'images/status': () => imageSupport().status(),
