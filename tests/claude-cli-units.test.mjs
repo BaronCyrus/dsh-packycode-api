@@ -8,6 +8,7 @@ import { claudePermissionMode } from '../src/claude-permission-mode.js'
 import { buildTranscript, toCliHistory } from '../src/claude-transcript.js'
 import { createClaudeToolNames } from '../src/claude-tools.js'
 import { claudeTransportFor, CLI_ONLY_GROUPS } from '../src/claude-transport.js'
+import { dshTitleRequest } from './fixtures/dsh-session-title.mjs'
 
 test('cc keys and keys with unread groups use the CLI; cc-sale, cc-expensive, claude-officially and delisted claude-sale keep HTTP; nothing pins a route', () => {
   assert.deepEqual(CLI_ONLY_GROUPS, ['cc'])
@@ -207,8 +208,10 @@ test('DSH\'s compaction of a cc session is a record written without a model, and
   assert.match(summary, /1\. 把 version 改成 2\.4\.2/u)
   assert.match(summary, /已改成 2\.4\.2。/u)
   assert.ok(!summary.includes('COMPACTION INSTRUCTION'))
-  const prompt = titlePrompt({ system: '只回复一个简短中文会话标题。', messages: [{ role: 'user', content: '整理今天的发货安排' }, { role: 'user', content: 'Reply with only a short session title.' }] })
-  assert.match(prompt, /^只回复一个简短中文会话标题。/u)
-  assert.match(prompt, /用户：整理今天的发货安排/u)
+  const title = dshTitleRequest(['整理今天的发货安排'])
+  const input = title.messages[0].content[0].text
+  const prompt = titlePrompt({ system: title.system, messages: [{ role: 'user', content: input }, { role: 'user', content: 'Reply with only a short session title.' }] })
+  assert.ok(prompt.startsWith(title.system))
+  assert.ok(prompt.includes(`用户：${input}`))
   assert.match(prompt, /Reply with only a short session title\.$/u)
 })

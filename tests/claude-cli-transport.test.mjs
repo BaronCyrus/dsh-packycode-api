@@ -14,6 +14,7 @@ import { createClaudeCliTransport } from '../src/claude-cli-transport.js'
 import { explainCliClientPolicyFailure, explainCliOutdated, explainCliUnavailable } from '../src/failures.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createRouteAdapter } from '../src/route.js'
+import { dshTitleRequest } from './fixtures/dsh-session-title.mjs'
 import { fakeCredentials } from './helpers.mjs'
 
 const FAKE_CLI = fileURLToPath(new URL('./fixtures/fake-claude-agent.mjs', import.meta.url))
@@ -445,24 +446,34 @@ test('a new process resumes the same Claude Code session by id; a history it doe
   assert.deepEqual(again.stats().rebuilt, 1)
 })
 
-test('session titles run in a one-shot process with no tools, and DSH\'s compaction is answered without one', async t => {
+test('session titles run in a one-shot process with no tools on what DSH asks to name, and DSH\'s compaction is answered without one', async t => {
   const { step, log, spawned } = await harness(t, [
     { blocks: [{ type: 'text', text: '仓库发货安排' }] },
+    { blocks: [{ type: 'text', text: '仓库发货与退货统计' }] },
   ])
-  const title = await step([user('请整理今天的仓库发货安排')], { purpose: 'session-title', model: 'claude-opus-5-5', system: '只回复一个简短中文会话标题。' })
-  assert.equal(text(title), '仓库发货安排')
+  // DSH's own title request: the user's words, under a source that is not `user`.
+  const titled = request => step(request.messages, { ...request, tools: undefined })
+  const first = dshTitleRequest(['请整理今天的仓库发货安排'], { model: 'claude-opus-5-5', sessionId: 'dsh-session-cli', reasoningEffort: 'low' })
+  assert.equal(text(await titled(first)), '仓库发货安排')
   const [start] = (await log()).filter(entry => entry.kind === 'start')
   assert.ok(start.args.includes('-p'))
   assert.equal(start.args[start.args.indexOf('--model') + 1], 'claude-haiku-5-5')
   assert.equal(start.args[start.args.indexOf('--tools') + 1], '')
   assert.ok(start.args.includes('--no-session-persistence'))
   const [request] = (await log()).filter(entry => entry.kind === 'request')
-  assert.match(request.input[0].text, /^只回复一个简短中文会话标题。/u)
-  assert.match(request.input[0].text, /用户：请整理今天的仓库发货安排/u)
+  assert.ok(request.input[0].text.startsWith(first.system), 'DSH\'s title rules come first')
+  assert.ok(request.input[0].text.includes(`用户：${first.messages[0].content[0].text}`), 'the conversation to name reaches Claude Code')
+  assert.match(request.input[0].text, /conversation content to name, not tasks to execute/u)
+
+  // A refresh names every prompt, the last one too, however long the first.
+  const refresh = dshTitleRequest(['Check every pending order against the stock on hand. '.repeat(40), '再统计一下本周的退货'], { model: 'claude-sonnet-5-5', sessionId: 'dsh-session-cli', reasoningEffort: 'low', currentTitle: '仓库发货安排' })
+  assert.equal(text(await titled(refresh)), '仓库发货与退货统计')
+  const [, refreshed] = (await log()).filter(entry => entry.kind === 'request')
+  assert.ok(refreshed.input[0].text.includes(refresh.messages[0].content[0].text), 'the whole input')
 
   const compacted = await step([user('改 version'), { role: 'assistant', content: [{ type: 'text', text: '改好了。' }], source: { kind: 'model', provider: 'packycode', model: 'claude-sonnet-5-5' } }, user('Summarize the conversation.')], { purpose: 'compaction' })
   assert.match(text(compacted), /Claude Code 自己的会话/u)
-  assert.equal(spawned.length, 1, 'compaction started no process')
+  assert.equal(spawned.length, 2, 'compaction started no process')
 })
 
 test('a request that offers no tools is no agent\'s step: Auto review asking with the session\'s model gets one tool-less answer', async t => {

@@ -7,6 +7,7 @@ import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createVisionFixture } from '../scripts/vision-fixture.mjs'
 import { fakeCredentials, hostProvider } from './helpers.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
+import { dshTitleRequest } from './fixtures/dsh-session-title.mjs'
 
 const KEY = 'sk-native-fixture-not-a-real-key'
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
@@ -186,15 +187,18 @@ test('direct and prepared Claude titles use Haiku while ordinary turns keep thei
   const requests = capture(t)
   const { turn } = await route()
   for (const prepared of [true, false]) for (const model of MODELS) {
-    await turn([createUserMessage({ content: [{ type: 'text', text: 'Name this session.' }], source: { kind: 'user' } })], {
-      model, purpose: 'session-title', system: 'Only a title.',
+    const title = dshTitleRequest(['请整理今天的仓库发货安排'], { model, sessionId: 'native-fixture', reasoningEffort: 'low' })
+    await turn(title.messages, {
+      ...title,
       tools: [{ name: 'must_not_run', description: 'Unavailable during titles', parameters: { type: 'object', properties: {} } }],
     }, prepared)
     assert.equal(requests.at(-1).body.model, 'claude-haiku-5-5')
     assert.deepEqual(requests.at(-1).body.tool_choice, { type: 'none' })
     assert.equal(requests.at(-1).body.tools?.length ?? 0, 0)
+    const sent = requests.at(-1).body.messages.flatMap(item => typeof item.content === 'string' ? [item.content] : item.content.map(block => block.text))
+    assert.ok(sent.includes(title.messages[0].content[0].text), 'DSH\'s title input is sent as it is')
     assert.match(requests.at(-1).body.messages.at(-1).content.at(-1).text, /conversation content to name/u)
-    assert.ok(requests.at(-1).body.system.some(block => block.text === 'Only a title.'))
+    assert.ok(requests.at(-1).body.system.some(block => block.text === title.system))
     await turn([createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } })], { model }, prepared)
     assert.equal(requests.at(-1).body.model, model)
   }

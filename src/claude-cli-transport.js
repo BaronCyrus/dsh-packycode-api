@@ -201,7 +201,8 @@ export function compactionSummary(messages) {
 /**
  * The user message a session-title process receives: DSH's title rules, the
  * conversation to name, and the route's closing instruction, all as the
- * user's words; nothing is added to Claude Code's own system prompt.
+ * user's words; nothing is added to Claude Code's own system prompt. DSH
+ * bounds its title input itself, so it is passed on whole, as over HTTP.
  * @param request - the described title request.
  * @returns the message text.
  */
@@ -209,7 +210,7 @@ export function titlePrompt(request) {
   const messages = request.messages
   const instruction = textOf(messages.at(-1))
   const conversation = messages.slice(0, -1)
-    .map(message => `${message?.role === 'assistant' ? '助手' : '用户'}：${textOf(message).slice(0, 2000)}`)
+    .map(message => `${message?.role === 'assistant' ? '助手' : '用户'}：${textOf(message)}`)
     .filter(line => !/^(?:用户|助手)：$/u.test(line))
   return [request.system, '要命名的对话：', '---', ...conversation, '---', instruction].filter(part => part !== '').join('\n\n')
 }
@@ -415,7 +416,10 @@ export function createClaudeCliTransport({
     if (closed) throw new Error('the Claude Code CLI transport is closed')
     const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}')
     const baseUrl = baseUrlOf(input)
-    const request = describeRequest(body, { apiKey: meta.apiKey, baseUrl, cwd: meta.cwd, userText: meta.userText })
+    // DSH sends a title's input under a source of its own, not `user`, but it
+    // holds only what the user said: it is the conversation to name, kept whole.
+    const userText = meta.purpose === 'session-title' ? undefined : meta.userText
+    const request = describeRequest(body, { apiKey: meta.apiKey, baseUrl, cwd: meta.cwd, userText })
     const context = { ...meta, baseUrl }
     const mode = meta.permissionMode ?? DEFAULT_PERMISSION_MODE
     try {

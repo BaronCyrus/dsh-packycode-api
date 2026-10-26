@@ -11,6 +11,7 @@ import { resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { BlockAssembler, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import { redactSecrets } from '../src/secret-redactor.js'
+import { dshTitleRequest } from '../tests/fixtures/dsh-session-title.mjs'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
 import { CLAUDE_SCENARIO_VERSION, createBusinessScenario, matchesBusinessAnswer, matchesPlan, PLAN_POLICY } from './claude-scenarios.mjs'
@@ -68,12 +69,15 @@ export async function createClaudeCheck({ key, sessionId = randomUUID(), timeout
       const requestStart = requests.length
       const assembled = new BlockAssembler()
       const prepared = await adapter.prepareCall('packycode', model, signal)
-      for await (const chunk of prepared.stream({
-        provider: 'packycode', model, sessionId, reasoningEffort: effort, maxTokens: 2048,
-        signal: signal === undefined ? AbortSignal.timeout(timeoutMs) : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-        system: kind === 'title' ? '只回复一个简短中文会话标题，不要 JSON、引号或解释。' : kind === 'plan' ? `${BASE_SYSTEM}\n\n${PLAN_POLICY}` : BASE_SYSTEM,
-        messages, ...(scenario.tools === undefined ? {} : { tools: scenario.tools }), ...(kind === 'title' ? { purpose: 'session-title' } : {}),
-      })) assembled.push(chunk)
+      const bounded = signal === undefined ? AbortSignal.timeout(timeoutMs) : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+      // A title is asked for as DSH asks for one: its own request, naming the prompt.
+      for await (const chunk of prepared.stream(kind === 'title'
+        ? dshTitleRequest([scenario.prompt], { model, sessionId, reasoningEffort: effort, signal: bounded })
+        : {
+          provider: 'packycode', model, sessionId, reasoningEffort: effort, maxTokens: 2048, signal: bounded,
+          system: kind === 'plan' ? `${BASE_SYSTEM}\n\n${PLAN_POLICY}` : BASE_SYSTEM,
+          messages, ...(scenario.tools === undefined ? {} : { tools: scenario.tools }),
+        })) assembled.push(chunk)
       if (assembled.finish?.kind === 'error') {
         const error = new Error(assembled.finish.failure.message)
         error.code = assembled.finish.failure.code

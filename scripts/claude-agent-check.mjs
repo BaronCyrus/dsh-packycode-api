@@ -6,9 +6,10 @@
  * Each check runs in a scratch working directory and an isolated CLI home.
  * DSH's side — the `claude_code` mirror tool, its permission bridge, the
  * approval answer, the question UI and the plan review — is played by the
- * plugin's own bridge on a stand-in agent, in DSH's order. Every request
- * the CLI made is reported with its status; client-anomaly and anti-abuse
- * refusals are counted apart. `--cli-path` picks another CLI binary.
+ * plugin's own bridge on a stand-in agent, in DSH's order; a title is
+ * asked for with DSH's own title request. Every request the CLI made is
+ * reported with its status; client-anomaly and anti-abuse refusals are
+ * counted apart. `--cli-path` picks another CLI binary.
  */
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -17,6 +18,7 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { BlockAssembler, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { redactSecrets } from '../src/secret-redactor.js'
+import { dshTitleRequest } from '../tests/fixtures/dsh-session-title.mjs'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
 
@@ -70,7 +72,8 @@ const SCENARIOS = {
   title: {
     prompt: '请整理今天的仓库发货安排：核对待发订单与可用库存，把缺货订单单独列出，汇总需要采购补货的商品。',
     title: true,
-    judge: async ({ answer }) => /[一-鿿]/u.test(answer) && answer.length <= 60 && !/[\n{}]/u.test(answer),
+    // A Chinese title about this request, not a best-effort name for nothing.
+    judge: async ({ answer }) => /仓库|发货|库存|缺货|补货|订单/u.test(answer) && answer.length <= 60 && !/[\n{}]/u.test(answer),
   },
 }
 
@@ -191,10 +194,9 @@ export async function createAgentCheck({ key, cliPath, timeoutMs = 240_000, buil
         for (let index = 0; index < 16; index++) {
           const assembled = new BlockAssembler()
           const prepared = await adapter.prepareCall('packycode', model, signal)
-          for await (const chunk of prepared.stream({
-            provider: 'packycode', model, sessionId: agent.id, reasoningEffort: effort, signal, system: scenario.title ? '只回复一个简短中文会话标题，不要 JSON、引号或解释。' : SYSTEM, messages: JSON.parse(JSON.stringify(messages)),
-            ...(scenario.title ? { purpose: 'session-title' } : { tools: TOOLS }),
-          })) assembled.push(chunk)
+          for await (const chunk of prepared.stream(scenario.title
+            ? dshTitleRequest([scenario.prompt], { model, sessionId: agent.id, reasoningEffort: effort, signal })
+            : { provider: 'packycode', model, sessionId: agent.id, reasoningEffort: effort, signal, system: SYSTEM, messages: JSON.parse(JSON.stringify(messages)), tools: TOOLS })) assembled.push(chunk)
           if (assembled.finish?.kind === 'error') throw Object.assign(new Error(assembled.finish.failure.message), { code: assembled.finish.failure.code })
           messages.push(assembled.message({ kind: 'model', provider: 'packycode', model, replayState: assembled.replayState }))
           answer = assembled.blocks().filter(block => block.type === 'text').map(block => block.text).join('').trim()
