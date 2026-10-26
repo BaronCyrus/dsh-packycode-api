@@ -154,6 +154,8 @@ export const CLI_MARK = '[Claude Code CLI]'
 export const CLI_UNAVAILABLE = 'dsh_cli_unavailable'
 /** The installed CLI refused an option the transport needs. */
 export const CLI_OUTDATED = 'dsh_cli_outdated'
+/** The request went to the CLI because its key's groups were not read yet. */
+export const GROUPS_UNREAD = 'dsh_groups_unread'
 
 /**
  * The message a relayed failure carried. pi-ai reports an HTTP error as its
@@ -185,13 +187,23 @@ export const classifyCliOutdated = message => typeof message === 'string' && mes
  * @returns the replacement sentence.
  */
 export function explainCliUnavailable(message) {
+  const unread = typeof message === 'string' && message.includes(GROUPS_UNREAD)
   // Local start-up detail, without anything the host would read as a status or transport fault.
-  const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_unavailable:?\s*/u, '').replace(/\b\d{3}\b/gu, '')
+  const detail = relayedMessage(message).replace(/^[\s\S]*?dsh_cli_unavailable:?\s*/u, '').replace(GROUPS_UNREAD, '').replace(/^\s*:\s*/u, '').replace(/\b\d{3}\b/gu, '')
     .replace(/\b(?:network|connection|socket|fetch|timed?\s*out|timeout|terminated)\b/giu, '…').trim().slice(0, 300)
+  const install = '请在 设置 → PackyCode → Claude Code CLI 一键安装，或在终端执行 npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code，然后重发这条消息。'
+  const failed = detail === '' || detail === 'dsh_cli_unavailable' ? '' : `（启动失败：${detail}）`
+  if (unread) {
+    return '本机没有可用的 Claude Code CLI。插件还没读到当前 Key 的分组，暂时按 cc 分组的要求交给 Claude Code CLI。'
+      + install
+      + '如果这个 Key 不在 cc 分组，读到分组后会自动改走插件内置的 HTTP 通道，稍后重发即可。'
+      + failed
+      + ' / Claude Code CLI is not available. This key\'s groups are not read yet, so the request went to the official client, as a cc key needs. Install it under Settings → PackyCode, or resend shortly: a key outside cc uses the HTTP route once its groups are read.'
+  }
   return '本机没有可用的 Claude Code CLI，而当前 Key 所在的 Claude 分组（cc）只接受官方 Claude Code 客户端。'
-    + '请在 设置 → PackyCode → Claude Code CLI 一键安装，或在终端执行 npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code，然后重发这条消息。'
+    + install
     + '也可以改用 cc-sale / cc-expensive 分组的 Key，它们走插件内置的 HTTP 通道。'
-    + (detail === '' || detail === 'dsh_cli_unavailable' ? '' : `（启动失败：${detail}）`)
+    + failed
     + ' / Claude Code CLI is not available, and this key\'s Claude group only serves the official client. Install it under Settings → PackyCode (npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code), then resend.'
 }
 
@@ -210,8 +222,11 @@ export function explainCliOutdated(message) {
 
 /**
  * Explain a client-policy refusal of a request the official CLI itself sent.
- * The HTTP route's advice (use the official client) does not apply; the
- * gateway's words are kept, without their status, for a support request.
+ *
+ * PackyCode's cc group judges what a request contains, not which program
+ * sent it, so updating the CLI is no remedy; the gateway's words are kept,
+ * without their status, for a support request. Like every explanation here
+ * the sentence carries no status token, so DSH shows it once.
  * @param message - the relayed failure text.
  * @returns the replacement sentence.
  */
@@ -220,9 +235,9 @@ export function explainCliClientPolicyFailure(message) {
     .replace(/^[\s\S]*?\[Claude Code CLI\]\s*/u, '')
     .replace(/\b(?:401|403)\b/gu, 'HTTP')
     .slice(0, 600)
-  return 'PackyCode 拒绝了这次由官方 Claude Code CLI 发出的请求，认为客户端异常。这不是 API Key 失效。'
-    + '请先把 Claude Code CLI 更新到最新版本（claude update）再试；仍然失败时，请把下面的原始错误（含 request id）发给 PackyCode 客服。'
-    + ` / The gateway refused a request the official Claude Code CLI sent; the API key is fine. Gateway said: ${detail}`
+  return 'PackyCode 的 cc 分组把这次请求判定为非标准 Claude Code 客户端，拒绝了它。这不是 API Key 失效，更新 Claude Code CLI 也不能解决。'
+    + 'cc 分组按请求内容判断是否由 Claude Code 自己在工作，偶尔也会误判；可以重发一次。反复出现时，请把下面的原始错误（含 request id）发给 PackyCode 客服，或改用 cc-sale / cc-expensive / claude-officially 分组的 Key（走插件内置的 HTTP 通道）。'
+    + ` / PackyCode's cc group judged this request not to come from the standard Claude Code client and refused it. The API key is fine, and updating the CLI does not help: the group judges the request's content. Resend it; if it keeps happening, send the gateway's words below (with the request id) to PackyCode support, or use a cc-sale / cc-expensive / claude-officially key. Gateway said: ${detail}`
 }
 
 /**

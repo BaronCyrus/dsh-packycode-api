@@ -9,8 +9,9 @@
  *
  * Three host-side reads answer it, none of them billed:
  * - the gateway refuses a model id it cannot route before contacting any
- *   upstream, and its refusal names the token's groups
- *   (`已选分组=[codex deepseek-officially kimi-sale]`);
+ *   upstream, and its refusal names the token's groups: a list for a token
+ *   with several (`已选分组=[codex deepseek-officially kimi-sale]`), the one
+ *   group for a single-group token (`分组 cc-sale 下模型 <id> 无可用渠道`);
  * - `/v1/models` lists the models the key can reach;
  * - the public `/api/pricing` lists each model's groups and each group's
  *   description.
@@ -32,8 +33,12 @@ import { ambientFetch, boundedFetch } from './request.js'
 export const GROUP_PROBE_MODEL = 'dsh-packycode-group-probe'
 /** Group membership changes rarely; a forced read bypasses this. */
 export const DEFAULT_GROUP_TTL_MS = 10 * 60_000
+/** A reading that could not reach a key is tried again this soon. */
+export const FAILED_GROUP_RETRY_MS = 30_000
 
 const SELECTED_GROUPS = /已选分组\s*[=＝:：]\s*\[([^\]]*)\]/u
+/** A single-group token's refusal: `分组 cc-sale 下模型 <id> 无可用渠道（distributor）`. */
+const NAMED_GROUP = /分组\s*[「“"']?([A-Za-z0-9._-]{1,64}(?:\s*[、,，/]\s*[A-Za-z0-9._-]{1,64})*)[」”"']?\s*下(?:对于)?模型/u
 const GROUP_NAME = /^[A-Za-z0-9._-]{1,64}$/u
 const INVALID_KEY = /无效的令牌|令牌无效|invalid[\s_-]+api[\s_-]*key|invalid_authentication/iu
 const MAX_GROUPS = 32
@@ -71,7 +76,8 @@ class RejectedKeyError extends Error {
  * @returns the group names, or undefined when the text names none.
  */
 export function parseSelectedGroups(message) {
-  const match = SELECTED_GROUPS.exec(typeof message === 'string' ? message : '')
+  const text = typeof message === 'string' ? message : ''
+  const match = SELECTED_GROUPS.exec(text) ?? NAMED_GROUP.exec(text)
   if (match === null) return undefined
   const names = [...new Set(match[1].split(/[\s,，、]+/u).filter(name => GROUP_NAME.test(name)))]
   return names.slice(0, MAX_GROUPS)
@@ -150,6 +156,7 @@ export function createGroupReader({
   fetchImpl = ambientFetch,
   now = Date.now,
   ttlMs = DEFAULT_GROUP_TTL_MS,
+  retryMs = FAILED_GROUP_RETRY_MS,
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 } = {}) {
   if (typeof listKeys !== 'function') throw new Error('PackyCode group reader requires listKeys')
@@ -270,7 +277,10 @@ export function createGroupReader({
     }
   }
 
-  const cache = createCachedRead(load, { ttlMs, now })
+  // A key the reading could not reach is read again soon, not after the full
+  // TTL: until then its Claude requests cannot follow its groups.
+  const unreached = value => value.keys.some(entry => entry.groups === undefined && entry.error !== undefined)
+  const cache = createCachedRead(load, { ttlMs, now, ttlFor: value => (unreached(value) ? Math.min(ttlMs, retryMs) : ttlMs) })
   const keyEntry = keyId => cache.peek()?.keys.find(candidate => candidate.id === keyId)
 
   return Object.freeze({

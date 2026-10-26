@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   catalogCoverage,
   createGroupReader,
+  FAILED_GROUP_RETRY_MS,
   GROUP_PROBE_MODEL,
   parsePricing,
   parseSelectedGroups,
@@ -37,6 +38,43 @@ test('the token groups are read out of the gateway refusal', () => {
   assert.equal(parseSelectedGroups('model_not_found'), undefined)
   // Anything that is not a group name never reaches the browser.
   assert.deepEqual(parseSelectedGroups('已选分组=[cc <img/onerror=x> ok]'), ['cc', 'ok'])
+})
+
+test('a single-group token\'s refusal names its one group (issue #3)', () => {
+  // The gateway's 503 for a cc-sale key, as reported on 2026-10-25.
+  assert.deepEqual(parseSelectedGroups(`分组 cc-sale 下模型 ${GROUP_PROBE_MODEL} 无可用渠道（distributor），请尝试切换其他分组 (request id: 01M5SA33JE47ZE96XKY19HQK05)`), ['cc-sale'])
+  assert.deepEqual(parseSelectedGroups(`分组 cc 下模型 ${GROUP_PROBE_MODEL} 无可用渠道（distributor）`), ['cc'])
+  // The older wording of the same refusal.
+  assert.deepEqual(parseSelectedGroups(`当前分组 codex 下对于模型 ${GROUP_PROBE_MODEL} 无可用渠道`), ['codex'])
+  // The list form still wins where both could match.
+  assert.deepEqual(parseSelectedGroups(REFUSAL(['cc', 'codex'])), ['cc', 'codex'])
+  assert.equal(parseSelectedGroups('分组<script> 下模型 x 无可用渠道'), undefined)
+})
+
+test('a reading that could not reach a key is retried after a short wait, not after the full TTL', async () => {
+  const fail = { 'sk-claude-key-BBBB': true }
+  const net = gateway({ groupsByKey: { 'sk-codex-key-AAAA': ['codex'], 'sk-claude-key-BBBB': ['cc'] }, fail })
+  let now = 1_000
+  const reader = createGroupReader({ listKeys: async () => KEYS, getHosts: () => ({ apiHost: 'https://gw.example' }), fetchImpl: net.fetchImpl, now: () => now })
+  const first = await reader.read()
+  assert.equal(first.keys[1].groups, undefined)
+  assert.match(first.keys[1].error, /fetch failed/u)
+  assert.equal(reader.groupsOf('b'), undefined)
+
+  delete fail['sk-claude-key-BBBB']
+  const before = net.calls.length
+  now += 10_000
+  await reader.read()
+  assert.equal(net.calls.length, before, 'still cached within the retry wait')
+  now += FAILED_GROUP_RETRY_MS
+  await reader.read()
+  assert.ok(net.calls.length > before)
+  assert.deepEqual(reader.groupsOf('b'), ['cc'])
+  // Once every key is read, the full TTL applies again.
+  const settled = net.calls.length
+  now += FAILED_GROUP_RETRY_MS * 2
+  await reader.read()
+  assert.equal(net.calls.length, settled)
 })
 
 test('pricing keeps the catalog models\' groups and each group\'s description', () => {

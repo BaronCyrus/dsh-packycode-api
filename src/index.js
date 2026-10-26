@@ -21,6 +21,8 @@ import z from '@deepseek-ai/schemastery'
 import { AUTO_REVIEW_MODELS, createJevReviewer, DEFAULT_AUTO_REVIEW_MODEL } from './auto-review.js'
 import { createAutoReviewController } from './auto-review-controller.js'
 import { createBalanceReader } from './balance.js'
+import { createClaudeAgentBridge } from './claude-agent-tools.js'
+import { sessionUuid } from './claude-api.js'
 import { isClaudeCliOutdated } from './claude-binary.js'
 import { createClaudeCliManager, createClaudeLatestReader } from './claude-install.js'
 import { createClaudeCliTransport } from './claude-cli-transport.js'
@@ -155,14 +157,16 @@ export function apply(ctx, config) {
   // ── the Claude Code CLI transport ─────────────────────────────────────────
 
   /**
-   * Keys in a group that only serves the official client send their Claude
-   * requests through this device's Claude Code CLI. DSH's agent loop, tools,
-   * permissions and plan mode are unchanged; only the transport differs.
+   * Keys in a group that only serves the official client have their Claude
+   * sessions run by this device's Claude Code CLI as the agent. Its tool
+   * calls appear in DSH as `claude_code` calls: DSH shows them, asks when
+   * Claude Code asks for permission, and reviews its plans.
    */
   const claudeCli = createClaudeCliManager({
     explicitPath: () => fieldValue(source()?.claudeCliPath),
     latestReader: createClaudeLatestReader(),
   })
+  let agentBridge
   const cliTransport = createClaudeCliTransport({
     binary: async () => {
       let found = await claudeCli.detect()
@@ -174,22 +178,115 @@ export function apply(ctx, config) {
       return found.path
     },
     version: () => claudeCli.lastDetection()?.version,
+    nestedPermission: (key, request) => agentBridge.nestedPermission(key, request),
     logger: ctx.logger,
   })
   ctx.effect(() => () => { void cliTransport.close() }, 'packycode-api: Claude Code CLI processes')
+  /**
+   * A DSH service as an agent sees it. On the Web surface an agent's plan
+   * mode, like every row its preset owns, lives in the preset's isolated
+   * realm, which this plugin's own context cannot see; elsewhere the host's
+   * service answers.
+   */
+  const serviceFor = (agent, name) => {
+    try {
+      const scoped = agent === undefined ? undefined : ctx.get?.('agentPresets')?.serviceFor?.(agent, name)
+      if (scoped !== undefined) return scoped
+    } catch { /* a profile without agent presets */ }
+    try { return ctx.get?.(name) } catch { return undefined }
+  }
+  agentBridge = createClaudeAgentBridge({
+    transport: cliTransport,
+    services: agent => ({
+      userQuestions: serviceFor(agent, 'userQuestions'),
+      planMode: serviceFor(agent, 'planMode'),
+      permissionPresets: serviceFor(agent, 'permissionPresets'),
+      approval: serviceFor(agent, 'approval'),
+    }),
+    logger: ctx.logger,
+  })
+  /** The agent a cc Claude request runs for, when the request is its own step. */
+  const requestAgent = meta => {
+    if (meta.purpose !== undefined) return undefined
+    try {
+      const agent = ctx.get?.('agents')?.currentInitiator?.()
+      return agent !== undefined && sessionUuid(agent.id) === meta.sessionId ? agent : undefined
+    } catch {
+      return undefined
+    }
+  }
+  /**
+   * The provider and model an agent's next request runs on. The session's
+   * own pick in the model picker overrides the agent's options in DSH's
+   * request waterfall, so it is read first: a pending pick, else the last
+   * request's model.
+   */
+  const nextModelOf = agent => {
+    try {
+      const state = ctx.get?.('sessionProjections')?.stateOf?.(agent.session, 'modelSelection')
+      const next = state?.pending ?? state?.lastUsed
+      if (typeof next?.provider === 'string' && typeof next?.model === 'string') return next
+    } catch { /* a profile without the model-selection projection */ }
+    try {
+      const config = agent.session?.requestHeader?.()?.config
+      if (typeof config?.provider === 'string' && typeof config?.model === 'string') return config
+    } catch { /* no request yet */ }
+    return { provider: agent?.options?.provider, model: agent?.options?.model }
+  }
   /** The transport a Claude request on this key takes, by its last group reading. */
   const claudeTransportOf = keyId => claudeTransportFor({ groups: keyId === undefined ? undefined : groups.groupsOf(keyId) })
+  /** Sessions whose running turn is Claude Code's; it may be waiting for DSH's tool results. */
+  const cliTurns = new WeakSet()
+  /** Read the active key's groups in the background, for the routes still to come. */
+  const readGroupsSoon = () => { void keys.active().then(key => (key === undefined ? undefined : keys.awaitGroups?.(key.id))).catch(() => undefined) }
+  // A session that opens reads them before its first turn needs them.
+  ctx.on?.('agent/created', readGroupsSoon)
+  /**
+   * DSH lists a step's tools before it calls the model, and Auto review only
+   * reviews a call of a tool the step listed. So each turn decides its route
+   * when it starts: a Claude turn for Claude Code gets the mirror tool before
+   * its first step, any other turn loses it. A turn that starts on the CLI
+   * stays there to its end, even if a group reading arrives during it.
+   */
+  ctx.on?.('session/event', (session, event) => {
+    if (event?.type === 'turn/end') { cliTurns.delete(session); return }
+    if (event?.type !== 'turn/start') return
+    let agent
+    try { agent = ctx.get?.('agents')?.currentInitiator?.() } catch { return }
+    if (agent === undefined || agent.session !== session) return
+    const next = nextModelOf(agent)
+    const route = next.provider === PROVIDER && isClaudeModel(next.model) ? claudeTransportOf(keys.idFor(next.model)) : undefined
+    if (route?.transport !== 'cli') {
+      cliTurns.delete(session)
+      agentBridge.detach(agent)
+      return
+    }
+    cliTurns.add(session)
+    agentBridge.attach(agent)
+    if (route.reason === 'unknown') readGroupsSoon()
+  })
 
   // ── the model route ───────────────────────────────────────────────────────
 
-  // Every model runs DSH's native agent loop. Claude requests on a cc key
-  // are sent by the official CLI; no other fallback exists.
+  // Every model runs DSH's native agent loop, except Claude on a cc key (or
+  // one whose groups are not read yet), where Claude Code is the agent; no
+  // other fallback exists.
   const registration = ctx.llm.registerAdapter([PROVIDER], createRouteAdapter({
     ring, keys, fallbackSessionId, resolveAttachments: attachments, isModelVisible: modelSelection.isVisible,
     claudeCli: Object.freeze({
       followsGroups: () => true,
-      choose: ({ apiKey, model }) => isClaudeModel(model) && claudeTransportOf(keys.idOf(apiKey)).transport === 'cli',
-      fetch: (input, init, meta) => cliTransport.fetch(input, init, meta),
+      choose: ({ apiKey, model }) => {
+        if (!isClaudeModel(model)) return false
+        const session = currentSession()
+        return (session !== undefined && cliTurns.has(session)) || claudeTransportOf(keys.idOf(apiKey)).transport === 'cli'
+      },
+      fetch: (input, init, meta) => {
+        const agent = requestAgent(meta)
+        const route = { groupsKnown: claudeTransportOf(keys.idOf(meta.apiKey)).reason === 'group' }
+        if (agent === undefined) return cliTransport.fetch(input, init, { ...meta, ...route })
+        agentBridge.attach(agent)
+        return cliTransport.fetch(input, init, { ...meta, ...route, ...agentBridge.permissionModes(agent) })
+      },
     }),
     resolveWorkingDirectory: sessionId => {
       const session = currentSession()
@@ -394,12 +491,14 @@ export function apply(ctx, config) {
 }
 
 export { CLAUDE_MIN_VERSION, CLAUDE_MISSING_MESSAGE, CLAUDE_NPM_PACKAGE, claudeBinaryCandidates, DEFAULT_CLAUDE_CONFIG_DIR, isClaudeCliOutdated, locateClaudeBinary, resolveSpawnCommand } from './claude-binary.js'
-export { baseUrlOf, CLI_SESSION_IDLE_MS, CLI_TOOL_NOTE, createClaudeCliTransport, describeRequest, dshSystemText, MAX_LIVE_CLI_SESSIONS, planContinuation } from './claude-cli-transport.js'
-export { buildCliArgs, buildCliEnvironment, cliErrorMessage, startClaudeCliSession } from './claude-cli-session.js'
+export { answersFor, approvalReason, createClaudeAgentBridge, presentClaudeCall, presentClaudeResult, questionsFor, refusalMessage } from './claude-agent-tools.js'
+export { baseUrlOf, CLI_SESSION_IDLE_MS, compactionSummary, createClaudeCliTransport, describeRequest, dshSystemText, MAX_LIVE_CLI_SESSIONS, messageFingerprint, planAnswer, planContinuation, questionPrompt, splitAtLastAnswer, textResponse, titlePrompt } from './claude-cli-transport.js'
+export { buildCliArgs, buildCliEnvironment, CLI_PROJECT_DIR_NAME, cliErrorMessage, MIRROR_TOOL, PLAN_TOOL, responseFingerprint, startClaudeCliSession, toolResultText } from './claude-cli-session.js'
 export { CLAUDE_INSTALL_COMMAND, CLAUDE_NPM_LATEST_URL, CLAUDE_NPM_UPDATE_COMMAND, CLAUDE_SELF_UPDATE_COMMAND, createClaudeCliManager, createClaudeLatestReader, explainNpmFailure, isNpmClaudeInstall, locateNpm, parseClaudeVersion } from './claude-install.js'
-export { MCP_SERVER_NAME, MCP_TOOL_PREFIX, startClaudeMcpBridge, toolResultToMcp } from './claude-mcp-bridge.js'
-export { buildTranscript, canonicalMessage, splitConversation } from './claude-transcript.js'
-export { cliToolName, createClaudeToolNames } from './claude-tools.js'
+export { claudePermissionMode, CLAUDE_PERMISSION_MODES } from './claude-permission-mode.js'
+export { buildTranscript, toCliHistory } from './claude-transcript.js'
+export { sessionUuid } from './claude-api.js'
+export { createClaudeToolNames } from './claude-tools.js'
 export { claudeTransportFor, CLI_ONLY_GROUPS, HTTP_CLAUDE_GROUPS } from './claude-transport.js'
 export {
   answerChunks,

@@ -9,6 +9,7 @@ import { createUserMessage, LlmError, QUOTA_EXCEEDED_CODE, resolveRetryPolicy } 
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 
 import { isClaudeModel } from './claude-transport.js'
+import { forwardedUserText } from './claude-user-text.js'
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PLUGIN_ID, PROVIDER } from './constants.js'
 import { classifyUpstreamServerError, classifyTestMessagePolicy, TEST_MESSAGE_POLICY_CODE } from './failures.js'
 import { guardGeminiReplay } from './gemini-replay.js'
@@ -182,8 +183,9 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   const profiles = new Map([[PROVIDER, createPackyCodeProfile(provider)]])
 
   /**
-   * Iterate one request inside its context: the transport reads the purpose
-   * and the initiating session's cwd from it where the request is sent.
+   * Iterate one request inside its context: the transport reads the purpose,
+   * the initiating session's cwd and, for Claude, which user texts are the
+   * user's own (DSH's messages carry their sources only up to here).
    */
   const inContext = (options, send) => {
     const clarified = clarifyWorkingDirectory(options, resolveWorkingDirectory)
@@ -193,6 +195,7 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
       ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
       ...(options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) }),
       ...(cwd === undefined ? {} : { cwd }),
+      ...(isClaudeModel(options.model) ? { userText: forwardedUserText(options.messages) } : {}),
     }
     return classifyRouteFailures(withRequestContext(context, send(clarified)))
   }
@@ -234,7 +237,7 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
       }
       // A Claude request's transport follows its key's groups; give the
       // first reading a moment so a cc key does not start out over HTTP.
-      if (claudeCli?.followsGroups?.() === true && isClaudeModel(request?.model)) await keys.awaitGroups?.()
+      if (claudeCli?.followsGroups?.() === true && isClaudeModel(request?.model)) await keys.awaitGroups?.(active.id)
       return active.key
     },
     auth: Object.freeze({

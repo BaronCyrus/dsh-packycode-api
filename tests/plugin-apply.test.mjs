@@ -109,7 +109,7 @@ test('registers one route and one directory entry, and defers the browser surfac
   assert.equal(Object.hasOwn(cli.value, 'transport'), false)
   assert.equal(cli.value.minVersion, '2.1.259')
   assert.equal(cli.value.latest, '2.1.303', 'the newest release came from the stub, not npm')
-  assert.deepEqual(cli.value.processes, { live: 0, opened: 0, continued: 0 })
+  assert.deepEqual(cli.value.processes, { live: 0, opened: 0, continued: 0, resumed: 0, rebuilt: 0 })
   assert.deepEqual(refused, [], 'nothing else reached the network')
 })
 
@@ -169,7 +169,12 @@ test('the registered route clarifies only the initiating session cwd and follows
   apply(ctx)
   const requests = []
   t.mock.method(globalThis, 'fetch', async (input, init) => {
-    const body = await new Request(input, init).json(); requests.push(body)
+    const request = new Request(input, init)
+    const path = new URL(request.url).pathname
+    // The group reading: a cc-sale key, whose Claude requests use the HTTP route.
+    if (path === '/v1/chat/completions') return Response.json({ error: { message: '分组 cc-sale 下模型 dsh-packycode-group-probe 无可用渠道（distributor）' } }, { status: 503 })
+    if (path === '/v1/models' || path === '/api/pricing') return Response.json({ data: [] })
+    const body = await request.json(); requests.push(body)
     return anthropicStream(body.model)
   })
   const call = await registered.adapters[0].adapter.prepareCall('packycode', 'claude-haiku-5-5')

@@ -48,8 +48,9 @@ export function sessionUuid(value) {
  * subprocess fallback. A client-policy refusal still reaches the route guard.
  *
  * With `cli`, a request whose key must use the official client is handed to
- * the Claude Code CLI transport instead of the network: the same payload,
- * the same SSE answer, DSH's tools listed through the CLI's MCP bridge.
+ * the Claude Code CLI transport instead of the network: Claude Code does the
+ * work with its own prompt and tools, and the answer comes back as the same
+ * SSE stream, its tool calls named as the DSH tools that show them.
  * @param options - `cli.choose({ apiKey, model })` decides per request;
  *   `cli.fetch(input, init, meta)` sends it.
  */
@@ -110,9 +111,9 @@ export function createClaudeApi({ cli } = {}) {
     }
   }
   /**
-   * The official CLI writes its own envelope, identity, effort and thinking
-   * display; only DSH's payload (with CLI tool names) is handed over. The
-   * route's request context says which DSH session, purpose and working
+   * The official CLI writes its own envelope, identity, prompt, tools, effort
+   * and thinking display; DSH's payload only tells the transport what is new.
+   * The route's request context says which DSH session, purpose and working
    * directory the request belongs to.
    */
   const adaptCli = (model, context, options, toolNames) => {
@@ -122,6 +123,7 @@ export function createClaudeApi({ cli } = {}) {
       sessionId: sessionUuid(options?.sessionId),
       ...(route?.purpose === undefined ? {} : { purpose: route.purpose }),
       ...(typeof route?.cwd === 'string' ? { cwd: route.cwd } : {}),
+      ...(typeof route?.userText === 'function' ? { userText: route.userText } : {}),
     })
     return {
       ...options,

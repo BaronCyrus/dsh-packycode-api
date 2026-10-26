@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
-import { request as httpRequest } from 'node:http'
 import test from 'node:test'
 
-import { buildCliArgs, buildCliEnvironment, cliErrorMessage } from '../src/claude-cli-session.js'
-import { baseUrlOf, CLI_TOOL_NOTE, describeRequest, dshSystemText, planContinuation } from '../src/claude-cli-transport.js'
-import { startClaudeMcpBridge, toolResultToMcp } from '../src/claude-mcp-bridge.js'
-import { buildTranscript, canonicalMessage, splitConversation } from '../src/claude-transcript.js'
-import { cliToolName, createClaudeToolNames } from '../src/claude-tools.js'
+import { answersFor, approvalReason, presentClaudeCall, presentClaudeResult, questionsFor, refusalMessage } from '../src/claude-agent-tools.js'
+import { buildCliArgs, buildCliEnvironment, cliErrorMessage, MIRROR_TOOL, PLAN_TOOL, responseFingerprint, toolResultText } from '../src/claude-cli-session.js'
+import { baseUrlOf, compactionSummary, describeRequest, dshSystemText, messageFingerprint, planAnswer, planContinuation, splitAtLastAnswer, titlePrompt } from '../src/claude-cli-transport.js'
+import { claudePermissionMode } from '../src/claude-permission-mode.js'
+import { buildTranscript, toCliHistory } from '../src/claude-transcript.js'
+import { createClaudeToolNames } from '../src/claude-tools.js'
 import { claudeTransportFor, CLI_ONLY_GROUPS } from '../src/claude-transport.js'
 
-test('cc keys use the CLI; cc-sale, cc-expensive, claude-officially, delisted claude-sale and unknown keys keep HTTP; nothing pins a route', () => {
+test('cc keys and keys with unread groups use the CLI; cc-sale, cc-expensive, claude-officially and delisted claude-sale keep HTTP; nothing pins a route', () => {
   assert.deepEqual(CLI_ONLY_GROUPS, ['cc'])
   assert.deepEqual(claudeTransportFor({ groups: ['codex', 'cc'] }), { transport: 'cli', reason: 'group', groups: ['cc'] })
   assert.equal(claudeTransportFor({ groups: ['claude-sale'] }).transport, 'http', 'claude-sale is delisted; it is added back when it returns')
@@ -17,134 +17,51 @@ test('cc keys use the CLI; cc-sale, cc-expensive, claude-officially, delisted cl
   assert.deepEqual(claudeTransportFor({ groups: ['cc-sale'] }), { transport: 'http', reason: 'group', groups: ['cc-sale'] })
   assert.equal(claudeTransportFor({ groups: ['cc-expensive', 'codex'] }).transport, 'http')
   assert.deepEqual(claudeTransportFor({ groups: ['claude-officially', 'cc-sale'] }), { transport: 'http', reason: 'group', groups: ['claude-officially', 'cc-sale'] })
-  assert.deepEqual(claudeTransportFor({ groups: undefined }), { transport: 'http', reason: 'unknown' })
+  assert.deepEqual(claudeTransportFor({ groups: undefined }), { transport: 'cli', reason: 'unknown' }, 'a key whose groups are unread uses the client every Claude group serves')
   assert.deepEqual(claudeTransportFor({ preference: 'http', groups: ['cc'] }), { transport: 'cli', reason: 'group', groups: ['cc'] }, 'no pin overrides the groups')
 })
 
-test('tool names through the CLI are the MCP names the model sees, unambiguous and within 64 characters', () => {
-  assert.equal(cliToolName('bash'), 'mcp__dsh__bash')
-  assert.equal(cliToolName('exit_plan_mode'), 'mcp__dsh__exit_plan_mode')
-  assert.equal(cliToolName('read-image'), 'mcp__dsh__read-image')
-  for (const odd of ['mcp__github__create_issue', 'tool with spaces', '工具', 'x'.repeat(60)]) {
-    const name = cliToolName(odd)
-    assert.match(name, /^mcp__dsh__[a-zA-Z0-9-]+(?:_[a-zA-Z0-9-]+)*_[a-f0-9]{12}$/u, odd)
-    assert.ok(name.length <= 64, odd)
-    assert.ok(!name.slice('mcp__dsh__'.length).includes('__'), odd)
-  }
-  assert.notEqual(cliToolName('a b'), cliToolName('a_b '))
-
-  const names = createClaudeToolNames({ cli: true })
-  const payload = names.encodePayload({
-    tools: [{ name: 'bash', input_schema: { type: 'object' } }, { name: 'read', input_schema: { type: 'object' } }],
-    messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'bash', input: {} }] }],
-  })
-  assert.deepEqual(payload.tools.map(tool => tool.name), ['mcp__dsh__bash', 'mcp__dsh__read'], 'no built-in spellings through the CLI')
-  assert.equal(payload.messages[0].content[0].name, 'mcp__dsh__bash')
-  // Over HTTP the CLI-compatible built-in spellings stay.
+test('through the CLI nothing is renamed; over HTTP the CLI-compatible built-in spellings stay', () => {
+  const payload = { tools: [{ name: 'bash', input_schema: { type: 'object' } }], messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: MIRROR_TOOL, input: {} }] }] }
+  const cli = createClaudeToolNames({ cli: true })
+  assert.equal(cli.encodePayload(payload), payload)
+  const stream = {}
+  assert.equal(cli.decodeStream(stream), stream)
   const http = createClaudeToolNames().encodePayload({ tools: [{ name: 'bash', input_schema: { type: 'object' } }] })
   assert.equal(http.tools[0].name, 'Bash')
 })
 
-test('a request is split at the turn boundary, or resumed whole inside an open turn', () => {
-  const marked = { type: 'text', text: 'second', cache_control: { type: 'ephemeral' } }
-  const boundary = splitConversation([
-    { role: 'user', content: 'first' },
-    { role: 'assistant', content: [{ type: 'text', text: 'answer' }] },
-    { role: 'user', content: [{ type: 'text', text: 'context snapshot' }] },
-    { role: 'user', content: [marked] },
-  ])
-  assert.equal(boundary.continues, false)
-  assert.deepEqual(boundary.history.map(message => message.role), ['user', 'assistant'])
-  assert.deepEqual(boundary.history[0].content, [{ type: 'text', text: 'first' }])
-  assert.deepEqual(boundary.input, [{ type: 'text', text: 'context snapshot' }, { type: 'text', text: 'second' }], 'consecutive user messages become one input, without cache markers')
-
-  const open = splitConversation([
-    { role: 'user', content: 'go' },
-    { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'mcp__dsh__bash', input: {} }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] },
-    { role: 'user', content: 'steer' },
-  ])
-  assert.equal(open.continues, true)
-  assert.equal(open.input, undefined)
-  assert.deepEqual(open.history.at(-1).content.map(block => block.type), ['tool_result', 'text'])
-
-  assert.deepEqual(splitConversation([]), { history: [], input: undefined, continues: false })
-  assert.throws(() => splitConversation([{ role: 'user', content: 'x' }, { role: 'assistant', content: 'prefill' }]), /ends with an assistant message/u)
+test('DSH\'s permission settings map to the Claude Code permission mode that keeps each preset\'s promise', () => {
+  assert.equal(claudePermissionMode({ planActive: true, preset: 'danger-full-access' }), 'plan', 'plan mode wins')
+  assert.equal(claudePermissionMode({ preset: 'workspace-write' }), 'acceptEdits')
+  assert.equal(claudePermissionMode({ preset: 'read-only' }), 'default')
+  assert.equal(claudePermissionMode({ preset: 'danger-full-access' }), 'bypassPermissions')
+  assert.equal(claudePermissionMode({ preset: 'danger-full-access', approval: 'ask' }), 'acceptEdits')
+  assert.equal(claudePermissionMode({ preset: 'auto' }), 'default', 'Auto review judges what the CLI asks about')
+  assert.equal(claudePermissionMode({ preset: 'team-default', sandbox: 'workspace-write', approval: 'ask' }), 'acceptEdits', 'a renamed preset maps by its sandbox')
+  assert.equal(claudePermissionMode({ preset: 'yolo', sandbox: 'danger-full-access', approval: 'never' }), 'bypassPermissions')
+  assert.equal(claudePermissionMode({ preset: 'custom' }), 'default')
+  assert.equal(claudePermissionMode(), 'default')
 })
 
-test('the transcript is a parent-linked chain the CLI resumes verbatim', () => {
-  const lines = buildTranscript([
-    { role: 'user', content: [{ type: 'text', text: 'q' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } }] },
-    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'tool_use', id: 't', name: 'mcp__dsh__bash', input: { command: 'ls' } }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] },
-  ], { sessionId: '11111111-2222-4333-8444-555555555555', cwd: '/work', model: 'claude-opus-5-5', version: '2.1.295', now: () => 10_000_000 }).trim().split('\n').map(line => JSON.parse(line))
-  assert.equal(lines.length, 3)
-  assert.equal(lines[0].parentUuid, null)
-  assert.equal(lines[1].parentUuid, lines[0].uuid)
-  assert.equal(lines[2].parentUuid, lines[1].uuid)
-  for (const line of lines) {
-    assert.equal(line.sessionId, '11111111-2222-4333-8444-555555555555')
-    assert.equal(line.cwd, '/work')
-    assert.equal(line.isSidechain, false)
-  }
-  assert.equal(lines[1].type, 'assistant')
-  assert.equal(lines[1].message.model, 'claude-opus-5-5')
-  assert.equal(lines[1].message.stop_reason, 'tool_use')
-  assert.deepEqual(lines[1].message.content[0], { type: 'thinking', thinking: '', signature: 's' })
-  assert.ok(lines[0].timestamp < lines[1].timestamp)
-  assert.equal(buildTranscript([], {}), '')
-})
-
-test('requests compare by content, not by where pi-ai put cache markers or string shorthands', () => {
-  assert.deepEqual(canonicalMessage({ role: 'user', content: 'hi' }), canonicalMessage({ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }] }))
-  assert.deepEqual(
-    canonicalMessage({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] }),
-    canonicalMessage({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: 'ok' }], cache_control: { type: 'ephemeral' } }] }),
-  )
-})
-
-test('a live process continues only its own tool results or the next user turn', () => {
-  const body = messages => ({ model: 'claude-sonnet-5-5', system: [{ type: 'text', text: 'x-anthropic-billing-header: cc' }, { type: 'text', text: 'DSH prompt' }], tools: [{ name: 'mcp__dsh__bash', input_schema: { type: 'object' } }], messages })
-  const first = describeRequest(body([{ role: 'user', content: [{ type: 'text', text: 'go', cache_control: { type: 'ephemeral' } }] }]), { apiKey: 'k', baseUrl: 'u', cwd: '/w' })
-  assert.equal(first.system, `DSH prompt\n\n${CLI_TOOL_NOTE}`)
-  const assistant = { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'mcp__dsh__bash', input: {} }] }
-  const results = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] }
-  const awaiting = { session: { closed: false, state: 'awaiting-tools', pendingToolIds: ['t1'] }, baseline: first.normalized, signature: first.signature }
-  const next = describeRequest(body([{ role: 'user', content: 'go' }, assistant, results]), { apiKey: 'k', baseUrl: 'u', cwd: '/w' })
-  const plan = planContinuation(awaiting, next)
-  assert.equal(plan.kind, 'tools')
-  assert.deepEqual([...plan.results.keys()], ['t1'])
-  // Anything else is not a continuation.
-  assert.equal(planContinuation(awaiting, describeRequest(body([{ role: 'user', content: 'go' }, assistant, results]), { apiKey: 'other', baseUrl: 'u', cwd: '/w' })), undefined, 'another key')
-  assert.equal(planContinuation(awaiting, describeRequest(body([{ role: 'user', content: 'changed' }, assistant, results]), { apiKey: 'k', baseUrl: 'u', cwd: '/w' })), undefined, 'another history')
-  assert.equal(planContinuation(awaiting, describeRequest(body([{ role: 'user', content: 'go' }, assistant, { role: 'user', content: [results.content[0], { type: 'text', text: 'steer' }] }]), { apiKey: 'k', baseUrl: 'u', cwd: '/w' })), undefined, 'a steering note')
-  assert.equal(planContinuation({ ...awaiting, session: { ...awaiting.session, closed: true } }, next), undefined, 'a closed process')
-  const idle = { session: { closed: false, state: 'idle', pendingToolIds: [] }, baseline: first.normalized, signature: first.signature }
-  const turn = planContinuation(idle, describeRequest(body([{ role: 'user', content: 'go' }, { role: 'assistant', content: [{ type: 'text', text: 'done' }] }, { role: 'user', content: 'more' }]), { apiKey: 'k', baseUrl: 'u', cwd: '/w' }))
-  assert.deepEqual(turn, { kind: 'turn', content: [{ type: 'text', text: 'more' }] })
-})
-
-test('the DSH system prompt is forwarded without the HTTP route\'s envelope', () => {
-  assert.equal(dshSystemText([
-    { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.295.abc; cc_entrypoint=sdk-cli;' },
-    { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." },
-    { type: 'text', text: 'DSH one' },
-    { type: 'text', text: 'DSH two', cache_control: { type: 'ephemeral' } },
-  ]), 'DSH one\n\nDSH two')
-  assert.equal(dshSystemText('plain'), 'plain')
-  assert.equal(baseUrlOf('https://cf.api.fan/v1/messages?beta=true'), 'https://cf.api.fan')
-  assert.equal(baseUrlOf('https://example.test/proxy/v1/messages'), 'https://example.test/proxy')
-})
-
-test('CLI arguments and environment: DSH\'s endpoint and key only, the CLI\'s own tools, retries and fallbacks off', () => {
-  const args = buildCliArgs({ model: 'claude-opus-5-5', effort: 'max', systemFile: '/run/system.md', mcpConfigFile: '/run/mcp.json', sessionId: 'abc' })
-  assert.deepEqual(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2), ['--tools', ''])
+test('CLI arguments and environment: Claude Code\'s own prompt and tools, permission prompts over stdio, the plugin\'s home and key only', () => {
+  const args = buildCliArgs({ model: 'claude-opus-5-5', effort: 'max', permissionMode: 'acceptEdits', cliSessionId: 'abc' })
+  for (const flag of ['--input-format', '--include-partial-messages', '--allow-dangerously-skip-permissions', '--strict-mcp-config']) assert.ok(args.includes(flag), flag)
+  assert.equal(args[args.indexOf('--permission-prompt-tool') + 1], 'stdio')
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'acceptEdits')
+  assert.equal(args[args.indexOf('--setting-sources') + 1], 'user', 'never a project\'s settings, hooks or MCP servers')
   assert.equal(args[args.indexOf('--session-id') + 1], 'abc')
-  assert.ok(!args.includes('--resume'))
-  assert.ok(!args.join(' ').includes('Bearer'), 'the capability stays in the private config file')
-  const resumed = buildCliArgs({ model: 'claude-opus-5-5', systemFile: 's', mcpConfigFile: 'm', transcriptFile: '/run/t.jsonl' })
-  assert.equal(resumed[resumed.indexOf('--resume') + 1], '/run/t.jsonl')
-  assert.ok(!resumed.includes('--effort'))
+  assert.equal(args[args.indexOf('--effort') + 1], 'max')
+  for (const flag of ['-p', '--tools', '--append-system-prompt', '--append-system-prompt-file', '--system-prompt', '--mcp-config', '--disable-slash-commands', '--no-session-persistence', '--resume']) assert.ok(!args.includes(flag), flag)
+  const resumed = buildCliArgs({ model: 'claude-opus-5-5', cliSessionId: 'abc', resume: true })
+  assert.equal(resumed[resumed.indexOf('--resume') + 1], 'abc')
+  assert.ok(!resumed.includes('--session-id'))
+  assert.equal(resumed[resumed.indexOf('--permission-mode') + 1], 'default')
+  const title = buildCliArgs({ model: 'claude-haiku-5-5', oneShot: true })
+  assert.ok(title.includes('-p'))
+  assert.deepEqual(title.slice(title.indexOf('--tools'), title.indexOf('--tools') + 2), ['--tools', ''], 'a title has no tools')
+  assert.ok(title.includes('--no-session-persistence'))
+  assert.ok(!title.includes('--permission-prompt-tool'))
 
   const env = buildCliEnvironment({ baseUrl: 'https://cf.api.fan', apiKey: 'sk-fixture', configDir: '/home/cli', maxTokens: 2048, continues: true,
     parent: { PATH: '/bin', HTTPS_PROXY: 'http://proxy', ANTHROPIC_API_KEY: 'sk-ambient', CLAUDE_CODE_OAUTH_TOKEN: 'oauth', ANTHROPIC_BASE_URL: 'https://elsewhere', MCP_TIMEOUT: '1', DISABLE_PROMPT_CACHING: '1' } })
@@ -157,63 +74,141 @@ test('CLI arguments and environment: DSH\'s endpoint and key only, the CLI\'s ow
   assert.equal(env.MCP_TIMEOUT, undefined)
   assert.equal(env.DISABLE_PROMPT_CACHING, undefined, 'the user\'s CLI tweaks do not change DSH\'s requests')
   assert.equal(env.CLAUDE_CONFIG_DIR, '/home/cli')
+  assert.equal(env.CLAUDE_CODE_PROJECT_DIR_NAME, 'dsh-packycode')
   assert.equal(env.CLAUDE_CODE_MAX_RETRIES, '0')
   assert.equal(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '2048')
   assert.equal(env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, '1')
-  assert.equal(env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT, '0')
+  assert.equal(env.DISABLE_TELEMETRY, '1')
+  assert.equal(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, '1')
+  for (const removed of ['CLAUDE_CODE_DISABLE_CLAUDE_MDS', 'DISABLE_AUTO_COMPACT', 'DISABLE_COMPACT', 'CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT']) assert.equal(env[removed], undefined, removed)
   assert.throws(() => buildCliEnvironment({ baseUrl: 'x', apiKey: '' }), /no PackyCode API key/u)
   assert.equal(cliErrorMessage('Failed to authenticate. API Error: 403 客户端存在异常'), '客户端存在异常')
   assert.equal(cliErrorMessage('API Error: Request rejected (429) · concurrency_queue_full'), 'concurrency_queue_full')
   assert.equal(cliErrorMessage('plain'), 'plain')
 })
 
-/** One JSON-RPC exchange with a bridge. */
-function post(url, body, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const outgoing = httpRequest(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, incoming => {
-      const chunks = []
-      incoming.on('data', chunk => chunks.push(chunk))
-      incoming.on('end', () => {
-        const raw = Buffer.concat(chunks).toString()
-        resolve({ status: incoming.statusCode, body: raw === '' ? undefined : JSON.parse(raw) })
-      })
-    })
-    outgoing.on('error', reject)
-    outgoing.end(JSON.stringify(body))
-  })
-}
-
-test('the MCP bridge lists the request\'s tools and holds each call for DSH\'s result, behind its capability', async t => {
-  const calls = []
-  let release
-  const bridge = await startClaudeMcpBridge({
-    tools: [{ name: 'mcp__dsh__bash', description: 'Run.', input_schema: { type: 'object', properties: { command: { type: 'string' } } } }, { name: 'Bash', description: 'not ours', input_schema: { type: 'object' } }],
-    onCall: call => { calls.push(call); return new Promise(resolve => { release = resolve }) },
-  })
-  t.after(() => bridge.close())
-  const auth = { authorization: bridge.authorization }
-  assert.equal((await post(bridge.url, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).status, 401)
-  assert.equal((await post(bridge.url, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { ...auth, host: 'evil.example' })).status, 403)
-  assert.equal((await post(bridge.url, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { ...auth, origin: 'https://evil.example' })).status, 403)
-
-  const init = await post(bridge.url, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, auth)
-  assert.equal(init.body.result.protocolVersion, '2025-06-18')
-  assert.equal(init.body.result.serverInfo.name, 'dsh')
-  assert.equal((await post(bridge.url, { jsonrpc: '2.0', method: 'notifications/initialized' }, auth)).status, 202)
-  const list = await post(bridge.url, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth)
-  assert.deepEqual(list.body.result.tools.map(tool => tool.name), ['bash'], 'only DSH\'s tools, without the prefix the CLI adds back')
-  assert.equal((await post(bridge.url, { jsonrpc: '2.0', id: 3, method: 'resources/list' }, auth)).body.error.code, -32601)
-
-  const pending = post(bridge.url, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'bash', arguments: { command: 'ls' }, _meta: { 'claudecode/toolUseId': 'toolu_x' } } }, auth)
-  await new Promise(resolve => setTimeout(resolve, 50))
-  assert.deepEqual(calls, [{ toolUseId: 'toolu_x', name: 'bash', arguments: { command: 'ls' } }])
-  release(toolResultToMcp({ type: 'tool_result', tool_use_id: 'toolu_x', content: [{ type: 'text', text: 'a.txt' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } }], is_error: true }))
-  assert.deepEqual((await pending).body.result, { content: [{ type: 'text', text: 'a.txt' }, { type: 'image', data: 'AA==', mimeType: 'image/png' }], isError: true })
-  await bridge.close()
-  await assert.rejects(post(bridge.url, { jsonrpc: '2.0', id: 5, method: 'tools/list' }, auth))
+test('a request tells the transport its model, effort and DSH system text; the HTTP envelope is not part of it', () => {
+  const request = describeRequest({ model: 'claude-sonnet-5-5', max_tokens: 8000, output_config: { effort: 'high' }, system: [{ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.295.abc;' }, { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." }, { type: 'text', text: '只回复标题。' }], messages: [] }, { apiKey: 'sk-a', baseUrl: 'https://cf.api.fan', cwd: '/w' })
+  assert.equal(request.model, 'claude-sonnet-5-5')
+  assert.equal(request.effort, 'high')
+  assert.equal(request.maxTokens, 8000)
+  assert.equal(request.system, '只回复标题。')
+  assert.notEqual(request.signature, describeRequest({ model: 'claude-sonnet-5-5', max_tokens: 8000, output_config: { effort: 'high' }, messages: [] }, { apiKey: 'sk-b', baseUrl: 'https://cf.api.fan', cwd: '/w' }).signature, 'another key is another process')
+  assert.equal(dshSystemText('plain'), 'plain')
+  assert.equal(baseUrlOf('https://cf.api.fan/v1/messages?beta=true'), 'https://cf.api.fan')
 })
 
-test('tool results map to MCP content in order, with string results and success unmarked', () => {
-  assert.deepEqual(toolResultToMcp({ type: 'tool_result', tool_use_id: 't', content: 'plain' }), { content: [{ type: 'text', text: 'plain' }] })
-  assert.deepEqual(toolResultToMcp({ type: 'tool_result', tool_use_id: 't', content: [] }), { content: [] })
+test('a served response and DSH\'s replay of it have the same fingerprint, whatever pi-ai did with cache markers', () => {
+  const served = responseFingerprint({ toolIds: ['toolu_1'], text: '我先看看。' })
+  assert.equal(messageFingerprint({ role: 'assistant', content: [{ type: 'thinking', thinking: 'x', signature: 's' }, { type: 'text', text: '我先看看。', cache_control: { type: 'ephemeral' } }, { type: 'tool_use', id: 'toolu_1', name: MIRROR_TOOL, input: { tool: 'Bash', input: {} } }] }), served)
+  assert.equal(messageFingerprint({ role: 'assistant', content: '完成。' }), responseFingerprint({ text: '完成。' }))
+  assert.notEqual(messageFingerprint({ role: 'assistant', content: '完成了。' }), responseFingerprint({ text: '完成。' }))
+  const split = splitAtLastAnswer([{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'r' }, { type: 'text', text: 'note' }] }])
+  assert.equal(split.index, 1)
+  assert.deepEqual([...split.results.keys()], ['t'])
+  assert.deepEqual(split.other, [{ type: 'text', text: 'note' }])
+})
+
+test('a live process continues only the response it served: DSH\'s tool results, a plan review, a note, or the next turn', () => {
+  const answer = { role: 'assistant', content: [{ type: 'text', text: '先列目录。' }, { type: 'tool_use', id: 'toolu_1', name: MIRROR_TOOL, input: { tool: 'Bash', input: { command: 'ls' } } }] }
+  const served = { fingerprint: messageFingerprint(answer), toolIds: ['toolu_1'] }
+  const session = { closed: false, state: 'awaiting-tools', pendingToolIds: ['toolu_1'], served }
+  const result = { type: 'tool_result', tool_use_id: 'toolu_1', content: [{ type: 'text', text: 'a.txt' }] }
+  assert.deepEqual(planContinuation(session, { messages: [{ role: 'user', content: '列文件' }, answer, { role: 'user', content: [result] }] }), { kind: 'continue' })
+  assert.deepEqual(planContinuation(session, { messages: [{ role: 'user', content: '列文件' }, answer, { role: 'user', content: [result, { type: 'text', text: '只要 txt' }] }] }), { kind: 'continue', steer: [{ type: 'text', text: '只要 txt' }] })
+  assert.equal(planContinuation(session, { messages: [{ role: 'user', content: '列文件' }, answer, { role: 'user', content: [{ type: 'text', text: '没结果' }] }] }), undefined, 'every pending call must be answered')
+  assert.equal(planContinuation(session, { messages: [{ role: 'user', content: '列文件' }, { role: 'assistant', content: '别的回答' }, { role: 'user', content: [result] }] }), undefined, 'another history')
+  assert.equal(planContinuation({ ...session, closed: true }, { messages: [answer, { role: 'user', content: [result] }] }), undefined)
+
+  const done = { role: 'assistant', content: '有两个文件。' }
+  const idle = { closed: false, state: 'idle', pendingToolIds: [], served: { fingerprint: messageFingerprint(done), toolIds: [] } }
+  assert.deepEqual(planContinuation(idle, { messages: [done, { role: 'user', content: '数一下' }] }), { kind: 'turn', content: [{ type: 'text', text: '数一下' }] })
+  assert.deepEqual(planContinuation(idle, { messages: [done, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old', content: 'ABORTED' }, { type: 'text', text: '继续' }] }] }), { kind: 'turn', content: [{ type: 'text', text: '继续' }] }, 'results a cancelled turn left behind are not news')
+  assert.equal(planContinuation(idle, { messages: [done] }), undefined)
+
+  const plan = { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_plan', name: PLAN_TOOL, input: { plan: '# 方案' } }] }
+  const planned = { closed: false, state: 'awaiting-tools', pendingToolIds: ['toolu_plan'], served: { fingerprint: messageFingerprint(plan), toolIds: ['toolu_plan'], planId: 'toolu_plan' } }
+  const approved = planContinuation(planned, { messages: [plan, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_plan', content: 'Plan approved — plan mode exited; carry out the plan starting with your next step.' }] }] }, { approvedMode: 'acceptEdits' })
+  assert.deepEqual(approved, { kind: 'continue', exitPlan: { id: 'toolu_plan', approved: true, mode: 'acceptEdits' } })
+})
+
+test('DSH\'s plan review becomes the answer Claude Code\'s ExitPlanMode waits for', () => {
+  assert.deepEqual(planAnswer({ content: 'Plan approved — plan mode exited; carry out the plan starting with your next step.' }, 'bypassPermissions'), { approved: true, mode: 'bypassPermissions' })
+  const feedback = planAnswer({ is_error: true, content: [{ type: 'text', text: 'Error: The user chose to keep planning; their feedback: 先别动数据库' }] })
+  assert.equal(feedback.approved, false)
+  assert.match(feedback.message, /先别动数据库/u)
+  assert.match(planAnswer({ is_error: true, content: 'Error: The user chose to keep planning; revise the plan and present it again.' }).message, /keep planning/u)
+  assert.match(planAnswer({ content: 'The user dismissed the plan review to reply in their own words; plan mode remains active.' }).message, /stay in plan mode/u)
+})
+
+test('DSH\'s history becomes Claude Code\'s own: mirrored calls are its tool calls, DSH\'s own tools become text', () => {
+  const history = toCliHistory([
+    { role: 'user', content: [{ type: 'text', text: '看看文件', cache_control: { type: 'ephemeral' } }] },
+    { role: 'assistant', content: [{ type: 'text', text: '先用 DSH 读。' }, { type: 'tool_use', id: 'dsh_1', name: 'read', input: { path: 'a.txt' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'dsh_1', content: 'hello' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'cc_1', name: MIRROR_TOOL, input: { tool: 'Bash', input: { command: 'ls' } } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'cc_1', content: 'a.txt' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'cc_2', name: PLAN_TOOL, input: { plan: '# 方案' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'cc_2', content: 'Plan approved' }] },
+  ])
+  assert.deepEqual(history[1].content[1], { type: 'text', text: '[DSH 工具调用 read] {"path":"a.txt"}' })
+  assert.deepEqual(history[2].content[0], { type: 'text', text: '[DSH 工具结果] hello' })
+  assert.deepEqual(history[3].content[0], { type: 'tool_use', id: 'cc_1', name: 'Bash', input: { command: 'ls' } })
+  assert.equal(history[4].content[0].type, 'tool_result')
+  assert.deepEqual(history[5].content[0], { type: 'tool_use', id: 'cc_2', name: 'ExitPlanMode', input: {} })
+  assert.ok(!JSON.stringify(history).includes('cache_control'))
+  const lines = buildTranscript(history, { sessionId: 's', cwd: '/w', model: 'claude-opus-5-5', version: '2.1.295', now: () => 1_800_000_000_000 }).trim().split('\n').map(line => JSON.parse(line))
+  assert.equal(lines.length, history.length)
+  assert.equal(lines[0].parentUuid, null)
+  assert.equal(lines[1].parentUuid, lines[0].uuid)
+  assert.equal(lines[3].message.stop_reason, 'tool_use')
+})
+
+test('Claude Code\'s tool calls show as DSH\'s terminal, diff and read cards', () => {
+  assert.deepEqual(presentClaudeCall({ tool: 'Bash', input: { command: 'npm test', description: 'Run tests' } }), { card: 'terminal', title: 'npm test', description: 'Run tests' })
+  assert.deepEqual(presentClaudeCall({ tool: 'Edit', input: { file_path: 'a.js', old_string: 'x', new_string: 'y' } }).diffs, [{ path: 'a.js', oldText: 'x', newText: 'y' }])
+  assert.deepEqual(presentClaudeCall({ tool: 'Write', input: { file_path: 'b.md', content: '# B' } }).diffs, [{ path: 'b.md', oldText: null, newText: '# B' }])
+  assert.equal(presentClaudeCall({ tool: 'Read', input: { file_path: 'c.js', offset: 10 } }).locations[0].line, 10)
+  assert.equal(presentClaudeCall({ tool: 'WebFetch', input: { url: 'https://example.com' } }).kind, 'fetch')
+  assert.equal(presentClaudeCall({ tool: 'Task', input: { description: '查日志' } }).title, 'Task 查日志')
+  assert.deepEqual(presentClaudeResult({ tool: 'Bash', input: { command: 'ls' } }, { content: [{ type: 'text', text: 'a.txt' }], isError: false }), { card: 'terminal', output: 'a.txt' })
+  assert.equal(presentClaudeResult({ tool: 'Read', input: { file_path: 'c.js' } }, { content: [], isError: false }), undefined)
+  assert.equal(toolResultText([{ type: 'text', text: 'a' }, { type: 'image', source: {} }]), 'a\n[image]')
+})
+
+test('an approval prompt names what Claude Code asks to run, and a refusal reaches Claude Code in plain words', () => {
+  const ask = approvalReason({ tool_name: 'Bash', input: { command: 'rm -rf build' } })
+  assert.match(ask.reason, /Bash: rm -rf build/u)
+  assert.match(ask.displayReason.zh, /不经过 DSH 的沙箱/u)
+  assert.match(approvalReason({ tool_name: 'Write', input: { file_path: '/etc/hosts' } }).reason, /\/etc\/hosts/u)
+  assert.equal(refusalMessage({ content: [{ type: 'text', text: 'Error: the user rejected tool "claude_code"' }] }), 'The user rejected this call in DeepSeek Harness.')
+  assert.match(refusalMessage({ content: [{ type: 'text', text: 'Error: Auto review denied tool "claude_code": risky' }] }), /did not allow this call: Auto review denied/u)
+})
+
+test('Claude Code\'s questions go to DSH\'s question UI and the answers come back by question text', () => {
+  const input = { questions: [{ question: 'Which database?', header: 'DB', multiSelect: false, options: [{ label: 'Postgres', description: 'SQL' }, { label: 'Mongo' }] }, { question: '哪些服务？', multiSelect: true, options: [{ label: 'api' }, { label: 'web' }] }] }
+  assert.deepEqual(questionsFor(input), [
+    { id: 'q1', question: 'Which database?', header: 'DB', options: [{ label: 'Postgres', description: 'SQL' }, { label: 'Mongo' }] },
+    { id: 'q2', question: '哪些服务？', options: [{ label: 'api' }, { label: 'web' }], multiSelect: true },
+  ])
+  assert.deepEqual(answersFor(input, { answers: [{ id: 'q1', selected: ['Postgres'] }, { id: 'q2', selected: ['api', 'web'] }] }), { 'Which database?': 'Postgres', '哪些服务？': 'api, web' })
+  assert.deepEqual(answersFor(input, { answers: [{ id: 'q1', selected: [], custom: 'SQLite' }, { id: 'q2', selected: [] }] }), { 'Which database?': 'SQLite' })
+})
+
+test('DSH\'s compaction of a cc session is a record written without a model, and a title request is the user\'s words', () => {
+  const summary = compactionSummary([
+    { role: 'user', content: '把 version 改成 2.4.2' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: MIRROR_TOOL, input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] },
+    { role: 'assistant', content: '已改成 2.4.2。' },
+    { role: 'user', content: 'COMPACTION INSTRUCTION' },
+  ])
+  assert.match(summary, /Claude Code 自己的会话/u)
+  assert.match(summary, /1\. 把 version 改成 2\.4\.2/u)
+  assert.match(summary, /已改成 2\.4\.2。/u)
+  assert.ok(!summary.includes('COMPACTION INSTRUCTION'))
+  const prompt = titlePrompt({ system: '只回复一个简短中文会话标题。', messages: [{ role: 'user', content: '整理今天的发货安排' }, { role: 'user', content: 'Reply with only a short session title.' }] })
+  assert.match(prompt, /^只回复一个简短中文会话标题。/u)
+  assert.match(prompt, /用户：整理今天的发货安排/u)
+  assert.match(prompt, /Reply with only a short session title\.$/u)
 })

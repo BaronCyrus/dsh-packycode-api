@@ -160,9 +160,11 @@ function KeyGroups({ group, descriptions, loading, t }) {
 function ClaudeRoute({ group, t }) {
   const route = group.claudeTransport
   if (route === undefined || !CLAUDE_MODELS.some(id => group.coverage?.[id] === true)) return null
-  const hint = route.transport === 'cli'
-    ? fill(t('keyClaudeCliHint'), { groups: (route.groups ?? []).join(' / ') || 'cc' })
-    : t('keyClaudeHttpHint')
+  const hint = route.transport !== 'cli'
+    ? t('keyClaudeHttpHint')
+    : route.reason === 'unknown'
+      ? t('keyClaudeCliUnreadHint')
+      : fill(t('keyClaudeCliHint'), { groups: (route.groups ?? []).join(' / ') || 'cc' })
   return (
     <div className="pkc-groups">
       <span className="pkc-chip" data-tone={route.transport === 'cli' ? 'info' : 'neutral'} title={hint}>

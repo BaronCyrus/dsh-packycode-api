@@ -1,13 +1,12 @@
 /**
- * Hand DSH's conversation to the Claude Code CLI.
+ * Start a Claude Code session from DSH's conversation.
  *
- * The CLI resumes a conversation from a JSONL transcript (`--resume <file>`)
- * and sends exactly those messages — text, images, signed thinking, tool calls
- * and results — before the new input. DSH's history, already converted to the
- * Anthropic Messages shape by the native route, is written in the CLI's
- * classic transcript format, so the CLI's request carries the same history the
- * HTTP route would have sent. Request-level cache markers are dropped: the CLI
- * places its own.
+ * When a cc session's history is not one the CLI holds — it began on another
+ * model, a message was edited, the session was forked — the transport writes
+ * DSH's history into the CLI's session store in its classic transcript format
+ * and resumes it, so Claude Code continues with the same conversation: text,
+ * images, signed thinking, and its own tool calls and results. Request-level
+ * cache markers are dropped: the CLI places its own.
  *
  * @module dsh-packycode-api/claude-transcript
  */
@@ -32,24 +31,6 @@ export const contentBlocks = content => (typeof content === 'string'
   ? (content === '' ? [] : [{ type: 'text', text: content }])
   : Array.isArray(content) ? content : [])
 
-/**
- * One message in a canonical shape, for comparing requests: pi-ai sends the
- * newest message as blocks with a cache marker and the same message as a
- * plain string once it is older, and tool results either way.
- */
-export function canonicalMessage(message) {
-  const canonical = block => (block?.type === 'tool_result' ? { ...block, content: contentBlocks(block.content) } : block)
-  return { role: message?.role, content: contentBlocks(withoutCacheControl(message?.content)).map(canonical) }
-}
-
-/** Whether a message carries tool results, i.e. continues an open turn. */
-export const hasToolResult = message => message?.role === 'user' && contentBlocks(message.content).some(block => block?.type === 'tool_result')
-
-/** The tool_use ids an assistant message asked for, in order. */
-export const toolUseIds = message => (message?.role === 'assistant'
-  ? contentBlocks(message.content).filter(block => block?.type === 'tool_use').map(block => block.id)
-  : [])
-
 /** Merge consecutive messages of the same role; the CLI expects alternation. */
 export function alternate(messages) {
   const merged = []
@@ -62,26 +43,47 @@ export function alternate(messages) {
   return merged
 }
 
+/** The DSH tool every Claude Code tool call is shown as, and DSH's plan review. */
+const MIRROR_TOOL = 'claude_code'
+const PLAN_TOOL = 'exit_plan_mode'
+const FLAT_LIMIT = 8000
+
 /**
- * Split a request into what the CLI resumes and what it receives as input.
- *
- * - At a turn boundary, trailing user messages are the new input: they go to
- *   the CLI's stdin as one message, after the resumed history.
- * - Inside a turn (the newest message carries tool results, possibly with a
- *   steering note), everything is resumed and the CLI continues the open turn.
- *   Feeding the note over stdin instead would make the CLI close the turn with
- *   a synthetic reply first.
- * @param messages - the request's Anthropic messages.
- * @returns `{ history, input, continues }`; `input` is a content array or
- *   undefined, `continues` is true for an open turn.
+ * DSH's history as Claude Code's own history: each `claude_code` call becomes
+ * the Claude Code tool call it mirrored, a plan review becomes ExitPlanMode,
+ * and calls of DSH's own tools (from before the session reached Claude Code,
+ * or from another model) become plain text, with their results, because
+ * Claude Code has no such tools.
+ * @param messages - Anthropic messages, oldest first.
+ * @returns messages Claude Code can resume.
  */
-export function splitConversation(messages) {
-  const clean = alternate(withoutCacheControl(Array.isArray(messages) ? messages : []))
-  const last = clean.at(-1)
-  if (last === undefined) return { history: [], input: undefined, continues: false }
-  if (last.role !== 'user') throw new Error('Claude Code CLI cannot continue a conversation that ends with an assistant message')
-  if (hasToolResult(last)) return { history: clean, input: undefined, continues: true }
-  return { history: clean.slice(0, -1), input: last.content, continues: false }
+export function toCliHistory(messages) {
+  const flattened = new Set()
+  const flatText = (label, value) => ({ type: 'text', text: `[${label}] ${(typeof value === 'string' ? value : JSON.stringify(value)).slice(0, FLAT_LIMIT)}` })
+  const convert = message => {
+    const blocks = contentBlocks(message?.content)
+    if (message?.role === 'assistant') {
+      return {
+        role: 'assistant',
+        content: blocks.map(block => {
+          if (block?.type !== 'tool_use') return block
+          if (block.name === MIRROR_TOOL && typeof block.input?.tool === 'string') return { type: 'tool_use', id: block.id, name: block.input.tool, input: record(block.input.input) ? block.input.input : {} }
+          if (block.name === PLAN_TOOL) return { type: 'tool_use', id: block.id, name: 'ExitPlanMode', input: {} }
+          flattened.add(block.id)
+          return flatText(`DSH 工具调用 ${block.name}`, block.input ?? {})
+        }),
+      }
+    }
+    return {
+      role: 'user',
+      content: blocks.map(block => {
+        if (block?.type !== 'tool_result' || !flattened.has(block.tool_use_id)) return block
+        const content = typeof block.content === 'string' ? block.content : contentBlocks(block.content).map(part => (part?.type === 'text' ? part.text : `[${part?.type}]`)).join('\n')
+        return flatText(block.is_error === true ? 'DSH 工具出错' : 'DSH 工具结果', content)
+      }),
+    }
+  }
+  return alternate(withoutCacheControl(Array.isArray(messages) ? messages : []).map(convert))
 }
 
 /**

@@ -57,6 +57,8 @@ export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEF
   const idByKey = new Map()
   /** The ring as of the last resolution, for the synchronous per-request choice. */
   let snapshot = []
+  /** The active key's ring id as of the last resolution. */
+  let activeId
 
   const remember = async () => {
     const entries = await ring.secrets()
@@ -84,18 +86,24 @@ export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEF
   const active = async () => {
     await remember()
     const key = await ring.activeKey()
+    activeId = key?.id
     if (key !== undefined) await warm()
     return key
   }
 
   /**
-   * Wait at most `waitMs` for a group reading to exist, whatever the number
-   * of keys: a Claude request's transport depends on its key's groups.
+   * A Claude request's transport depends on its key's groups: wait at most
+   * `waitMs` for a reading that has them, whatever the number of keys. A key
+   * the reading already covers only refreshes in the background, and one it
+   * could not reach is read again once that reading's short TTL has passed.
+   * @param keyId - the ring id of the request's key, when known.
    */
-  const awaitGroups = async () => {
-    if (groups.hasReading() || snapshot.length === 0) return
+  const awaitGroups = async keyId => {
+    if (snapshot.length === 0) return
+    const pending = groups.read().catch(() => undefined)
+    if (keyId === undefined ? groups.hasReading() : groups.groupsOf(keyId) !== undefined) return
     let timer
-    await Promise.race([groups.read().catch(() => undefined), new Promise(resolve => { timer = setTimeout(resolve, waitMs) })])
+    await Promise.race([pending, new Promise(resolve => { timer = setTimeout(resolve, waitMs) })])
     clearTimeout(timer)
   }
 
@@ -107,6 +115,17 @@ export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEF
 
     /** The ring id of the key material a request carries, as of the last resolution. */
     idOf: key => (typeof key === 'string' ? idByKey.get(key) : undefined),
+
+    /**
+     * The ring id of the key a request for `modelId` would run with, as of the
+     * last resolution: synchronous, for a decision DSH needs before it asks.
+     * @returns the id, or undefined before the first resolution.
+     */
+    idFor(modelId) {
+      const current = snapshot.find(entry => entry.id === activeId)
+      if (current === undefined || current.disabled === true) return undefined
+      return pickKeyForModel(modelId, current, usable(), covers)?.id
+    },
 
     /**
      * The key one HTTP request for `modelId` runs with, given the active key

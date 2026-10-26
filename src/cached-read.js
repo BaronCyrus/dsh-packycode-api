@@ -15,13 +15,14 @@ const clone = value => structuredClone(value)
 
 /**
  * @param load - `(signal) => Promise<value>`; the value carries `fetchedAt`.
- * @param options - the TTL and clock.
+ * @param options - the TTL, an optional per-value TTL, and the clock.
  * @returns `{ read({ force, signal }), snapshot(), peek(), invalidate() }`.
  */
-export function createCachedRead(load, { ttlMs, now = Date.now }) {
+export function createCachedRead(load, { ttlMs, ttlFor, now = Date.now }) {
   let cached
   let inFlight
   let generation = 0
+  const fresh = value => now() - value.fetchedAt < (ttlFor?.(value) ?? ttlMs)
 
   const start = signal => {
     const observed = generation
@@ -35,7 +36,7 @@ export function createCachedRead(load, { ttlMs, now = Date.now }) {
     /** A copy of the current value; fresh from the network when forced or expired. */
     async read({ force = false, signal } = {}) {
       signal?.throwIfAborted()
-      if (!force && cached !== undefined && now() - cached.fetchedAt < ttlMs) return clone(cached)
+      if (!force && cached !== undefined && fresh(cached)) return clone(cached)
       if (force) return clone(await start(signal))
       if (inFlight === undefined) {
         const pending = start()
