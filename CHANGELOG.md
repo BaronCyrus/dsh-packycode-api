@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
 - **Claude sessions on `cc` keys are carried out by Claude Code itself, which ends the "客户端存在异常" refusals.** PackyCode's `cc` group judges each request's content, not the program that sends it. From 1.3.4 the official CLI carried DSH's own agent: its tools were off (`--tools ""`), DSH's system prompt ("You are an AI agent powered by DeepSeek Harness…") was appended, and DSH's tools were attached over a local MCP bridge. Users got 本轮运行失败 "我们检测到您的客户端存在异常…请避免任何基于我方 API 二次分发的 API 转接接入", and updating the CLI did not help.
   - The cause was measured on 2026-10-25 with the same `cc` key, machine and CLI. `scripts/claude-check.mjs --transport cli` failed 7 of 15 checks on 1.3.9; every client-anomaly refusal carried DSH tools.
