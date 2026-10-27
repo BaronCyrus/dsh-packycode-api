@@ -110,6 +110,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   assert.deepEqual(catalogCoverage({ models: new Set(['deepseek-flash']) }), {
     'deepseek-flash': true,
     'gpt-6.1-sol': false,
+    'gpt-6.1-terra': false,
     'gpt-6-astra': false,
     'gpt-5.6-sol': false,
     'grok-4.7': false,

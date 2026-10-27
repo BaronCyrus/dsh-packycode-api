@@ -77,6 +77,13 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
   assert.deepEqual(deepseek.reasoning.efforts.map(effort => effort.id), ['off', 'low', 'high', 'max'])
   assert.deepEqual([...deepseek.inputModalities], ['text', 'image'])
 
+  const terra = await adapter.resolveModel(PROVIDER, 'gpt-6.1-terra')
+  assert.equal(terra.name, 'GPT-6.1 Terra')
+  assert.equal(terra.context.contextWindow, 1_050_000)
+  assert.deepEqual([...terra.inputModalities], ['text', 'image'])
+  assert.deepEqual(terra.reasoning.efforts.map(effort => effort.id), ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
+  assert.equal(terra.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
+
   const gemini = await adapter.resolveModel(PROVIDER, 'gemini-4-argon')
   assert.equal(gemini.name, 'Gemini 4 Argon')
   assert.equal(gemini.context.contextWindow, 1_048_576)

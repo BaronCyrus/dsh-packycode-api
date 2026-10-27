@@ -65,7 +65,7 @@ dsh-packycode-api@1.4.1
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十个模型都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十一个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
@@ -222,7 +222,8 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 | --- | --- | --- | --- |
 | `deepseek-flash` | HTTP，Responses，可带图 | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
-| `gpt-6-astra` | 同上 | 同上 | 同上 |
+| `gpt-6.1-terra`（GPT-6.1 Terra） | 同上 | 可关；`low` / `medium` / `high` / `xhigh` / `max` | 同上 |
+| `gpt-6-astra` | 同上 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 同上 |
 | `gpt-5.6-sol` | 同上 | 同上 | 同上 |
 | `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
 | `gemini-4-argon`（Gemini 4 Argon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
@@ -235,7 +236,7 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 
 `jev-latest`（TypeSafe Jev）不在模型选择器里：它是只回答分类问题的决策模型，不能对话，只用于[自动审查](#自动审查)。插件在宿主侧直接调用 `/v1/systemone`，需要 Key 在 `typesafe-officially` 分组；「账户与 Key」里每个 Key 的「Jev」一项会显示能否使用。
 
-当前目录中的 10 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。
+当前目录中的 11 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。
 
 Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
 
@@ -244,6 +245,8 @@ Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https:
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 
 Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses 模型默认省略。当前网关的 Grok 路由会将这个字段误报成 `Incorrect API key provided`；DeepSeek Flash 不带它也能命中前缀缓存。
+
+GPT-6.1 Terra 的上下文、输出上限和推理档位来自 [OpenAI 模型页](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。它是唯一可以关闭推理的 GPT 模型：关闭时发送 `reasoning.effort: "none"`，网关原样转发，返回时不带思考。GPT-5.6 Sol 的文档虽然也列出 `none`，经 PackyCode 却按 `medium` 回答，所以不能关。
 
 DeepSeek Flash 走网关的 Responses 接口（`/api/pricing` 列出 `openai-response`）。关闭推理时发送 `reasoning.effort: "none"`，网关返回时不带思考；开启时思考内容以 `reasoning_text` 返回，并随同一轮的工具调用一起回传。
 

@@ -12,9 +12,9 @@
  *
  * Effort levels come from each vendor's documentation, because an effort the
  * model does not support is refused before the request is sent: Claude Opus
- * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol, GPT-6 Astra and GPT-5.6
- * Sol `reasoning.effort` (developers.openai.com model pages), DeepSeek
- * thinking mode (`low|high|max` effort, or off), Grok 4.7
+ * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol, GPT-6.1 Terra, GPT-6
+ * Astra and GPT-5.6 Sol `reasoning.effort` (developers.openai.com model
+ * pages), DeepSeek thinking mode (`low|high|max` effort, or off), Grok 4.7
  * (docs.x.ai/developers/grok-4-7), and Gemini 4 Argon
  * (ai.google.dev/gemini-api/docs/models/gemini-4-argon and docs/openai).
  *
@@ -60,6 +60,21 @@ const ALWAYS_THINKING_LEVELS = Object.freeze({
   max: 'max',
 })
 
+/**
+ * GPT-6.1 Terra documents `reasoning.effort` none | low | medium | high |
+ * xhigh | max, and PackyCode passes its `none` through (no reasoning tokens),
+ * so `off` keeps pi-ai's default and sends `none`. `minimal` is not
+ * documented; the gateway answers it as `none`.
+ */
+const TERRA_LEVELS = Object.freeze({
+  minimal: null,
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'xhigh',
+  max: 'max',
+})
+
 /** Grok 4.7 supports low | medium | high | xhigh, with no off or max. */
 const GROK_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, max: null })
 
@@ -97,6 +112,23 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+  }),
+  Object.freeze({
+    // developers.openai.com/api/docs/models/gpt-6.1-terra: Responses and Chat
+    // Completions (tool calling needs Responses); text and image input;
+    // 1,050,000 context, 128,000 output. PackyCode serves it to `codex` and
+    // `codex-sale`, not `azure-officially`.
+    id: 'gpt-6.1-terra',
+    name: 'GPT-6.1 Terra',
+    api: 'openai-responses',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    thinkingLevelMap: TERRA_LEVELS,
   }),
   Object.freeze({
     // developers.openai.com/api/docs/models/gpt-6-astra: Responses and Chat

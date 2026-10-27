@@ -65,7 +65,7 @@ Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label 
 
 ### 3. Select a model
 
-Choose a model from the `PackyCode` group. All ten models use the plugin’s HTTP route. Your key’s groups must cover the selected model.
+Choose a model from the `PackyCode` group. Of the eleven models, Claude runs through this device's Claude Code CLI on `cc` keys; everything else uses the plugin’s HTTP route. Your key’s groups must cover the selected model.
 
 <details>
 <summary>Verify the install / other profiles / a local checkout</summary>
@@ -222,7 +222,8 @@ The card shows whether DSH's plugin is on, how many reviews this plugin answered
 | --- | --- | --- | --- |
 | `deepseek-flash` | HTTP, Responses, images allowed | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
-| `gpt-6-astra` | Same | Same | Same |
+| `gpt-6.1-terra` (GPT-6.1 Terra) | Same | Can be off; `low` / `medium` / `high` / `xhigh` / `max` | Same |
+| `gpt-6-astra` | Same | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | Same |
 | `gpt-5.6-sol` | Same | Same | Same |
 | `grok-4.7` (Grok 4.7) | HTTP, Responses, text/image input; 500K context | Cannot be off; `low` / `medium` / `high` / `xhigh` | The Grok coverage read from the gateway in Settings |
 | `gemini-4-argon` (Gemini 4 Argon) | HTTP, native Gemini streaming, text/image input; 1,048,576 context, 65,536 output | Cannot be off; `low` / `medium` / `high` | `gemini-slb` |
@@ -235,7 +236,7 @@ A model in the list does not mean the current token group allows it. When changi
 
 `jev-latest` (TypeSafe Jev) is not in the model picker: it is a decision model that answers classification questions and cannot hold a conversation, so it only serves [Auto review](#auto-review). The plugin calls `/v1/systemone` host-side; it needs a key in the `typesafe-officially` group, and each key's Jev entry under Accounts and keys shows whether it can.
 
-All ten models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Responses request.
+All eleven models in the current catalog declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Responses request.
 
 Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon), [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). Both models use the native Gemini protocol through `/v1beta/models/{model}:streamGenerateContent`, streaming text, thinking and tool calls; images are read through DSH's attachment service. Thinking levels are sent with `thinkingLevel`. Both routes use the single-stream output limit without automatic continuation beyond 65,536 tokens. Available endpoints and groups follow the [PackyAPI live model catalog](https://www.packyapi.com/api/pricing).
 
@@ -244,6 +245,8 @@ Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](htt
 Grok 4.7's context and reasoning levels follow the [official guide](https://docs.x.ai/developers/grok-4-7). There is no separate text-output limit; the plugin uses the context size as its numeric output ceiling, bounded by the remaining context per request.
 
 Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present, and DeepSeek Flash hits its prefix cache without it.
+
+GPT-6.1 Terra's context, output limit and effort levels follow OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra). It is the only GPT model whose reasoning can be off: with effort off it sends `reasoning.effort: "none"`, which the gateway passes through, and the answer comes back without reasoning. GPT-5.6 Sol's documentation lists `none` too, but through PackyCode it answers at `medium`, so it cannot be off.
 
 DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `openai-response`). With effort off it sends `reasoning.effort: "none"`, and the gateway answers without reasoning; otherwise reasoning comes back as `reasoning_text` and is sent back with the same turn's tool calls.
 

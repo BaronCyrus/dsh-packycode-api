@@ -37,7 +37,7 @@ async function drain(stream) {
   return finish
 }
 
-test('a GPT session title runs on GPT-6.1 Sol, which every GPT key group serves', async t => {
+test('a GPT session title runs on GPT-6.1 Sol, which every GPT key group serves; GPT-6.1 Terra, cheaper still, titles itself', async t => {
   const models = []
   t.mock.method(globalThis, 'fetch', async (input, init) => {
     models.push(JSON.parse(await new Request(input, init).text()).model)
@@ -49,10 +49,10 @@ test('a GPT session title runs on GPT-6.1 Sol, which every GPT key group serves'
     ring,
     keys: { active: () => ring.activeKey(), forRequest: (_model, key) => key, onKeyFailure: () => assert.fail('no key failure here') },
   })
-  for (const model of ['gpt-6-astra', 'gpt-5.6-sol']) {
+  for (const [model, titleModel] of [['gpt-6-astra', 'gpt-6.1-sol'], ['gpt-5.6-sol', 'gpt-6.1-sol'], ['gpt-6.1-terra', 'gpt-6.1-terra']]) {
     const prepared = await adapter.prepareCall('packycode', model)
     assert.equal((await drain(prepared.stream(dshTitleRequest(['Name this session.'], { model, sessionId: 'fixture-session', reasoningEffort: 'low' })))).kind, 'stop')
-    assert.equal(models.at(-1), 'gpt-6.1-sol', model)
+    assert.equal(models.at(-1), titleModel, model)
     // The conversation itself stays on the chosen model.
     assert.equal((await drain(prepared.stream(request(model)))).kind, 'stop')
     assert.equal(models.at(-1), model)
