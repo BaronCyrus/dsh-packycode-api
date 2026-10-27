@@ -2,6 +2,8 @@
 
 核查日期：2026-10-15（Asia/Shanghai）。本说明区分公开官方文档、官方实时目录、用户转述的官方回复与本机实测；不保存凭据。
 
+> 2026-10-27 起 PackyCode 不再提供 `gemini-4-argon`：公开定价目录不再列出它，网关以「当前令牌未覆盖供应商」拒绝。插件已从目录中移除 Argon，Gemini 只保留 3.8 Flash。下文保留 2026-10-15 的核查记录。
+
 ## 结论
 
 `gemini-4-argon` 在 Packy 当前只开放 Gemini 原生端点。继续向 `/v1/chat/completions` 发送该模型会得到 `400 protocol_not_supported`。同一个模型、同一个插件已保存的 Key，改用 `/v1beta/models/gemini-4-argon:generateContent` 已返回正常文本；通过 DSH 的 PiAiAdapter 与 pi-ai 0.85.1 的原生流式链路也已验证成功。该结论同时得到下述官方实时目录、用户提供的官方回复与本机实测支持。

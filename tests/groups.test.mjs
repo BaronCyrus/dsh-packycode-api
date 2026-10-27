@@ -114,7 +114,6 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'gpt-6-astra': false,
     'gpt-5.6-sol': false,
     'grok-4.7': false,
-    'gemini-4-argon': false,
     'gemini-3.8-flash': false,
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
@@ -125,13 +124,13 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
 
 test('Gemini coverage uses gateway evidence without guessing a token group', () => {
   const { modelGroups } = parsePricing({
-    data: [{ model_name: 'gemini-4-argon', enable_groups: ['fixture-gemini'] }],
+    data: [{ model_name: 'gemini-3.8-flash', enable_groups: ['fixture-gemini'] }],
   })
-  assert.deepEqual(modelGroups['gemini-4-argon'], ['fixture-gemini'])
-  assert.equal(catalogCoverage({ groups: ['fixture-gemini'], modelGroups })['gemini-4-argon'], true)
-  assert.equal(catalogCoverage({ groups: ['codex'], modelGroups })['gemini-4-argon'], false)
-  assert.equal(catalogCoverage({ models: new Set(['gemini-4-argon']) })['gemini-4-argon'], true)
-  assert.equal(catalogCoverage({ groups: ['codex'] })['gemini-4-argon'], undefined)
+  assert.deepEqual(modelGroups['gemini-3.8-flash'], ['fixture-gemini'])
+  assert.equal(catalogCoverage({ groups: ['fixture-gemini'], modelGroups })['gemini-3.8-flash'], true)
+  assert.equal(catalogCoverage({ groups: ['codex'], modelGroups })['gemini-3.8-flash'], false)
+  assert.equal(catalogCoverage({ models: new Set(['gemini-3.8-flash']) })['gemini-3.8-flash'], true)
+  assert.equal(catalogCoverage({ groups: ['codex'] })['gemini-3.8-flash'], undefined)
 })
 
 function gateway({ groupsByKey, modelsByKey = {}, pricing = PRICING, fail = {} }) {

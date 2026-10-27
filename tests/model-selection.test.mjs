@@ -81,9 +81,6 @@ test('model preferences are volatile, default to all models and expose only publ
   assert.equal(reply.value.writable, true)
   assert.deepEqual(reply.value.models.map(model => model.id), [...PACKYCODE_MODEL_IDS])
   assert.ok(reply.value.models.every(model => model.selected))
-  assert.deepEqual(reply.value.models.find(model => model.id === 'gemini-4-argon'), {
-    id: 'gemini-4-argon', name: 'Gemini 4 Argon', selected: true,
-  })
   assert.deepEqual(reply.value.models.find(model => model.id === 'gemini-3.8-flash'), {
     id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', selected: true,
   })
@@ -125,7 +122,7 @@ test('a volatile edit elsewhere refreshes only once, without changing other sett
   changeHidden(['deepseek-flash', 'gpt-6-astra', 'deepseek-flash', 'future-model'])
   assert.equal(seen.notifications, 1, 'order, duplicates and unknown exclusions do not change the picker')
   assert.deepEqual(seen.updates, [])
-  assert.ok((await seen.adapter.listModels('packycode')).some(model => model.id === 'gemini-4-argon'), 'new models default to selected')
+  assert.ok((await seen.adapter.listModels('packycode')).some(model => model.id === 'gemini-3.8-flash'), 'new models default to selected')
 })
 
 test('unsupported selections are refused without writing preferences', async () => {

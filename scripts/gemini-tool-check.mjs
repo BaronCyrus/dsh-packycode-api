@@ -5,7 +5,7 @@
  * is started or modified. Each round spends two small model calls, plus the
  * route's one possible resend of a refused signature.
  *
- * node scripts/gemini-tool-check.mjs [--model gemini-3.8-flash|gemini-4-argon]
+ * node scripts/gemini-tool-check.mjs [--model gemini-3.8-flash]
  *   [--rounds 1..5] [--reasoning low|medium|high] [--key-label LABEL]
  */
 import { createHash, randomUUID } from 'node:crypto'
@@ -24,7 +24,7 @@ const arg = name => {
 const model = arg('--model') ?? 'gemini-3.8-flash'
 const rounds = Number(arg('--rounds') ?? 1)
 const reasoningEffort = arg('--reasoning') ?? 'low'
-if (!['gemini-3.8-flash', 'gemini-4-argon'].includes(model)) throw new Error('choose a native Gemini catalog model')
+if (model !== 'gemini-3.8-flash') throw new Error('choose a native Gemini catalog model')
 if (!Number.isInteger(rounds) || rounds < 1 || rounds > 5) throw new Error('--rounds must be 1..5')
 if (!['low', 'medium', 'high'].includes(reasoningEffort)) throw new Error('--reasoning must be low, medium or high')
 const key = await readStoredKey({ label: arg('--key-label') })

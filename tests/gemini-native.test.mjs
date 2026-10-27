@@ -15,7 +15,7 @@ const TEXT_SIGNATURE = Buffer.from('fixture text signature').toString('base64')
 const TOOL_SIGNATURE = Buffer.from('fixture tool signature').toString('base64')
 const user = { role: 'user', content: 'Reply with ok', timestamp: 1 }
 
-function nativeStream(parts = [{ text: 'Checked.', thought: true }, { text: 'ok', thoughtSignature: TEXT_SIGNATURE }], model = 'gemini-4-argon') {
+function nativeStream(parts = [{ text: 'Checked.', thought: true }, { text: 'ok', thoughtSignature: TEXT_SIGNATURE }], model = 'gemini-3.8-flash') {
   return new Response(`data: ${JSON.stringify({
     candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP', index: 0 }],
     usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2, thoughtsTokenCount: 4, totalTokenCount: 16 },
@@ -97,7 +97,7 @@ function capture(t, respond = (_request, _count, model) => nativeStream(undefine
   return requests
 }
 
-for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
+for (const id of ['gemini-3.8-flash']) {
   test(`${id} streams its three thinking levels through the native SDK without thinkingBudget`, async t => {
     const requests = capture(t)
     const provider = hostProvider(createPackyCodeProvider())
