@@ -31,6 +31,17 @@ const MESSAGES_BASE = DEFAULT_API_HOST
 const GEMINI_BASE = `${DEFAULT_API_HOST}/v1beta`
 
 /**
+ * PackyCode's GPT route treats a function tool that names no `strict` as
+ * strict, so the model fills every optional parameter. DSH's sandbox
+ * escalation pair then came back as `workspace-write` with an empty
+ * justification, which DSH's edit and write refuse. Declaring strict-mode
+ * support makes pi-ai send `strict: false` on each tool, as the official
+ * Codex client does; the schemas stay as DSH wrote them. DeepSeek and Grok
+ * leave optional parameters out either way.
+ */
+const GPT_COMPAT = Object.freeze({ supportsStrictMode: true })
+
+/**
  * pi-ai thinking-level maps. A level pinned to `null` is unsupported; an
  * absent key keeps pi-ai's own default for that level, which is how `off`
  * stays available for DeepSeek: pi-ai's Responses API then sends
@@ -112,6 +123,7 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+    compat: GPT_COMPAT,
   }),
   Object.freeze({
     // developers.openai.com/api/docs/models/gpt-6.1-terra: Responses and Chat
@@ -129,6 +141,7 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     thinkingLevelMap: TERRA_LEVELS,
+    compat: GPT_COMPAT,
   }),
   Object.freeze({
     // developers.openai.com/api/docs/models/gpt-6-astra: Responses and Chat
@@ -145,6 +158,7 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+    compat: GPT_COMPAT,
   }),
   Object.freeze({
     // developers.openai.com/api/docs/models/gpt-5.6-sol: Responses and Chat
@@ -162,6 +176,7 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+    compat: GPT_COMPAT,
   }),
   Object.freeze({
     // docs.x.ai/developers/grok-4-7: Responses; text/image input; 500K

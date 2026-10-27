@@ -244,7 +244,7 @@ Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https:
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 
-Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses 模型默认省略。当前网关的 Grok 路由会将这个字段误报成 `Incorrect API key provided`；DeepSeek Flash 不带它也能命中前缀缓存。
+Responses 请求只有 GPT 模型保留 `prompt_cache_key`，其他 Responses 模型默认省略。当前网关的 Grok 路由会将这个字段误报成 `Incorrect API key provided`；DeepSeek Flash 不带它也能命中前缀缓存。GPT 的工具定义还会显式带上 `strict: false`：PackyCode 的 GPT 通道把没写 `strict` 的工具当作严格模式，模型会被迫填满所有可选参数（见「常见问题」）。
 
 GPT-6.1 Terra 的上下文、输出上限和推理档位来自 [OpenAI 模型页](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。它是唯一可以关闭推理的 GPT 模型：关闭时发送 `reasoning.effort: "none"`，网关原样转发，返回时不带思考。GPT-5.6 Sol 的文档虽然也列出 `none`，经 PackyCode 却按 `medium` 回答，所以不能关。
 
@@ -300,6 +300,8 @@ grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.
 处理：完全退出并重新打开桌面应用，旧版即可正常使用。然后在 **设置 → PackyCode → 插件版本** 点「检查更新」→「更新插件」（它会固定安装最新版，不受 24 小时规则限制），再重启一次。
 
 **某个模型不可用，但 Key 是有效的？** 看「账户与 Key」里这个 Key 的分组和 ✓ / ✕：分组不覆盖这个模型时，换一个分组合适的 Key，或在 PackyCode 控制台给 Key 加上对应分组。存了分组合适的 Key 时，插件会自动用它跑这个模型。分组拒绝不会停用 Key。
+
+**GPT 模型改文件时报 `invalid justification: expected a non-empty sentence`？** 这是 1.4.2 及更早版本的问题，更新到 1.4.3 即可。PackyCode 的 GPT 通道把没写 `strict` 的工具当作严格模式，模型被迫填满所有可选参数，把 DSH 的沙箱提权参数填成 `sandbox_permissions: "workspace-write"` 加空的 `justification`，DSH 的 edit / write 于是拒绝这次调用。1.4.3 起 GPT 的工具定义显式带上 `strict: false`。模型通常会换一种方式完成这一步，已有会话不需要处理。
 
 **Claude 报「只接受官方 Claude Code CLI」或「客户端存在异常」？** 这是网关的客户端政策拒绝，不等于 Key 失效。看这个 Key 下方标的是「Claude 经 HTTP」还是「经官方 CLI」：`cc` 分组的 Key 总是走 CLI，其它分组走 HTTP。cc 分组按请求内容判断是不是 Claude Code 自己在工作；1.4.0 起 cc 会话由 Claude Code 自己完成，正常不会被拒。偶尔仍被拒时重发一次；反复出现时，把错误里的网关原文（含 request id）发给 PackyCode 客服，或改用 `cc-sale` / `cc-expensive` / `claude-officially` 分组的 Key。更新 Claude Code CLI 不能解决这个拒绝。插件不会因此禁用 Key 或切换提供商。
 

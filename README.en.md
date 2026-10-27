@@ -244,7 +244,7 @@ Gemini capabilities and limits follow Google's model pages: [Gemini 4 Argon](htt
 
 Grok 4.7's context and reasoning levels follow the [official guide](https://docs.x.ai/developers/grok-4-7). There is no separate text-output limit; the plugin uses the context size as its numeric output ceiling, bounded by the remaining context per request.
 
-Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present, and DeepSeek Flash hits its prefix cache without it.
+Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present, and DeepSeek Flash hits its prefix cache without it. GPT tool definitions also carry an explicit `strict: false`: PackyCode's GPT route treats a tool without `strict` as strict, which forces the model to fill every optional parameter (see the FAQ).
 
 GPT-6.1 Terra's context, output limit and effort levels follow OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra). It is the only GPT model whose reasoning can be off: with effort off it sends `reasoning.effort: "none"`, which the gateway passes through, and the answer comes back without reasoning. GPT-5.6 Sol's documentation lists `none` too, but through PackyCode it answers at `medium`, so it cannot be off.
 
@@ -302,6 +302,8 @@ Recovery: quit and reopen the desktop application, and the old version works. Th
 **Web search says "no stored API key's group covers …"?** The search backend's model is not in your token groups (or the gateway currently routes it to another supplier). Pick the other backend under **Settings → PackyCode → Web search**, or add a key whose group covers it.
 
 **One model fails, but the key is valid?** Look at that key's groups and ✓ / ✕ under **Accounts and keys**. When its groups do not cover the model, use a key whose groups do, or add the group to the key in the PackyCode console. With such a key stored, the plugin runs that model on it automatically. A group refusal never disables a key.
+
+**A GPT model's file edit fails with `invalid justification: expected a non-empty sentence`?** This affected 1.4.2 and earlier; update to 1.4.3. PackyCode's GPT route treats a tool without `strict` as strict, so the model had to fill every optional parameter. It sent DSH's sandbox escalation pair as `sandbox_permissions: "workspace-write"` with an empty `justification`, and DSH's edit and write refused the call. From 1.4.3 GPT tool definitions carry an explicit `strict: false`. The model usually finishes the step another way, and existing sessions need nothing.
 
 **Claude reports an official-client-only or client-anomaly refusal?** This is a gateway client-policy refusal, not proof of an invalid key. See whether the key is marked “Claude via HTTP” or “via official CLI”: a `cc` key always uses the CLI, and other groups use HTTP. The cc group judges whether a request comes from Claude Code itself; from 1.4.0 cc sessions are carried out by Claude Code and are normally accepted. If one is still refused, resend it; if it keeps happening, send the gateway's own words from the error (with the request id) to PackyCode support, or use a `cc-sale` / `cc-expensive` / `claude-officially` key. Updating the Claude Code CLI does not help with this refusal. The plugin does not disable the key or switch providers.
 

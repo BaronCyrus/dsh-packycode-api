@@ -112,10 +112,13 @@ test('declares the wire dialect each protocol needs', () => {
     assert.equal(byId(id).compat.forceAdaptiveThinking, true)
     assert.equal(byId(id).compat.supportsTemperature, false)
   }
-  assert.equal(byId('gpt-6.1-sol').compat, undefined)
+  // PackyCode's GPT route treats a tool without `strict` as strict, so GPT
+  // declares strict support and pi-ai sends `strict: false`; nothing else changes.
+  for (const id of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol']) {
+    assert.deepEqual({ ...byId(id).compat }, { supportsStrictMode: true }, id)
+  }
+  // DeepSeek and Grok leave optional parameters out without it.
+  assert.equal(byId('grok-4.7').compat.supportsStrictMode, undefined)
   // Terra's off keeps pi-ai's Responses default, `reasoning.effort: "none"`.
-  assert.equal(byId('gpt-6.1-terra').compat, undefined)
   assert.equal(byId('gpt-6.1-terra').thinkingLevelMap.off, undefined)
-  assert.equal(byId('gpt-6-astra').compat, undefined)
-  assert.equal(byId('gpt-5.6-sol').compat, undefined)
 })
