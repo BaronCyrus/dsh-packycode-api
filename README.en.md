@@ -48,10 +48,10 @@ You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH se
 Open the desktop application's **Plugins** page, click **Add plugin**, and enter the package name **with a version** as the **package name or address**:
 
 ```text
-dsh-packycode-api@1.4.1
+dsh-packycode-api@1.4.2
 ```
 
-Choose the **official** install source, then click **Install**. `1.4.1` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
+Choose the **official** install source, then click **Install**. `1.4.2` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
 
 > **Always include the version.** With a bare `dsh-packycode-api`, the install prompt shows the newest version on npm, but DSH's bundled pnpm by default installs only versions published at least 24 hours ago, so you can end up several releases behind with no sign of it in the prompt. With an exact version, pnpm installs that version and adds it to the profile's `minimumReleaseAgeExclude` itself. Afterwards, check **Current version** under **Settings → PackyCode → Plugin version**.
 
@@ -72,7 +72,7 @@ Choose a model from the `PackyCode` group. Of the eleven models, Claude runs thr
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.4.1`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.4.2`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -271,9 +271,9 @@ DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `open
 
 ## Update and uninstall
 
-> **Upgrading from 1.3.2 or earlier:** install `dsh-packycode-api@1.4.1` on the Plugins page instead of clicking **Update plugin** in the old settings card. The old button bypasses pnpm's release-age policy: if the version it installs is less than 24 hours old, the profile refuses every other plugin install until that version is 24 hours old. After the install and a restart, the button is the fixed one, and later updates can use it.
+> **Upgrading from 1.3.2 or earlier:** install `dsh-packycode-api@1.4.2` on the Plugins page instead of clicking **Update plugin** in the old settings card. The old button bypasses pnpm's release-age policy: if the version it installs is less than 24 hours old, the profile refuses every other plugin install until that version is 24 hours old. After the install and a restart, the button is the fixed one, and later updates can use it.
 
-**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. The install keeps pnpm's release-age policy instead of overriding it: by default pnpm installs the version at once and records it in the profile's `minimumReleaseAgeExclude`; under a stricter pnpm policy the button says when the update can run. The newer version is read from npm, while pnpm downloads it from the profile's own install source: right after a release that source (a regional mirror in particular) may not have it yet, and the button asks you to update again in a few minutes; when the source cannot be reached, it asks you to check the network or proxy. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.4.1`); without it you may get a version that is merely the newest one published at least 24 hours ago.
+**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. The install keeps pnpm's release-age policy instead of overriding it: by default pnpm installs the version at once and records it in the profile's `minimumReleaseAgeExclude`; under a stricter pnpm policy the button says when the update can run. The newer version is read from npm, while pnpm downloads it from the profile's own install source: right after a release that source (a regional mirror in particular) may not have it yet, and the button asks you to update again in a few minutes; when the source cannot be reached, it asks you to check the network or proxy. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.4.2`); without it you may get a version that is merely the newest one published at least 24 hours ago.
 
 **Coming back from a local-path install, uninstall first.** An update is a `pnpm add`: it rewrites the files inside the package directory and leaves a `node_modules` that an earlier local-path install left there. That older tree keeps shadowing the packages the DSH installation provides, so the plugin row fails to load with no visible reason. **Uninstall** runs `pnpm remove`, which deletes the package directory outright — only a reinstall after that is clean. `node scripts/install-check.mjs` reports whether a profile is in that state.
 
@@ -289,7 +289,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 Output means a leftover tree: a registry install ships no `node_modules`, so this one usually comes from an earlier local-path install (`file:`, or a bare path instead of `link:`). It sits inside the profile directory, and DSH resolves a plugin's imports from inside the profile first, so the plugin gets those old copies — for example `@deepseek-ai/schemastery` 3.18.2, which has no `Schema.volatile()`, so the module throws while it is imported. When an import fails the Loader creates no fiber for that row and no client bundle is composed either, so the model route, the RPC channel, and the settings panel all stay absent.
 
-Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.4.1`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.4.2`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
 
 **Right after a first install, every card in Settings shows `transport failure for /packycode-api/…: HTTP 405`?** The installed version is 1.1.6 or earlier, usually because only the bare package name was entered: the install prompt shows the newest version, but pnpm installs the newest one published at least 24 hours ago (see **Install the plugin**). Those older versions can register their settings channel only after DSH restarts and rebuilds its `connection` service. So right after a first install `/packycode-api` does not exist yet, requests fall through to the static page, and it answers 405; the model route and the settings panel itself load normally. From 1.1.7 on, a first install needs no restart. Check which version was installed:
 

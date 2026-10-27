@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.2
 
 - **GPT-6.1 Terra joins the catalog.** `gpt-6.1-terra` takes GPT-6.1 Sol's route: `openai-responses` at `https://cf.api.fan/v1`, text and image input, 1,050,000 context and 128,000 output, per OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra), which also says tool calls need Responses. PackyCode's `/api/pricing` lists it for `codex` and `codex-sale`, not `azure-officially`, at half GPT-6.1 Sol's rate. It sits after GPT-6.1 Sol in the picker, and the settings panel counts it under GPT. Its session titles stay on Terra, which costs less than Sol.
 - **Terra's reasoning can be off.** OpenAI documents `reasoning.effort` `none | low | medium | high | xhigh | max` for it. Through PackyCode, a Terra request at `none` came back as `none`, with no reasoning tokens, so `off` keeps pi-ai's Responses default and sends `reasoning.effort: "none"`. The other five levels are sent as named. GPT-5.6 Sol's documented `none` comes back as `medium`, and GPT-6.1 Sol refuses `none` with a 400, so neither offers `off`. `minimal` is not documented for Terra and is not offered; the gateway answers it as `none`.
