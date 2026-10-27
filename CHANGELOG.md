@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.3
 
 - **GPT tool calls no longer fill DSH's sandbox escalation fields.** On GPT-6.1 Terra users saw tool calls fail with `Error: invalid justification: expected a non-empty sentence`. The plugin sent DSH's tools to GPT without `strict`, and PackyCode's GPT route treats such a tool as strict, so the model filled every optional parameter. DSH's `sandbox_permissions` came back as `workspace-write`, the first value of its enum, with an empty or stock `justification`, next to invented values such as `timeoutMs: 1000`. DSH's edit and write refuse `sandbox_permissions` with an empty justification, and bash does too when the requested mode is not the session's own. All four GPT models did this, also before 1.4.2. DeepSeek Flash and Grok 4.7 leave optional parameters out with or without `strict`.
 - **The GPT models now declare pi-ai's `supportsStrictMode`**, so pi-ai sends `strict: false` on each tool, as the official Codex client does. The parameter schemas are sent as DSH wrote them. No DSH tool asks for strict sampling (only pi-ai itself mentions `constrainedSampling`), so no tool switches to a strict schema.
