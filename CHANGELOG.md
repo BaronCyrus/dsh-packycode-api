@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.4
 
 - **DeepSeek V4 Pro joins the catalog** ([#4](https://github.com/BaronCyrus/dsh-packycode-api/issues/4)). `deepseek-v4-pro` takes DeepSeek Flash's route: `openai-responses` at `https://cf.api.fan/v1`, 1,000,000 context and 384,000 output, with Flash's efforts (`off` as `reasoning.effort: "none"`, `low`, `high`, `max`), per DeepSeek's [models and pricing page](https://api-docs.deepseek.com/quick_start/pricing/) and [API reference](https://api-docs.deepseek.com/api/create-chat-completion). PackyCode's `/api/pricing` lists it in `deepseek-officially` and `deepseek-sale` with `openai-response` among its endpoints, at 4.5 times Flash's input rate. It sits after Flash in the picker, and the settings panel counts it under DeepSeek. pi-ai's own DeepSeek catalog pins `low` unsupported for V4 Pro; DeepSeek documents `low` for both models, and through PackyCode V4 Pro answered it as its own level.
 - **V4 Pro takes text only.** DeepSeek documents image input for Flash alone, and PackyCode's gateway drops an image sent to V4 Pro without an error: the model then spent 2,807 reasoning tokens on a picture it never got and answered "Unknown". The catalog declares `['text']`, so DSH's composer does not attach images to it, and DSH's LLM runtime sends an image already in the session (after a switch from Flash, say) as its one-line "image omitted" note. Its session titles go to Flash, which every group serving V4 Pro serves too.
