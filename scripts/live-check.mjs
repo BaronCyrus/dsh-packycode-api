@@ -21,8 +21,9 @@
  * than the default run.
  * `--model` limits the run to one HTTP model, its balance/groups and optional
  * vision checks, skipping unrelated rotation/search/RPC checks.
- * `--with-vision` checks DeepSeek (or the selected HTTP model) with two color
- * images through the host's attachment service; the prompt hides the colors.
+ * `--with-vision` checks DeepSeek Flash (or the selected HTTP model, which must
+ * take images) with two color images through the host's attachment service;
+ * the prompt hides the colors.
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -35,6 +36,7 @@ import {
   createAutoReviewController,
   createJevReviewer,
   PACKYCODE_MODEL_IDS,
+  PACKYCODE_MODELS,
   PackyCodeKeyRing,
   SEARCH_BACKENDS,
   createBalanceReader,
@@ -122,6 +124,10 @@ async function main() {
   const modelIndex = process.argv.indexOf('--model')
   const selectedModel = modelIndex < 0 ? undefined : process.argv[modelIndex + 1]
   if (modelIndex >= 0 && !HTTP_MODELS.includes(selectedModel)) throw new Error('--model needs a catalog HTTP model id')
+  if (process.argv.includes('--with-vision') && selectedModel !== undefined
+    && !PACKYCODE_MODELS.find(model => model.id === selectedModel).input.includes('image')) {
+    throw new Error(`--with-vision needs a model that takes images; ${selectedModel} takes text only`)
+  }
   const labelIndex = process.argv.indexOf('--key-label')
   const label = labelIndex < 0 ? undefined : process.argv[labelIndex + 1]
   if (labelIndex >= 0 && (label === undefined || label.startsWith('--'))) throw new Error('--key-label needs a key label')

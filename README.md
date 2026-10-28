@@ -65,7 +65,7 @@ dsh-packycode-api@1.4.3
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十一个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
@@ -221,6 +221,7 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 | 模型 | 怎么调用 | 推理档位 | 适合的令牌分组 |
 | --- | --- | --- | --- |
 | `deepseek-flash` | HTTP，Responses，可带图 | 可关；`low` / `high` / `max` | `deepseek-officially`、`deepseek-sale` |
+| `deepseek-v4-pro`（DeepSeek V4 Pro） | HTTP，Responses，只收文字；1M 上下文，384K 输出 | 同上 | 同上 |
 | `gpt-6.1-sol` | HTTP，Responses，可带图 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | `codex`、`codex-sale` |
 | `gpt-6.1-terra`（GPT-6.1 Terra） | 同上 | 可关；`low` / `medium` / `high` / `xhigh` / `max` | 同上 |
 | `gpt-6-astra` | 同上 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 同上 |
@@ -235,7 +236,7 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 
 `jev-latest`（TypeSafe Jev）不在模型选择器里：它是只回答分类问题的决策模型，不能对话，只用于[自动审查](#自动审查)。插件在宿主侧直接调用 `/v1/systemone`，需要 Key 在 `typesafe-officially` 分组；「账户与 Key」里每个 Key 的「Jev」一项会显示能否使用。
 
-当前目录中的 10 个模型都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。
+当前目录的 11 个模型中，除 DeepSeek V4 Pro 外都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。DeepSeek V4 Pro 按 [官方模型与价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 只收文字：DSH 不让给它附图，会话里已有的图片（比如从 Flash 切过来的会话）会换成一行「图片已省略」的说明再发送。PackyCode 网关收到发给 V4 Pro 的图片不报错，而是直接丢掉。
 
 Gemini 3.8 Flash 的能力与限制来自 Google 官方[模型页](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。它使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。它使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。PackyCode 自 2026-10-27 起不再提供 Gemini 4 Argon，插件已从目录中移除它。
 
@@ -260,7 +261,7 @@ DeepSeek Flash 走网关的 Responses 接口（`/api/pricing` 列出 `openai-res
 - Claude 流收到 `message_stop` 后即可完成，不再等网关关闭 HTTP 连接；跨分片的 CRLF 换行保持完整。流内错误与取消仍会返回，未收到响应头的等待也不会被当作成功。
 - DSH 的 bash/read/write/edit/glob/grep 在 HTTP 请求中使用已声明的 CLI 标准名称（如 `Bash`、`Read`），其它工具使用 MCP 命名；经 CLI 时 DSH 的工具不发给 Claude Code。回到 DSH 时仅还原本次实际提供的工具名称，未知名称不会获得执行权限。工具参数、调用 id、结果和历史签名不变。思考展示采用 CLI 默认：Haiku 为 `omitted`，Sonnet / Opus 为 `updates`（附带相应 beta）。所选推理强度和输出上限不变，空思考块的签名仍完整回传；明确指定的显示模式优先。
 - Claude 请求中的旧工作目录句式会在与当前会话元数据一致时转换为单独的 JSON 路径，避免把提示语的句号复制进路径。真实目录名中的点、Windows 盘符、UNC、空格和反斜杠保持不变；命令参数不会被自动修剪。命令工具优先使用当前目录或 `workdir`，Windows 的 PowerShell 工具保持其原有语法。
-- 两条通道的 Claude 对话都保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题由 `claude-haiku-5-5` 生成（与对话走同一条通道）；GPT-6 Astra 与 GPT-5.6 Sol 的标题交给 GPT-6.1 Sol。
+- 两条通道的 Claude 对话都保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题由 `claude-haiku-5-5` 生成（与对话走同一条通道）；GPT-6 Astra 与 GPT-5.6 Sol 的标题交给 GPT-6.1 Sol，DeepSeek V4 Pro 的标题交给 DeepSeek Flash。
 - 1.2.x 的 `claudeCliMode`、`claudeCliCwd` 设置不再恢复：Claude Code 的权限由会话的 DSH 权限预设决定，工作目录就是会话目录。名为 `claude_code` 的工具现在是 cc 会话里显示 Claude Code 工具调用的镜像工具，只由插件使用，不是 1.2.x 的委派工具。`claudeCliPath` 重新生效，用于指定 CLI 位置（留空则按常见安装位置和 PATH 查找）。1.3.4 的 `claudeTransport` 已移除，profile 里残留的值会被忽略。除非你在 CLI 卡片里点「更新 Claude Code CLI」，用户独立安装的 Claude Code 不会被改动。
 - Codex 的 Responses 请求仍需要 `prompt_cache_key`；插件补上缺失的会话标识，其它 Responses 模型省略该字段。
 - 构建后可用 `node scripts/claude-check.mjs` 验证三个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注、中文标题和计划模式（只读查询 → `exit_plan_mode` 提交计划 → 审批），并核对业务答案；加 `--transport cli` 则改跑 cc 通道的检查（`scripts/claude-agent-check.mjs`）：在临时目录里让 Claude Code 自己读文件计算、改文件（授权批准）、删文件（授权拒绝）、计划审阅后实施、提问、看图和起标题，核对文件和答案，并统计网关的「客户端异常」和「反滥用」拒绝次数。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。

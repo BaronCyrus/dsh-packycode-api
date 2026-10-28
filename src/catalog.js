@@ -14,7 +14,8 @@
  * model does not support is refused before the request is sent: Claude Opus
  * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol, GPT-6.1 Terra, GPT-6
  * Astra and GPT-5.6 Sol `reasoning.effort` (developers.openai.com model
- * pages), DeepSeek thinking mode (`low|high|max` effort, or off), Grok 4.7
+ * pages), DeepSeek thinking mode (`low|high|max` effort, or off, for Flash
+ * and V4 Pro alike), Grok 4.7
  * (docs.x.ai/developers/grok-4-7), and Gemini 3.8 Flash
  * (ai.google.dev/gemini-api/docs/models/gemini-3.8-flash).
  *
@@ -106,6 +107,24 @@ export const PACKYCODE_MODELS = Object.freeze([
     baseUrl: RESPONSES_BASE,
     reasoning: true,
     input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_000_000,
+    maxTokens: 384_000,
+    thinkingLevelMap: DEEPSEEK_LEVELS,
+  }),
+  Object.freeze({
+    // api-docs.deepseek.com/quick_start/pricing: V4 Pro has Flash's 1M
+    // context, 384K output and thinking efforts, but no image input. The
+    // gateway drops an image sent to it without an error, so pi-ai's
+    // placeholder says so instead. PackyCode serves it on Responses in
+    // `deepseek-officially` and `deepseek-sale`, also capped at 393,216.
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    api: 'openai-responses',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text']),
     cost: NO_COST,
     contextWindow: 1_000_000,
     maxTokens: 384_000,

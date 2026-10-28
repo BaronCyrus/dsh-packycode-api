@@ -58,3 +58,24 @@ test('a GPT session title runs on GPT-6.1 Sol, which every GPT key group serves;
     assert.equal(models.at(-1), model)
   }
 })
+
+test('a DeepSeek V4 Pro session title runs on DeepSeek Flash, which every group serving V4 Pro serves too', async t => {
+  const models = []
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    models.push(JSON.parse(await new Request(input, init).text()).model)
+    return answered()
+  })
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  await ring.add(KEY, 'fixture')
+  const adapter = createRouteAdapter({
+    ring,
+    keys: { active: () => ring.activeKey(), forRequest: (_model, key) => key, onKeyFailure: () => assert.fail('no key failure here') },
+  })
+  for (const [model, titleModel] of [['deepseek-v4-pro', 'deepseek-flash'], ['deepseek-flash', 'deepseek-flash']]) {
+    const prepared = await adapter.prepareCall('packycode', model)
+    assert.equal((await drain(prepared.stream(dshTitleRequest(['Name this session.'], { model, sessionId: 'fixture-session', reasoningEffort: 'low' })))).kind, 'stop')
+    assert.equal(models.at(-1), titleModel, model)
+    assert.equal((await drain(prepared.stream(request(model)))).kind, 'stop')
+    assert.equal(models.at(-1), model)
+  }
+})

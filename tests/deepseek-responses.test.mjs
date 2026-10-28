@@ -12,13 +12,13 @@ const TOOLS = [{
   parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
 }]
 
-const deepseek = provider => provider.getModels().find(model => model.id === 'deepseek-flash')
+const deepseek = (provider, id = 'deepseek-flash') => provider.getModels().find(model => model.id === id)
 
-test('DeepSeek uses Responses with its documented efforts and without the GPT cache key', async () => {
+test('DeepSeek Flash and V4 Pro use Responses with their documented efforts and without the GPT cache key', async () => {
   const provider = hostProvider(createPackyCodeProvider())
-  for (const reasoning of ['low', 'high', 'max']) {
+  for (const id of ['deepseek-flash', 'deepseek-v4-pro']) for (const reasoning of ['low', 'high', 'max']) {
     const requests = []
-    const stream = provider.streamSimple(deepseek(provider), { messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
+    const stream = provider.streamSimple(deepseek(provider, id), { messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
       apiKey: KEY, reasoning, sessionId: 'deepseek-session', cacheRetention: 'long', maxTokens: 2048,
       fetch: async (url, init) => {
         requests.push({ url: String(url), key: new Headers(init.headers).get('authorization'), body: JSON.parse(init.body) })
@@ -30,7 +30,7 @@ test('DeepSeek uses Responses with its documented efforts and without the GPT ca
     assert.equal(requests.length, 1)
     assert.equal(requests[0].url, 'https://cf.api.fan/v1/responses')
     assert.equal(requests[0].key, `Bearer ${KEY}`)
-    assert.equal(requests[0].body.model, 'deepseek-flash')
+    assert.equal(requests[0].body.model, id)
     assert.equal(requests[0].body.reasoning.effort, reasoning)
     assert.ok(requests[0].body.include.includes('reasoning.encrypted_content'))
     assert.equal(requests[0].body.max_output_tokens, 2048)
@@ -41,14 +41,16 @@ test('DeepSeek uses Responses with its documented efforts and without the GPT ca
 
 test('DeepSeek off asks Responses for effort none, which the gateway answers without reasoning', async () => {
   const provider = hostProvider(createPackyCodeProvider())
-  let body
-  const stream = provider.streamSimple(deepseek(provider), { messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
-    apiKey: KEY, reasoning: 'off', sessionId: 'deepseek-session',
-    fetch: async (_url, init) => { body = JSON.parse(init.body); return responsesStream() },
-  })
-  assert.equal((await stream.result()).stopReason, 'stop')
-  assert.deepEqual(body.reasoning, { effort: 'none' })
-  assert.equal(body.include, undefined)
+  for (const id of ['deepseek-flash', 'deepseek-v4-pro']) {
+    let body
+    const stream = provider.streamSimple(deepseek(provider, id), { messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
+      apiKey: KEY, reasoning: 'off', sessionId: 'deepseek-session',
+      fetch: async (_url, init) => { body = JSON.parse(init.body); return responsesStream() },
+    })
+    assert.equal((await stream.result()).stopReason, 'stop', id)
+    assert.deepEqual(body.reasoning, { effort: 'none' }, id)
+    assert.equal(body.include, undefined, id)
+  }
 })
 
 test('DeepSeek reasoning streams as thinking and is replayed with the tool call it preceded', async () => {

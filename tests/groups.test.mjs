@@ -18,6 +18,7 @@ const REFUSAL = (groups) => `当前令牌未覆盖供应商 ""（模型=${GROUP_
 const PRICING = {
   data: [
     { model_name: 'deepseek-flash', enable_groups: ['deepseek-sale', 'deepseek-officially'] },
+    { model_name: 'deepseek-v4-pro', enable_groups: ['deepseek-officially', 'deepseek-sale'] },
     { model_name: 'gpt-6.1-sol', enable_groups: ['codex', 'codex-sale', 'azure-officially'] },
     { model_name: 'gpt-6-astra', enable_groups: ['azure-officially', 'codex', 'codex-sale'] },
     { model_name: 'claude-opus-5-5', enable_groups: ['cc', 'cc-expensive', 'claude-officially', 'cc-sale'] },
@@ -80,7 +81,7 @@ test('a reading that could not reach a key is retried after a short wait, not af
 test('pricing keeps the catalog models\' groups and each group\'s description', () => {
   const pricing = parsePricing(PRICING)
   // jev-latest is not in the picker, but auto review asks it, so its group counts.
-  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'gpt-6-astra', 'gpt-6.1-sol', 'jev-latest'])
+  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6-astra', 'gpt-6.1-sol', 'jev-latest'])
   assert.deepEqual(pricing.modelGroups['jev-latest'], ['typesafe-officially'])
   assert.deepEqual(pricing.modelGroups['claude-haiku-5-5'], ['cc', 'claude-officially'])
   assert.deepEqual(pricing.descriptions, { cc: 'claude code专用', codex: 'codex专用', 'kimi-sale': '便宜的kimi分组，非逆向' })
@@ -91,6 +92,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   const { modelGroups } = parsePricing(PRICING)
   assert.deepEqual(catalogCoverage({ groups: ['codex', 'deepseek-officially'], modelGroups }), {
     'deepseek-flash': true,
+    'deepseek-v4-pro': true,
     'gpt-6.1-sol': true,
     'gpt-6-astra': true,
     'claude-opus-5-5': false,
@@ -109,6 +111,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   assert.deepEqual(catalogCoverage({}), {})
   assert.deepEqual(catalogCoverage({ models: new Set(['deepseek-flash']) }), {
     'deepseek-flash': true,
+    'deepseek-v4-pro': false,
     'gpt-6.1-sol': false,
     'gpt-6.1-terra': false,
     'gpt-6-astra': false,
