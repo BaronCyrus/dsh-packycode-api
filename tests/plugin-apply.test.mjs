@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { channel } from 'node:diagnostics_channel'
+import dns from 'node:dns'
 import test from 'node:test'
 
 import { apply, Config, inject, name } from '../src/index.js'
@@ -250,4 +252,36 @@ test('the plugin listens on llm/stream and leaves every request it does not own 
   assert.equal(review.length, 1)
   const request = { provider: 'packycode', model: 'deepseek-flash', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }
   assert.equal(review[0].listener(request, () => 'next'), 'next')
+})
+
+test('diagnostics report how requests to the PackyCode hosts ended, with stored keys redacted', async t => {
+  // Group and balance reads of the stored key are refused in process, and no
+  // host name is looked up on the network.
+  stubClaudeLatest(t)
+  t.mock.method(dns.promises, 'lookup', async () => [{ address: '104.18.15.63', family: 4 }, { address: '2606:4700::6812:f3f', family: 6 }])
+  const { ctx, registered } = stubContext()
+  const sessions = { listSessions: async () => [{ header: { id: 'session-1', createdAt: 1 }, live: true }], readSession: async () => ({ events: [] }) }
+  ctx.get = service => (service === 'sessionQuery' ? sessions : undefined)
+  apply(ctx, Config({ claudeCliPath: NO_CLI }))
+  assert.ok(registered.effects.includes('packycode-api: network diagnostics'))
+  const handler = registered.rpc[0].handler
+  const key = 'sk-network-fixture-0123456789'
+  assert.equal((await handler('keys/add', { key, label: 'network' })).ok, true)
+
+  const request = { origin: 'https://cf.api.fan', path: '/v1/responses', method: 'POST' }
+  const error = Object.assign(new Error(`connect ETIMEDOUT 104.18.15.63:443 ${key}`), { code: 'ETIMEDOUT', address: '104.18.15.63', port: 443 })
+  channel('undici:request:create').publish({ request })
+  channel('undici:client:connectError').publish({ connectParams: { hostname: 'cf.api.fan' }, error })
+  channel('undici:request:error').publish({ request, error })
+  channel('undici:request:create').publish({ request: { origin: 'https://example.com', path: '/private', method: 'GET' } })
+
+  const report = await handler('diagnostics/session', { sessionId: 'session-1' })
+  assert.equal(report.ok, true)
+  const { network } = report.value
+  assert.deepEqual(network.hosts.map(host => host.host), ['cf.api.fan', 'www.packyapi.ai', 'www.packyapi.com'])
+  assert.deepEqual(network.hosts[0].resolved, ['104.18.15.63', '2606:4700::6812:f3f'])
+  assert.deepEqual(network.hosts[0].failed, { connect: 1 })
+  assert.deepEqual(network.recentFailures.map(failure => [failure.host, failure.stage, failure.attempts]), [['cf.api.fan', 'connect', ['104.18.15.63 ETIMEDOUT']]])
+  const text = JSON.stringify(report.value)
+  for (const secret of [key, 'example.com', '/private']) assert.equal(text.includes(secret), false, `${secret} must not appear`)
 })

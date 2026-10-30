@@ -43,10 +43,11 @@ import { DEFAULT_IMAGE_MODEL, IMAGE_MODEL_IDS, IMAGE_QUALITIES } from './image-m
 import { createImageController } from './image-settings.js'
 import { createImageOriginalReader } from './image-originals.js'
 import { createPackyCodeImageClient, createPackyCodeImageTool } from './images.js'
-import { normalizeHost } from './hosts.js'
+import { normalizeHost, statusHostOrder } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
 import { PackyCodeKeyRing } from './key-ring.js'
 import { createModelSelectionController } from './model-selection.js'
+import { createNetworkLog } from './network.js'
 import { createPackyCodePluginManager } from './plugin-version.js'
 import { connectSettings, fieldValue, live, unwritable } from './preferences.js'
 import { createRouteAdapter } from './route.js'
@@ -116,6 +117,13 @@ export function apply(ctx, config) {
       statusHost: normalizeHost(current.statusHost, DEFAULT_STATUS_HOST),
     }
   }
+  /**
+   * How requests to PackyCode's own hosts end at the transport level, for
+   * the diagnostics card. It listens from load, so the first group reading
+   * is in it too.
+   */
+  const network = createNetworkLog({ hosts: () => [hosts().apiHost, DEFAULT_API_HOST, ...statusHostOrder(hosts())] })
+  ctx.effect(() => network.start(), 'packycode-api: network diagnostics')
 
   const balance = createBalanceReader({ listKeys: () => ring.secrets(), getHosts: hosts })
   const imageBalance = createBalanceReader({ listKeys: () => imageRing.secrets(), getHosts: hosts })
@@ -455,6 +463,7 @@ export function apply(ctx, config) {
       groups,
       secrets: async () => (await Promise.all([ring.secrets(), imageRing.secrets()])).flat().map(entry => entry.key),
       ownPackageJsonUrl: new URL('../package.json', import.meta.url),
+      network,
     }),
   })
   /**

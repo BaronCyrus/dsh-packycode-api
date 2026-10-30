@@ -110,6 +110,27 @@ test('a diagnosis names the session, plugin and key groups but no labels or keys
   for (const secret of ['Alice', 'Spare', KEY, '/Users/someone', PROMPT]) assert.equal(text.includes(secret), false, `${secret} must not appear`)
 })
 
+test('a diagnosis carries the network section, and is still made when that section fails', async () => {
+  const sessions = [{ header: { id: 'session-1', createdAt: 42 }, live: true }]
+  const base = {
+    sessionQuery: () => ({ listSessions: async () => sessions }),
+    readEvents: async () => events,
+    ring: { list: async () => ({ keys: [] }) },
+    secrets: async () => [KEY],
+    ownPackageJsonUrl: new URL('../package.json', import.meta.url),
+  }
+  const seen = []
+  const network = { snapshot: async options => { seen.push(options); return { runtime: { node: 'v24.0.0' }, hosts: [] } } }
+  const report = await createDiagnostics({ ...base, network }).read({ sessionId: 'session-1' })
+  assert.deepEqual(report.network, { runtime: { node: 'v24.0.0' }, hosts: [] })
+  assert.deepEqual(seen, [{ secrets: [KEY] }], 'stored keys are handed over for redaction')
+
+  const broken = { snapshot: async () => { throw new Error('lookup exploded') } }
+  const without = await createDiagnostics({ ...base, network: broken }).read({ sessionId: 'session-1' })
+  assert.equal(without.network, undefined)
+  assert.equal(without.totals.steps, 1)
+})
+
 test('the service refuses bad session ids and runtimes without session history', async () => {
   const { diagnostics } = service()
   for (const sessionId of [undefined, '', '../etc/passwd', 'a b']) {

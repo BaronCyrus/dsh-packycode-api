@@ -4,6 +4,10 @@
  * each request used, how every model step ended and what it consumed, and
  * which retries and failures happened.
  *
+ * The report also carries how this process reached PackyCode's servers
+ * (`network.js`): it is process-wide, not per session, and starts when the
+ * plugin loads.
+ *
  * The summary carries numbers and identifiers only. Message text, reasoning,
  * tool arguments and results, titles, paths and key material never enter it;
  * error messages are redacted and shortened. A user can paste it into a bug
@@ -33,8 +37,8 @@ const last = (list, count) => list.slice(Math.max(0, list.length - count))
 const compact = object => Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined))
 const chunksOf = stream => (Array.isArray(stream) ? stream.map(item => item?.chunk).filter(chunk => chunk !== null && typeof chunk === 'object') : [])
 
-/** A provider or harness error message, redacted and shortened. */
-function safeMessage(text, secrets) {
+/** A provider, harness or transport error message, redacted and shortened. */
+export function safeMessage(text, secrets) {
   if (typeof text !== 'string' || text === '') return undefined
   const safe = redactSecrets(text, secrets)
     .replace(/sk-[A-Za-z0-9_-]{8,}/gu, 'sk-[redacted]')
@@ -129,9 +133,10 @@ export function summarizeSessionEvents(events, { secrets = [] } = {}) {
  * The diagnostics service behind the settings card.
  * @param options - DSH's session query service (read lazily), the session
  *   event reader the image originals already use, the key ring and group
- *   reader, the stored secrets to redact, and this package's manifest URL.
+ *   reader, the stored secrets to redact, this package's manifest URL, and
+ *   the network log.
  */
-export function createDiagnostics({ sessionQuery, readEvents, ring, groups, secrets = async () => [], ownPackageJsonUrl }) {
+export function createDiagnostics({ sessionQuery, readEvents, ring, groups, secrets = async () => [], ownPackageJsonUrl, network }) {
   const query = () => {
     const service = sessionQuery?.()
     if (typeof service?.listSessions !== 'function') throw new Error('PackyCode diagnostics need DSH session history, which this runtime does not provide')
@@ -167,6 +172,15 @@ export function createDiagnostics({ sessionQuery, readEvents, ring, groups, secr
     })
   }
 
+  /** How this process reached PackyCode; a report never fails for want of it. */
+  const networkOf = async secretList => {
+    try {
+      return await network?.snapshot({ secrets: secretList })
+    } catch {
+      return undefined
+    }
+  }
+
   return Object.freeze({
     /** Recent top-level sessions, newest first, for the picker. */
     async list(signal) {
@@ -195,6 +209,7 @@ export function createDiagnostics({ sessionQuery, readEvents, ring, groups, secr
         throw new Error('PackyCode could not read that session')
       }
       const record = (await query().listSessions(signal)).find(item => item?.header?.id === sessionId)
+      const secretList = await secrets()
       return {
         format: DIAGNOSTICS_FORMAT,
         generatedAt: new Date().toISOString(),
@@ -206,7 +221,8 @@ export function createDiagnostics({ sessionQuery, readEvents, ring, groups, secr
           delegationDepth: finite(record?.header?.delegationDepth),
         }),
         keys: await keys(),
-        ...summarizeSessionEvents(events, { secrets: await secrets() }),
+        ...summarizeSessionEvents(events, { secrets: secretList }),
+        network: await networkOf(secretList),
       }
     },
   })
