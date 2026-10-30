@@ -77,7 +77,7 @@ for (const text of ['400 invalid request', '401 Invalid thought signature.', '42
 }
 
 for (const [name, replayModel, messages] of [
-  ['another Gemini model', { ...model, id: 'gemini-other-model' }, context.messages],
+  ['Argon', { ...model, id: 'gemini-4-argon' }, context.messages],
   ['initial turn', model, [context.messages[0]]],
   ['missing signature', model, [context.messages[0], { ...context.messages[1], content: [{ ...context.messages[1].content[0], thoughtSignature: undefined }] }, context.messages[2]]],
   ['invalid base64 signature', model, [context.messages[0], { ...context.messages[1], content: [{ ...context.messages[1].content[0], thoughtSignature: 'not-base64' }] }, context.messages[2]]],

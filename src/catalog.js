@@ -16,8 +16,8 @@
  * Astra and GPT-5.6 Sol `reasoning.effort` (developers.openai.com model
  * pages), DeepSeek thinking mode (`low|high|max` effort, or off, for Flash
  * and V4 Pro alike), Grok 4.7
- * (docs.x.ai/developers/grok-4-7), and Gemini 3.8 Flash
- * (ai.google.dev/gemini-api/docs/models/gemini-3.8-flash).
+ * (docs.x.ai/developers/grok-4-7), and Gemini 4 Argon and 3.8 Flash
+ * (ai.google.dev/gemini-api/docs/models/gemini-4-argon and gemini-3.8-flash).
  *
  * @module dsh-packycode-api/catalog
  */
@@ -90,7 +90,7 @@ const TERRA_LEVELS = Object.freeze({
 /** Grok 4.7 supports low | medium | high | xhigh, with no off or max. */
 const GROK_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, max: null })
 
-/** Gemini 3.8 Flash supports low | medium | high, with no off. */
+/** Gemini 4 Argon and 3.8 Flash support low | medium | high, with no off. */
 const GEMINI_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, xhigh: null, max: null })
 
 export const PACKYCODE_MODELS = Object.freeze([
@@ -215,11 +215,28 @@ export const PACKYCODE_MODELS = Object.freeze([
     compat: Object.freeze({ supportsLongCacheRetention: false }),
   }),
   Object.freeze({
+    // ai.google.dev/gemini-api/docs/models/gemini-4-argon: unified 1M context
+    // and 65,536 output per stream; this route does no automatic continuation.
+    // PackyCode stopped serving it on 2026-10-27 and served it again by
+    // 2026-10-30, now listing an OpenAI endpoint too; it stays on the native
+    // protocol with Flash.
+    id: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
+    api: 'google-generative-ai',
+    provider: PROVIDER,
+    baseUrl: GEMINI_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+    thinkingLevelMap: GEMINI_LEVELS,
+  }),
+  Object.freeze({
     // ai.google.dev/gemini-api/docs/models/gemini-3.8-flash: 1,048,576 input
     // and 65,536 output per stream; this route does no automatic
     // continuation. Keep it on the native protocol, including image and
-    // signature replay. (PackyCode stopped serving Gemini 4 Argon on
-    // 2026-10-27.)
+    // signature replay.
     id: 'gemini-3.8-flash',
     name: 'Gemini 3.8 Flash',
     api: 'google-generative-ai',

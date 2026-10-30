@@ -97,7 +97,7 @@ function capture(t, respond = (_request, _count, model) => nativeStream(undefine
   return requests
 }
 
-for (const id of ['gemini-3.8-flash']) {
+for (const id of ['gemini-4-argon', 'gemini-3.8-flash']) {
   test(`${id} streams its three thinking levels through the native SDK without thinkingBudget`, async t => {
     const requests = capture(t)
     const provider = hostProvider(createPackyCodeProvider())

@@ -65,7 +65,7 @@ dsh-packycode-api@1.4.4
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十一个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十二个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
@@ -227,6 +227,7 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 | `gpt-6-astra` | 同上 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 同上 |
 | `gpt-5.6-sol` | 同上 | 同上 | 同上 |
 | `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
+| `gemini-4-argon`（Gemini 4 Argon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `gemini-3.8-flash`（Gemini 3.8 Flash） | HTTP，Gemini 原生流式，可带图；1,048,576 输入，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `claude-opus-5-5` | Anthropic Messages，可带图和原生工具：`cc` 分组由本机 Claude Code CLI 当 agent，其它分组走 HTTP | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 以设置页读取的 Claude 分组覆盖为准 |
 | `claude-sonnet-5-5` | 同上 | 同上 | 同上 |
@@ -236,11 +237,11 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 
 `jev-latest`（TypeSafe Jev）不在模型选择器里：它是只回答分类问题的决策模型，不能对话，只用于[自动审查](#自动审查)。插件在宿主侧直接调用 `/v1/systemone`，需要 Key 在 `typesafe-officially` 分组；「账户与 Key」里每个 Key 的「Jev」一项会显示能否使用。
 
-当前目录的 11 个模型中，除 DeepSeek V4 Pro 外都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。DeepSeek V4 Pro 按 [官方模型与价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 只收文字：DSH 不让给它附图，会话里已有的图片（比如从 Flash 切过来的会话）会换成一行「图片已省略」的说明再发送。PackyCode 网关收到发给 V4 Pro 的图片不报错，而是直接丢掉。
+当前目录的 12 个模型中，除 DeepSeek V4 Pro 外都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。DeepSeek V4 Pro 按 [官方模型与价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 只收文字：DSH 不让给它附图，会话里已有的图片（比如从 Flash 切过来的会话）会换成一行「图片已省略」的说明再发送。PackyCode 网关收到发给 V4 Pro 的图片不报错，而是直接丢掉。
 
-Gemini 3.8 Flash 的能力与限制来自 Google 官方[模型页](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。它使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。它使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。PackyCode 自 2026-10-27 起不再提供 Gemini 4 Argon，插件已从目录中移除它。
+Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
 
-**Gemini 工具续聊的思维签名：** PackyCode 的 Gemini 原生通道在工具调用场景下不能正确处理思维签名，会返回 HTTP 400 `Invalid thought signature` / `Corrupted thought signature`，原样重发也无济于事（PackyCode 客服的答复）。因此插件对 Gemini 3.8 Flash 不再回传模型返回的签名，而是按 [Google 文档](https://ai.google.dev/gemini-api/docs/thought-signatures) 在需要签名的位置填入跳过校验的值 `skip_thought_signature_validator`。协议、端点和模型都不变，DSH 的回放记录仍保留原始签名。Google 提示跳过签名可能削弱多步工具调用之间的推理连贯性。Flash 仍保留原有兜底：HTTP 400 签名拒绝且尚未输出任何流事件时，等待 1 秒原样重发一次。这类 400 不会被当作 Key 失效。
+**Gemini 工具续聊的思维签名：** PackyCode 的 Gemini 原生通道在工具调用场景下不能正确处理思维签名，会返回 HTTP 400 `Invalid thought signature` / `Corrupted thought signature`，原样重发也无济于事（PackyCode 客服的答复）。因此插件对 Gemini 4 Argon 和 Gemini 3.8 Flash 不再回传模型返回的签名，而是按 [Google 文档](https://ai.google.dev/gemini-api/docs/thought-signatures) 在需要签名的位置填入跳过校验的值 `skip_thought_signature_validator`。协议、端点和模型都不变，DSH 的回放记录仍保留原始签名。Google 提示跳过签名可能削弱多步工具调用之间的推理连贯性。Flash 仍保留原有兜底：HTTP 400 签名拒绝且尚未输出任何流事件时，等待 1 秒原样重发一次。这类 400 不会被当作 Key 失效。
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 
@@ -302,8 +303,6 @@ grep '"version"' ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/package.
 **某个模型不可用，但 Key 是有效的？** 看「账户与 Key」里这个 Key 的分组和 ✓ / ✕：分组不覆盖这个模型时，换一个分组合适的 Key，或在 PackyCode 控制台给 Key 加上对应分组。存了分组合适的 Key 时，插件会自动用它跑这个模型。分组拒绝不会停用 Key。
 
 **GPT 模型改文件时报 `invalid justification: expected a non-empty sentence`？** 这是 1.4.2 及更早版本的问题，更新到 1.4.3 即可。PackyCode 的 GPT 通道把没写 `strict` 的工具当作严格模式，模型被迫填满所有可选参数，把 DSH 的沙箱提权参数填成 `sandbox_permissions: "workspace-write"` 加空的 `justification`，DSH 的 edit / write 于是拒绝这次调用。1.4.3 起 GPT 的工具定义显式带上 `strict: false`。模型通常会换一种方式完成这一步，已有会话不需要处理。
-
-**会话报 `pi-ai provider "packycode" has no configured model "gemini-4-argon"`？** PackyCode 自 2026-10-27 起不再提供 Gemini 4 Argon，网关拒绝这个模型，插件也从目录中移除了它。在模型选择器里给这个会话换一个模型即可。
 
 **Claude 报「只接受官方 Claude Code CLI」或「客户端存在异常」？** 这是网关的客户端政策拒绝，不等于 Key 失效。看这个 Key 下方标的是「Claude 经 HTTP」还是「经官方 CLI」：`cc` 分组的 Key 总是走 CLI，其它分组走 HTTP。cc 分组按请求内容判断是不是 Claude Code 自己在工作；1.4.0 起 cc 会话由 Claude Code 自己完成，正常不会被拒。偶尔仍被拒时重发一次；反复出现时，把错误里的网关原文（含 request id）发给 PackyCode 客服，或改用 `cc-sale` / `cc-expensive` / `claude-officially` 分组的 Key。更新 Claude Code CLI 不能解决这个拒绝。插件不会因此禁用 Key 或切换提供商。
 

@@ -117,6 +117,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'gpt-6-astra': false,
     'gpt-5.6-sol': false,
     'grok-4.7': false,
+    'gemini-4-argon': false,
     'gemini-3.8-flash': false,
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,

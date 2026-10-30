@@ -91,6 +91,12 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
   assert.deepEqual(terra.reasoning.efforts.map(effort => effort.id), ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
   assert.equal(terra.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
 
+  const gemini = await adapter.resolveModel(PROVIDER, 'gemini-4-argon')
+  assert.equal(gemini.name, 'Gemini 4 Argon')
+  assert.equal(gemini.context.contextWindow, 1_048_576)
+  assert.deepEqual([...gemini.inputModalities], ['text', 'image'])
+  assert.deepEqual(gemini.reasoning.efforts.map(effort => effort.id), ['low', 'medium', 'high'])
+  assert.equal(gemini.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
   const flash = await adapter.resolveModel(PROVIDER, 'gemini-3.8-flash')
   assert.equal(flash.name, 'Gemini 3.8 Flash')
   assert.equal(flash.context.contextWindow, 1_048_576)
@@ -99,9 +105,9 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
   assert.equal(flash.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
 })
 
-test('a session still set to Gemini 4 Argon, which PackyCode stopped serving, is refused as an unknown model', async () => {
+test('a session set to a model that left the catalog is refused as an unknown model', async () => {
   const { adapter, reads } = route()
-  await assert.rejects(async () => adapter.prepareCall(PROVIDER, 'gemini-4-argon'), { code: 'UNKNOWN_MODEL', message: /no configured model "gemini-4-argon"/u })
+  await assert.rejects(async () => adapter.prepareCall(PROVIDER, 'gemini-left-catalog'), { code: 'UNKNOWN_MODEL', message: /no configured model "gemini-left-catalog"/u })
   assert.deepEqual(reads, [])
 })
 
