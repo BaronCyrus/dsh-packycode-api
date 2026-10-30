@@ -205,7 +205,10 @@ test('the runtime section names the connection settings and proxy schemes, never
   assert.equal((await createNetworkLog({ hosts: () => [], env: {} }).snapshot()).runtime.proxy, 'none')
 })
 
-test('a lookup is bounded and says why a host has no addresses; a stopped log hears nothing', async () => {
+test('a lookup is bounded and says why a host has no addresses; a stopped log hears nothing', async t => {
+  // The bound's timer is unref'd. A running host keeps the loop alive; here nothing else would on Node 22.
+  const keepAlive = setInterval(() => {}, 1000)
+  t.after(() => clearInterval(keepAlive))
   const lookupAll = host => (host === 'slow.test'
     ? new Promise(() => {})
     : Promise.reject(Object.assign(new Error('not found'), { code: 'ENOTFOUND' })))
