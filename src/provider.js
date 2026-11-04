@@ -15,6 +15,7 @@ import { PACKYCODE_MODELS } from './catalog.js'
 import { createClaudeApi } from './claude-api.js'
 import { DEFAULT_API_HOST, DISPLAY_NAME, PROVIDER } from './constants.js'
 import { createGeminiApi } from './gemini-api.js'
+import { HY4_MODEL_ID, withHy4Identity } from './hy4-identity.js'
 import { redactSecrets } from './secret-redactor.js'
 import {
   CLI_MARK,
@@ -86,9 +87,13 @@ export function createPackyCodeProvider({ claudeCli } = {}) {
   // and the prefix caches of DeepSeek and Hy4 hit without it.
   // pi-ai's public cacheRetention option omits this field without changing
   // the model, protocol, reasoning, session headers, or credential source.
-  const requestOptions = (model, options) => model.api === 'openai-responses' && !model.id.startsWith('gpt-')
-    ? { ...options, cacheRetention: 'none' }
-    : options
+  // Hy4 is also told who made it: DSH's system prompt names only the harness.
+  const requestOptions = (model, options) => {
+    const cached = model.api === 'openai-responses' && !model.id.startsWith('gpt-')
+      ? { ...options, cacheRetention: 'none' }
+      : options
+    return model.id === HY4_MODEL_ID ? withHy4Identity(cached) : cached
+  }
   return Object.freeze({
     ...provider,
     stream: (model, context, options) => provider.stream(model, context, requestOptions(model, options)),

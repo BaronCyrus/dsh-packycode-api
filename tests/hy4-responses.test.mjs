@@ -5,6 +5,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
 
 import { createVisionFixture } from '../scripts/vision-fixture.mjs'
+import { HY4_IDENTITY_NOTE, withIdentityNote } from '../src/hy4-identity.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeProvider } from '../src/provider.js'
 import { createRouteAdapter } from '../src/route.js'
@@ -193,4 +194,57 @@ test('Hy4 images reach Responses through the registered host route', async t => 
   assert.deepEqual(content.filter(block => block.type === 'input_image'), [
     { type: 'input_image', detail: 'auto', image_url: `data:image/png;base64,${fixture.data.toString('base64')}` },
   ])
+})
+
+/** The opening of DSH 0.2.1's system prompt, which names the harness and the model id only. */
+const DSH_SYSTEM = 'You are an AI agent powered by DeepSeek Harness.\n\nYou are a coding agent powered by the hy4 model.'
+
+test('Hy4 is told who made it after DSH\'s own instructions, which name only the harness', async () => {
+  // Under this prompt Hy4 called itself a DeepSeek model and denied being Hunyuan.
+  const provider = hostProvider(createPackyCodeProvider())
+  const bodies = []
+  const fetch = async (_url, init) => { bodies.push(JSON.parse(init.body)); return responsesStream() }
+  const messages = [{ role: 'user', content: '你是什么模型？', timestamp: 1 }]
+  await provider.streamSimple(hy4(provider), { systemPrompt: DSH_SYSTEM, messages }, { apiKey: KEY, reasoning: 'high', fetch }).result()
+  assert.deepEqual(bodies[0].input[0], { role: 'developer', content: `${DSH_SYSTEM}\n\n${HY4_IDENTITY_NOTE}` })
+  assert.deepEqual(bodies[0].input.slice(1).map(item => item.role), ['user'])
+  // A request without instructions gets the note as its only ones.
+  await provider.streamSimple(hy4(provider), { messages }, { apiKey: KEY, reasoning: 'off', fetch }).result()
+  assert.deepEqual(bodies[1].input.map(item => item.role), ['developer', 'user'])
+  assert.equal(bodies[1].input[0].content, HY4_IDENTITY_NOTE)
+  // The other models get DSH's instructions as written.
+  for (const id of ['deepseek-flash', 'grok-4.7', 'gpt-6.1-terra']) {
+    const model = provider.getModels().find(entry => entry.id === id)
+    await provider.streamSimple(model, { systemPrompt: DSH_SYSTEM, messages }, { apiKey: KEY, reasoning: 'high', sessionId: 'other-session', fetch }).result()
+    assert.deepEqual(bodies.at(-1).input[0], { role: 'developer', content: DSH_SYSTEM }, id)
+    assert.equal(JSON.stringify(bodies.at(-1)).includes(HY4_IDENTITY_NOTE), false, id)
+  }
+})
+
+test('a caller\'s own payload hook sees Hy4\'s note and has the last word', async () => {
+  const provider = hostProvider(createPackyCodeProvider())
+  let body
+  let seen
+  const result = await provider.streamSimple(hy4(provider), { systemPrompt: DSH_SYSTEM, messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
+    apiKey: KEY, reasoning: 'high',
+    onPayload: payload => { seen = payload.input[0].content; return { ...payload, metadata: { caller: 'kept' } } },
+    fetch: async (_url, init) => { body = JSON.parse(init.body); return responsesStream() },
+  }).result()
+  assert.equal(result.stopReason, 'stop', result.errorMessage)
+  assert.ok(seen.endsWith(HY4_IDENTITY_NOTE))
+  assert.deepEqual(body.metadata, { caller: 'kept' })
+  assert.equal(body.input[0].content.split(HY4_IDENTITY_NOTE).length, 2, 'the note is sent once')
+})
+
+test('the note is added once, without touching the payload it was given', () => {
+  const payload = Object.freeze({ model: 'hy4', input: Object.freeze([Object.freeze({ role: 'developer', content: DSH_SYSTEM }), Object.freeze({ role: 'user', content: 'hi' })]) })
+  const noted = withIdentityNote(payload)
+  assert.equal(noted.input[0].content, `${DSH_SYSTEM}\n\n${HY4_IDENTITY_NOTE}`)
+  assert.deepEqual(noted.input[1], payload.input[1])
+  assert.equal(payload.input[0].content, DSH_SYSTEM)
+  assert.equal(withIdentityNote(noted), noted)
+  // A body that is not a Responses input list is left alone.
+  assert.equal(withIdentityNote(undefined), undefined)
+  const text = { model: 'hy4', input: 'hi' }
+  assert.equal(withIdentityNote(text), text)
 })
