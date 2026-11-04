@@ -91,6 +91,13 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
   assert.deepEqual(terra.reasoning.efforts.map(effort => effort.id), ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
   assert.equal(terra.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
 
+  const hy4 = await adapter.resolveModel(PROVIDER, 'hy4')
+  assert.equal(hy4.name, 'Hy4')
+  assert.equal(hy4.context.contextWindow, 1_024_000)
+  assert.deepEqual([...hy4.inputModalities], ['text', 'image'])
+  assert.deepEqual(hy4.reasoning.efforts.map(effort => effort.id), ['off', 'high'])
+  assert.equal(hy4.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
+
   const gemini = await adapter.resolveModel(PROVIDER, 'gemini-4-argon')
   assert.equal(gemini.name, 'Gemini 4 Argon')
   assert.equal(gemini.context.contextWindow, 1_048_576)

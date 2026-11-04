@@ -9,6 +9,12 @@ export const messageItem = (text, id = 'msg_fixture') => ({ type: 'message', id,
  */
 export const reasoningItem = (text, id = 'rs_fixture') => ({ type: 'reasoning', id, status: 'completed', summary: [], content: [{ type: 'reasoning_text', text }], encrypted_content: 'resp_fixture-0' })
 
+/**
+ * A reasoning item as PackyCode returns it for Hy4: the text in one
+ * `summary_text` part, with no content and no `encrypted_content`.
+ */
+export const summaryReasoningItem = (text, id = 'rs_fixture') => ({ type: 'reasoning', id, status: 'completed', summary: [{ type: 'summary_text', text }] })
+
 /** A completed function call item. */
 export const functionCallItem = (name, args, callId = 'call_fixture') => ({ type: 'function_call', id: `fc_${callId}`, call_id: callId, name, arguments: JSON.stringify(args), status: 'completed' })
 
@@ -19,7 +25,17 @@ export const functionCallItem = (name, args, callId = 'call_fixture') => ({ type
 export function responsesStream(output = [messageItem('ok')]) {
   const events = [{ type: 'response.created', response: { id: 'resp_fixture', object: 'response', status: 'in_progress', output: [] } }]
   output.forEach((item, index) => {
-    if (item.type === 'reasoning') {
+    if (item.type === 'reasoning' && item.content === undefined) {
+      // Hy4's order: the item, then each summary part's start, text and end.
+      events.push({ type: 'response.output_item.added', output_index: index, item: { type: 'reasoning', id: item.id, status: 'in_progress' } })
+      item.summary.forEach((part, summaryIndex) => {
+        const at = { output_index: index, item_id: item.id, summary_index: summaryIndex }
+        events.push({ type: 'response.reasoning_summary_part.added', ...at, part: { type: 'summary_text' } })
+        events.push({ type: 'response.reasoning_summary_text.delta', ...at, delta: part.text })
+        events.push({ type: 'response.reasoning_summary_text.done', ...at, text: part.text })
+        events.push({ type: 'response.reasoning_summary_part.done', ...at, part })
+      })
+    } else if (item.type === 'reasoning') {
       events.push({ type: 'response.output_item.added', output_index: index, item: { ...item, status: 'in_progress', content: [] } })
       for (const part of item.content) events.push({ type: 'response.reasoning_text.delta', output_index: index, content_index: 0, item_id: item.id, delta: part.text })
     } else if (item.type === 'message') {

@@ -77,8 +77,8 @@ test('GPT sends DSH\'s tools with strict false, so the model may leave the sandb
     assert.equal(tool.strict, false, model)
     assert.deepEqual(tool.parameters, BASH.parameters, model)
   }
-  // DeepSeek and Grok leave optional parameters out without the field.
-  for (const model of ['deepseek-flash', 'deepseek-v4-pro', 'grok-4.7']) {
+  // DeepSeek, Grok and Hy4 leave optional parameters out without the field.
+  for (const model of ['deepseek-flash', 'deepseek-v4-pro', 'grok-4.7', 'hy4']) {
     const [tool] = (await send(model, { reasoningEffort: 'high', tools: [BASH] })).tools
     assert.equal(Object.hasOwn(tool, 'strict'), false, model)
     assert.deepEqual(tool.parameters, BASH.parameters, model)

@@ -83,7 +83,7 @@ export function createPackyCodeProvider({ claudeCli } = {}) {
   })
   // Only GPT's Responses route requires prompt_cache_key here. Sending it
   // to Grok makes the gateway return a misleading upstream API-key error,
-  // and DeepSeek's prefix cache hits without it.
+  // and the prefix caches of DeepSeek and Hy4 hit without it.
   // pi-ai's public cacheRetention option omits this field without changing
   // the model, protocol, reasoning, session headers, or credential source.
   const requestOptions = (model, options) => model.api === 'openai-responses' && !model.id.startsWith('gpt-')

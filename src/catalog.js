@@ -16,7 +16,9 @@
  * Astra and GPT-5.6 Sol `reasoning.effort` (developers.openai.com model
  * pages), DeepSeek thinking mode (`low|high|max` effort, or off, for Flash
  * and V4 Pro alike), Grok 4.7
- * (docs.x.ai/developers/grok-4-7), and Gemini 4 Argon and 3.8 Flash
+ * (docs.x.ai/developers/grok-4-7), Hy4 (`high` or `no_think`, TokenHub's
+ * deep-thinking page cloud.tencent.com/document/product/1823/131208), and
+ * Gemini 4 Argon and 3.8 Flash
  * (ai.google.dev/gemini-api/docs/models/gemini-4-argon and gemini-3.8-flash).
  *
  * @module dsh-packycode-api/catalog
@@ -37,8 +39,8 @@ const GEMINI_BASE = `${DEFAULT_API_HOST}/v1beta`
  * escalation pair then came back as `workspace-write` with an empty
  * justification, which DSH's edit and write refuse. Declaring strict-mode
  * support makes pi-ai send `strict: false` on each tool, as the official
- * Codex client does; the schemas stay as DSH wrote them. DeepSeek and Grok
- * leave optional parameters out either way.
+ * Codex client does; the schemas stay as DSH wrote them. DeepSeek, Grok and
+ * Hy4 fill optional parameters no more often without `strict` than with it.
  */
 const GPT_COMPAT = Object.freeze({ supportsStrictMode: true })
 
@@ -89,6 +91,23 @@ const TERRA_LEVELS = Object.freeze({
 
 /** Grok 4.7 supports low | medium | high | xhigh, with no off or max. */
 const GROK_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, max: null })
+
+/**
+ * Hy4 documents `reasoning_effort` high | no_think and nothing else, with
+ * thinking on by default. Through PackyCode `no_think` answers without
+ * reasoning, so `off` sends it. The gateway does not refuse low, medium, xhigh
+ * or max, but they are undocumented, and they came back with high's prompt
+ * tokens and no consistent difference in reasoning, so they are not offered.
+ */
+const HY4_LEVELS = Object.freeze({
+  off: 'no_think',
+  minimal: null,
+  low: null,
+  medium: null,
+  high: 'high',
+  xhigh: null,
+  max: null,
+})
 
 /** Gemini 4 Argon and 3.8 Flash support low | medium | high, with no off. */
 const GEMINI_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, xhigh: null, max: null })
@@ -213,6 +232,27 @@ export const PACKYCODE_MODELS = Object.freeze([
     maxTokens: 500_000,
     thinkingLevelMap: GROK_LEVELS,
     compat: Object.freeze({ supportsLongCacheRetention: false }),
+  }),
+  Object.freeze({
+    // cloud.tencent.com/document/product/1823/132252 (TokenHub's Hunyuan
+    // guide): 1024K context, of which at most 960K input, and 64K output,
+    // with image input on every protocol; TokenHub's model overview (…/130079)
+    // marks Hy4's Responses support native. PackyCode serves it in
+    // `hunyuan-officially` with `openai-response` among its endpoints.
+    // Reasoning arrives as `summary_text` items, which pi-ai replays with
+    // the turn's tool calls and in later turns, as TokenHub's preserved
+    // thinking asks. The prefix cache hits without `prompt_cache_key`.
+    id: 'hy4',
+    name: 'Hy4',
+    api: 'openai-responses',
+    provider: PROVIDER,
+    baseUrl: RESPONSES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_024_000,
+    maxTokens: 64_000,
+    thinkingLevelMap: HY4_LEVELS,
   }),
   Object.freeze({
     // ai.google.dev/gemini-api/docs/models/gemini-4-argon: unified 1M context
