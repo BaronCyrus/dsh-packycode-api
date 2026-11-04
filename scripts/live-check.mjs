@@ -23,9 +23,12 @@
  * vision checks, skipping unrelated rotation/search/RPC checks.
  * `--with-vision` checks DeepSeek Flash (or the selected HTTP model, which must
  * take images) with two color images through the host's attachment service;
- * the prompt hides the colors.
+ * the prompt hides the colors. Those turns run at the least effort the model
+ * offers, as DSH's titles do: they check that the image arrives and is read,
+ * and at `high` Hy4 can reason past the output cap over a plain color.
  */
 
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
@@ -96,8 +99,11 @@ async function routeWith(entries, { groupReader, resolveAttachments } = {}) {
   return { ring, groups, keys, adapter }
 }
 
+/** The output cap of every turn, which keeps a run's spend small. */
+const OUTPUT_CAP = 2048
+
 /** One turn through an adapter; the finish reason and the streamed text. */
-async function turn(adapter, model, text = 'Reply with exactly: ok', { image } = {}) {
+async function turn(adapter, model, text = 'Reply with exactly: ok', { image, reasoningEffort = 'high' } = {}) {
   const prepared = await adapter.prepareCall(PROVIDER, model)
   let answer = ''
   let finish
@@ -105,8 +111,8 @@ async function turn(adapter, model, text = 'Reply with exactly: ok', { image } =
     provider: PROVIDER,
     model,
     sessionId: SESSION_ID,
-    reasoningEffort: 'high',
-    maxTokens: 2048,
+    reasoningEffort,
+    maxTokens: OUTPUT_CAP,
     signal: AbortSignal.timeout(90_000),
     messages: [createUserMessage({ content: [{ type: 'text', text }, ...(image === undefined ? [] : [image])], source: { kind: 'user' } })],
   })) {
@@ -116,9 +122,15 @@ async function turn(adapter, model, text = 'Reply with exactly: ok', { image } =
   return { answer: answer.trim(), finish }
 }
 
+const ending = finish => {
+  if (finish === undefined) return 'no finish'
+  if (finish.kind === 'max-tokens') return `cut off at the ${OUTPUT_CAP}-token output cap`
+  return finish.failure?.message ?? `finished with ${finish.kind}`
+}
+
 const describe = ({ answer, finish }) => (finish?.kind === 'stop'
   ? `→ ${answer.slice(0, 60)}`
-  : `→ FAILED: ${String(finish?.failure?.message ?? 'no finish').slice(0, 140)}`)
+  : `→ FAILED: ${String(ending(finish)).slice(0, 140)}`)
 
 async function main() {
   const modelIndex = process.argv.indexOf('--model')
@@ -137,12 +149,13 @@ async function main() {
   let visionFixture
   const route = await routeWith([[key, 'live-check']], { resolveAttachments: () => visionFixture?.attachments })
   const checkVision = async model => {
+    const [reasoningEffort] = getSupportedThinkingLevels(PACKYCODE_MODELS.find(item => item.id === model))
     for (const color of ['red', 'blue']) {
       visionFixture = createVisionFixture(color)
       const result = await turn(route.adapter, model,
         'What is the dominant color in this image? Reply with exactly one lowercase English color word.',
-        { image: visionFixture.block })
-      console.log(`   ${model} ${color} image ${mask(describe(result))}`)
+        { image: visionFixture.block, reasoningEffort })
+      console.log(`   ${model} ${color} image at ${reasoningEffort} ${mask(describe(result))}`)
       if (result.finish?.kind !== 'stop' || result.answer.toLowerCase() !== color || visionFixture.reads.length !== 1) {
         throw new Error(`${model} vision check failed for the ${color} image`)
       }
