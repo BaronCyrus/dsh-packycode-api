@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.7
 
 - **Images move to GPT Image 2.6.** PackyCode added `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst`: on 2026-11-05 `/api/pricing` lists them in the `image` group beside the 2.5 pair, with the `image-generation` endpoint. They replace `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` in the settings card, the `packycode_image_generate` tool and `scripts/image-check.mjs`, whose default is now 2.6 Sunburst. OpenAI's [image generation guide](https://developers.openai.com/api/docs/guides/image-generation) gives "GPT Image 2.6 and 2.5 Sunburst and Flare" one quality list, `low` to `max`, and its [Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst) and [Flare](https://developers.openai.com/api/docs/models/gpt-image-2.6-flare) pages list `/v1/images/edits`, so both keep `auto`, `low`, `medium`, `high`, `xhigh` and `max`, and requests, sizes and edits are sent as before. `gpt-image-2` is unchanged.
 - **A saved 2.5 choice keeps working.** Taking the 2.5 ids out of the Config schema would make the plugin's Config fail to parse for anyone who had picked one (`expected "gpt-image-2" | … but got "gpt-image-2.5-sunburst"`). The schema keeps them as hidden values, and the image preference reads each as the 2.6 engine of the same name with the saved quality (`RETIRED_IMAGE_MODELS` in `src/image-models.js`). The card and the tool offer only the 2.6 pair and refuse a 2.5 id; images that earlier sessions made with 2.5 still show.
