@@ -39,7 +39,7 @@ import {
 } from './constants.js'
 import { createDiagnostics } from './diagnostics.js'
 import { createGroupReader } from './groups.js'
-import { DEFAULT_IMAGE_MODEL, IMAGE_MODEL_IDS, IMAGE_QUALITIES } from './image-models.js'
+import { DEFAULT_IMAGE_MODEL, IMAGE_MODEL_IDS, IMAGE_QUALITIES, RETIRED_IMAGE_MODELS } from './image-models.js'
 import { createImageController } from './image-settings.js'
 import { createImageOriginalReader } from './image-originals.js'
 import { createPackyCodeImageClient, createPackyCodeImageTool } from './images.js'
@@ -80,7 +80,8 @@ export const Config = z.object({
   /** Only the picker is filtered; an existing session can keep its model. */
   hiddenModels: live(z.array(z.string()).default([])),
   imageEnabled: live(z.boolean().default(true)),
-  imageModel: live(z.union([...IMAGE_MODEL_IDS]).default(DEFAULT_IMAGE_MODEL)),
+  /** A retired engine still parses, hidden, and is read as its successor. */
+  imageModel: live(z.union([...IMAGE_MODEL_IDS, ...Object.keys(RETIRED_IMAGE_MODELS).map(id => z.const(id).hidden())]).default(DEFAULT_IMAGE_MODEL)),
   imageQuality: live(z.union([...IMAGE_QUALITIES]).default('auto')),
   /** Path to the Claude Code CLI; empty means "the usual install places, then PATH". */
   claudeCliPath: live(z.string().default('')),
@@ -563,7 +564,7 @@ export { createDiagnostics, DIAGNOSTICS_FORMAT, DIAGNOSTICS_LIMITS, summarizeSes
 export { catalogCoverage, createGroupReader, parsePricing, parseSelectedGroups, pickKeyForModel } from './groups.js'
 export { createKeyChooser, orderKeysFor } from './key-chooser.js'
 export { createModelSelectionController, readHiddenModels } from './model-selection.js'
-export { DEFAULT_IMAGE_MODEL, IMAGE_MODELS, IMAGE_MODEL_IDS, IMAGE_QUALITIES, validateImageOptions } from './image-models.js'
+export { DEFAULT_IMAGE_MODEL, IMAGE_MODELS, IMAGE_MODEL_IDS, IMAGE_QUALITIES, RETIRED_IMAGE_MODELS, validateImageOptions } from './image-models.js'
 export { createImageController, readImagePreference } from './image-settings.js'
 export { createPackyCodeImageClient, createPackyCodeImageTool, decodeImagePng, IMAGE_TOOL_NAME, IMAGE_TIMEOUT_MS, MAX_IMAGE_BYTES, pngDimensions } from './images.js'
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'

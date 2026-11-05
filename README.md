@@ -31,7 +31,7 @@
 | **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条；输入框右侧显示当前 Key 的剩余额度 |
 | **Claude 按分组选通道** | `cc` 分组只接受官方客户端，这些 Key 的 Claude 会话由本机 Claude Code 自己完成：它用自己的系统提示词和工具做事，DSH 显示每次工具调用，并负责授权、计划审阅和提问；`cc-sale`、`cc-expensive`、`claude-officially` 等分组走插件内 HTTP，由 DSH 自己的 agent 执行 |
 | **网页搜索可走 PackyCode** | 可选：DSH 的 `web_search` 改用 PackyCode 搜索，后端在 DeepSeek 与 GPT 之间切换；可只对 PackyCode 模型生效 |
-| **图片生成与编辑** | 独立图片 Key，支持 GPT Image 2 / 2.5 Flare / 2.5 Sunburst、型号与质量设置、参考图编辑和 PNG 原图保存；已通过网关生图与编辑实测 |
+| **图片生成与编辑** | 独立图片 Key，支持 GPT Image 2 / 2.6 Flare / 2.6 Sunburst、型号与质量设置、参考图编辑和 PNG 原图保存；已通过网关生图与编辑实测 |
 | **自动审查可换模型** | 开启 DSH 自带的「自动授权审查」后，权限菜单里的「自动审查」可改用 jev-latest 或 DeepSeek Flash 审查每次工具调用，审查规则和处理方式保持官方原样 |
 | **凭据不离开本机** | Key 只存在 DSH 凭据文件里。浏览器只能看到备注、状态和余额，拿不到 Key |
 
@@ -161,13 +161,13 @@ Claude 与其它模型一样，通过 DSH 的 `packycode_image_generate` 工具�
 
 工具调用可将 `model` 和 `quality` 设为 `settings` 来跟随已保存的图片设置；`auto` 是一个明确的 API 质量档位。新图可省略 `referenceImages` 或传空数组；显式指定 `operation: edit` 时必须提供有效参考图，错误的真实参考图不会被丢弃后改生成新图。
 
-`gpt-image-2` 的质量为 `auto / low / medium / high`；两款 2.5 另支持 `xhigh / max`。质量按 Images API 的 `quality` 原样发送，不作为文字推理强度；不会自动换型号、降档或重试付费请求。输出先采用 PNG，每次一张，聊天预览之外的原图保存在 `~/.dsh/packycode-api/images/`（设置了 `DSH_HOME` 时跟随该目录）。参考图与可选 PNG mask 必须来自当前会话；不能用路径替代附件引用。
+`gpt-image-2` 的质量为 `auto / low / medium / high`；两款 2.6 另支持 `xhigh / max`。设置里原来选的 2.5 Flare / Sunburst 会按同名的 2.6 型号读取，质量不变，无需重新设置。质量按 Images API 的 `quality` 原样发送，不作为文字推理强度；不会自动换型号、降档或重试付费请求。输出先采用 PNG，每次一张，聊天预览之外的原图保存在 `~/.dsh/packycode-api/images/`（设置了 `DSH_HOME` 时跟随该目录）。参考图与可选 PNG mask 必须来自当前会话；不能用路径替代附件引用。
 
 点击生成图可在应用内查看大图，右上角关闭按钮左侧的「下载原图」可选择保存位置，另存本机保留的完整 PNG。取消保存不会报错；若原图已被移走或删除，会提示失败，不会改为下载聊天缩略图。已有会话也可使用此功能，前提是记录对应的本机原图仍存在。
 
 用户填入图片 Key 后，可运行 `node scripts/image-check.mjs --all --edit` 验证三个型号与一次编辑；用 `--model <型号> --edit` 单独验证某个型号的生图和编辑，搭配 `--quality xhigh` 或 `--quality max` 验证质量。测试会消耗图片额度，输出写入 `.artifacts/`，日志只显示 Key 的掩码尾号，并记录网关回报的型号/质量。
 
-2026-10-15 实测：三个型号均通过 `low` 生图与编辑；Sunburst 额外通过 `xhigh`、`max` 生图与编辑，两档响应的 quality 均与请求一致。合计 10 次成功请求，无重试，全部返回 1024×1024 PNG；编辑正确改色并保留构图。xhigh 生成/编辑约 43/48 秒，max 约 84/91 秒。这是已构建图片 client 的网关验证；本轮未新建 DSH 对话验证完整聊天流程。完整范围和记录见[协议核查与网关实测](docs/research/image-api.md)。
+2026-11-05 实测：2.6 Flare 和 2.6 Sunburst 都通过 `low`、`xhigh`、`max` 的生图与编辑，响应回报的 quality 与请求一致；`gpt-image-2` 通过 `low` 生图，Sunburst 的 `auto` 被网关回报为 `low`。合计 15 次请求全部成功，无重试，均返回 1024×1024 PNG；编辑正确改色并保留构图。Flare 的 xhigh 生图/编辑约 14/15 秒、max 约 24/26 秒；Sunburst 的 xhigh 约 51/64 秒、max 约 96/97 秒。这是已构建图片 client 的网关验证；本轮未新建 DSH 对话验证完整聊天流程。完整范围和记录见[协议核查与网关实测](docs/research/image-api.md)。
 
 ### 自动审查
 

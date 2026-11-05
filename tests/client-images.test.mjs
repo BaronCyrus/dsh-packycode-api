@@ -87,7 +87,7 @@ test('built image settings persist quality choices, constrain menus by model and
   const select = label => show().find(node => node.type === 'label' && nodes(node.props.children).some(child => child.props?.children === label)).props.children[1]
   assert.equal(select(zh.imagesQuality).props.value, 'auto')
   assert.equal(nodes(select(zh.imagesQuality)).filter(node => node.type === 'option').length, 4)
-  select(zh.imagesModel).props.onChange({ target: { value: 'gpt-image-2.5-sunburst' } }); await tick()
+  select(zh.imagesModel).props.onChange({ target: { value: 'gpt-image-2.6-sunburst' } }); await tick()
   assert.equal(nodes(select(zh.imagesQuality)).filter(node => node.type === 'option').length, 6)
   select(zh.imagesQuality).props.onChange({ target: { value: 'max' } }); await tick()
   assert.equal(select(zh.imagesQuality).props.value, 'max')

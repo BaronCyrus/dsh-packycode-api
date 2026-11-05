@@ -10,7 +10,8 @@ import { createImageController, readImagePreference } from '../src/image-setting
 import { createPackyCodeRpc } from '../src/rpc.js'
 import { createBalanceReader } from '../src/balance.js'
 import { readStoredKey } from '../scripts/stored-key.mjs'
-import { apply } from '../src/index.js'
+import { apply, Config } from '../src/index.js'
+import { fieldValue } from '../src/preferences.js'
 
 function credentials() {
   const records = new Map()
@@ -26,12 +27,12 @@ function credentials() {
   }
 }
 
-function setup({ createImageBalance } = {}) {
+function setup({ createImageBalance, preference: saved = {} } = {}) {
   const store = credentials()
   const ring = new PackyCodeKeyRing(store)
   const imageRing = new PackyCodeKeyRing(store, { recordId: 'image-keys' })
   const imageBalance = createImageBalance?.(imageRing)
-  let preference = {}
+  let preference = saved
   let writable = true
   const updates = []
   const images = createImageController({ ring: imageRing, balance: imageBalance, readPreference: () => preference, isWritable: () => writable, writePreference: async patch => { updates.push(patch); preference = { ...preference, ...patch } } })
@@ -127,7 +128,7 @@ test('tool registration follows key availability and settings without reloading 
   assert.equal(registrations, 0)
   await images.mutate('add', { key: 'sk-fixture-image' })
   assert.equal(registrations, 1)
-  await images.update({ imageModel: 'gpt-image-2.5-sunburst', imageQuality: 'max' })
+  await images.update({ imageModel: 'gpt-image-2.6-sunburst', imageQuality: 'max' })
   assert.equal(registrations, 1)
   await images.update({ imageEnabled: false })
   assert.equal(disposals, 1)
@@ -145,13 +146,34 @@ test('quality is checked before writes and switching to Image 2 explicitly reset
   assert.deepEqual(readImagePreference(), { imageEnabled: true, imageModel: 'gpt-image-2', imageQuality: 'auto' })
   await assert.rejects(() => images.update({ imageQuality: 'max' }), /not supported/u)
   assert.equal(updates.length, 0)
-  await images.update({ imageModel: 'gpt-image-2.5-flare', imageQuality: 'max' })
+  await images.update({ imageModel: 'gpt-image-2.6-flare', imageQuality: 'max' })
   await images.update({ imageModel: 'gpt-image-2' })
   assert.deepEqual(updates.at(-1), { imageModel: 'gpt-image-2', imageQuality: 'auto' })
   await assert.rejects(() => images.update({ imageEnabled: 'true' }), /boolean/u)
   readOnly()
   await assert.rejects(() => images.update({ imageEnabled: false }), /not writable/u)
-  assert.deepEqual(readImagePreference({ imageModel: { get: () => 'gpt-image-2.5-sunburst' }, imageQuality: { get: () => 'xhigh' } }).imageQuality, 'xhigh')
+  assert.deepEqual(readImagePreference({ imageModel: { get: () => 'gpt-image-2.6-sunburst' }, imageQuality: { get: () => 'xhigh' } }).imageQuality, 'xhigh')
+})
+
+test('a saved 2.5 engine still loads and is read as its 2.6 successor with the same quality', async () => {
+  for (const [retired, successor] of [['gpt-image-2.5-flare', 'gpt-image-2.6-flare'], ['gpt-image-2.5-sunburst', 'gpt-image-2.6-sunburst']]) {
+    const config = Config({ imageModel: retired, imageQuality: 'max' })
+    assert.equal(fieldValue(config.imageModel), retired, 'the saved value parses instead of failing the plugin Config')
+    assert.deepEqual(readImagePreference(config), { imageEnabled: true, imageModel: successor, imageQuality: 'max' })
+  }
+  assert.throws(() => Config({ imageModel: 'gpt-image-9' }))
+  const offered = Config.dict.imageModel.list.filter(item => item.meta?.hidden !== true).map(item => item.value)
+  assert.deepEqual(offered, ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
+  const { images, updates } = setup({ preference: { imageModel: 'gpt-image-2.5-sunburst', imageQuality: 'xhigh' } })
+  const state = await images.status()
+  assert.equal(state.imageModel, 'gpt-image-2.6-sunburst')
+  assert.equal(state.imageQuality, 'xhigh')
+  assert.deepEqual(state.models.map(model => model.id), ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
+  await assert.rejects(() => images.update({ imageModel: 'gpt-image-2.5-flare' }), /not supported/u)
+  assert.equal(updates.length, 0)
+  await images.update({ imageQuality: 'max' })
+  assert.deepEqual(updates, [{ imageQuality: 'max' }])
+  assert.equal((await images.status()).imageModel, 'gpt-image-2.6-sunburst')
 })
 
 test('image RPC replies contain only projections and do not invalidate conversational state', async () => {
@@ -268,7 +290,7 @@ test('apply wires the dedicated image ring, live settings, native tool and remov
   assert.equal(quota.value.keys[0].usage.availableUsd, 9.6)
   assert.equal(Object.hasOwn(quota.value, 'account'), false)
   assert.equal(balanceCalls, 1)
-  const saved = await handler('images/update', { imageModel: 'gpt-image-2.5-sunburst', imageQuality: 'max' })
+  const saved = await handler('images/update', { imageModel: 'gpt-image-2.6-sunburst', imageQuality: 'max' })
   assert.equal(saved.value.imageQuality, 'max')
   await handler('images/update', { imageEnabled: false })
   assert.equal(tools.has('packycode_image_generate'), false)

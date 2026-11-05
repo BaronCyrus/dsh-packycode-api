@@ -259,7 +259,7 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       prompt: { type: 'string', required: true, description: 'Complete image description or precise editing instructions.' },
       operation: { type: 'string', enum: ['generate', 'edit'], description: 'Use generate for a new image; edit requires 1-16 real referenceImages. If omitted, nonempty references select editing, while an omitted or empty array selects generation.' },
       model: { type: 'string', enum: ['settings', ...IMAGE_MODEL_IDS], description: 'Use settings (or omit) to follow the PackyCode image setting. Choose an explicit engine only when the user requests one.' },
-      quality: { type: 'string', enum: ['settings', ...IMAGE_QUALITIES], description: 'Use settings (or omit) to follow the user image setting. auto is an explicit API quality, not a request to follow settings. xhigh and max require a 2.5 model; never downgrade automatically.' },
+      quality: { type: 'string', enum: ['settings', ...IMAGE_QUALITIES], description: 'Use settings (or omit) to follow the user image setting. auto is an explicit API quality, not a request to follow settings. xhigh and max require a 2.6 model; never downgrade automatically.' },
       size: { type: 'string', description: 'auto or widthxheight, e.g. 1024x1024; both edges multiples of 16, each <=3840, ratio <=3:1, pixels 655360..8294400.' },
       background: { type: 'string', enum: ['auto', 'opaque', 'transparent'] },
       referenceImages: { type: 'array', items: referenceSchema, description: '1-16 complete attachment references for editing. Omit or use [] for a new image. Paths and unrelated images are not accepted; never drop real references after an edit fails.' },

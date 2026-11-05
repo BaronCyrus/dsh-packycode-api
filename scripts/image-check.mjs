@@ -14,7 +14,7 @@ async function main() {
     else if (['--model', '--quality', '--host'].includes(flag) && typeof args[index + 1] === 'string' && !args[index + 1].startsWith('--')) flags.set(flag, args[++index])
     else throw new Error('Usage: node scripts/image-check.mjs [--all] [--edit] [--model <id>] [--quality <quality>] [--host <url>]')
   }
-  const models = flags.has('--all') ? IMAGE_MODEL_IDS : [flags.get('--model') ?? 'gpt-image-2.5-sunburst']
+  const models = flags.has('--all') ? IMAGE_MODEL_IDS : [flags.get('--model') ?? 'gpt-image-2.6-sunburst']
   const quality = flags.get('--quality') ?? 'low'
   for (const model of models) validateImageOptions({ model, quality, size: '1024x1024' })
   const key = await readStoredKey({ recordId: 'image-keys' })

@@ -13,7 +13,7 @@ const KEY = 'sk-fixture-image-only-key'
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jpj8AAAAASUVORK5CYII=', 'base64')
 const REF = { attachmentId: `sha256:${'a'.repeat(64)}`, mediaType: 'image/png', bytes: PNG.length, width: 1, height: 1, name: 'reference.png' }
 const imageResponse = (extra = {}) => new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }], ...extra }), { headers: { 'content-type': 'application/json' } })
-const args = { prompt: 'A blue teapot', model: 'gpt-image-2.5-sunburst', quality: 'max' }
+const args = { prompt: 'A blue teapot', model: 'gpt-image-2.6-sunburst', quality: 'max' }
 const client = (options = {}) => createPackyCodeImageClient({ resolveKey: async () => ({ key: KEY }), getHost: () => 'https://gateway.invalid', ...options })
 
 test('generation sends the exact model-specific quality and no legacy or reasoning fields', async () => {
@@ -204,7 +204,7 @@ test('explicit edits still require references and generation never discards real
 test('settings sentinels follow saved image preferences while explicit overrides remain exact', async t => {
   const { tool, exec, calls } = await toolFixture(t)
   const value = await tool.execute({ prompt: args.prompt, operation: 'generate', model: 'settings', quality: 'settings', referenceImages: [] }, exec)
-  assert.equal(value.requestedModel, 'gpt-image-2.5-sunburst')
+  assert.equal(value.requestedModel, 'gpt-image-2.6-sunburst')
   assert.equal(value.requestedQuality, 'max')
   assert.equal(JSON.parse(calls[0].init.body).quality, 'max')
   const explicit = await tool.execute({ prompt: args.prompt, model: 'gpt-image-2', quality: 'auto' }, exec)

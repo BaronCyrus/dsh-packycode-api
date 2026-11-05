@@ -1,8 +1,9 @@
-import { DEFAULT_IMAGE_MODEL, IMAGE_MODELS, IMAGE_MODEL_IDS, validateImageOptions } from './image-models.js'
+import { DEFAULT_IMAGE_MODEL, IMAGE_MODELS, IMAGE_MODEL_IDS, RETIRED_IMAGE_MODELS, validateImageOptions } from './image-models.js'
 import { fieldValue } from './preferences.js'
 
 export function readImagePreference(value = {}) {
-  const model = fieldValue(value.imageModel)
+  const saved = fieldValue(value.imageModel)
+  const model = Object.hasOwn(RETIRED_IMAGE_MODELS, saved) ? RETIRED_IMAGE_MODELS[saved] : saved
   const imageModel = IMAGE_MODEL_IDS.includes(model) ? model : DEFAULT_IMAGE_MODEL
   const quality = fieldValue(value.imageQuality)
   return {

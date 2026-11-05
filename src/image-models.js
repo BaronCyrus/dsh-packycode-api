@@ -2,10 +2,20 @@
 export const DEFAULT_IMAGE_MODEL = 'gpt-image-2'
 export const IMAGE_MODELS = Object.freeze({
   'gpt-image-2': Object.freeze(['auto', 'low', 'medium', 'high']),
-  'gpt-image-2.5-flare': Object.freeze(['auto', 'low', 'medium', 'high', 'xhigh', 'max']),
-  'gpt-image-2.5-sunburst': Object.freeze(['auto', 'low', 'medium', 'high', 'xhigh', 'max']),
+  'gpt-image-2.6-flare': Object.freeze(['auto', 'low', 'medium', 'high', 'xhigh', 'max']),
+  'gpt-image-2.6-sunburst': Object.freeze(['auto', 'low', 'medium', 'high', 'xhigh', 'max']),
 })
 export const IMAGE_MODEL_IDS = Object.freeze(Object.keys(IMAGE_MODELS))
+/**
+ * Engines the settings once offered, mapped to the ones that replaced them.
+ * A saved setting still names them, so the Config schema keeps them as hidden
+ * values (dropping them would fail the plugin's Config at load) and reading
+ * the preference moves them to their successor with the same quality.
+ */
+export const RETIRED_IMAGE_MODELS = Object.freeze({
+  'gpt-image-2.5-flare': 'gpt-image-2.6-flare',
+  'gpt-image-2.5-sunburst': 'gpt-image-2.6-sunburst',
+})
 export const IMAGE_QUALITIES = Object.freeze(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
 
 export function validateImageOptions({ model = DEFAULT_IMAGE_MODEL, quality = 'auto', size = 'auto', background = 'auto' } = {}) {

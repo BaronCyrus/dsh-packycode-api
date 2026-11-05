@@ -1,4 +1,4 @@
-# GPT Image 2 / 2.5 Images API 核查
+# GPT Image 2 / 2.5 / 2.6 Images API 核查
 
 核查日期：2026-10-15（Asia/Shanghai）。协议核查部分只查阅公开资料；末尾另记录用户添加独立图片 Key 并授权测试后的 PackyCode 网关结果。协议能力与实际网关结果分开记录，不记录任何完整凭据。
 
@@ -75,3 +75,26 @@ JSON 编辑的字段为 `images: [{ image_url: "…" }]` 或 `images: [{ file_id
 回归测试先复现同样错误，再验证修复：空引用数组表示没有参考图；只把明确的零值、空 ID / 全零 ID 遮罩占位视为未提供。`operation: edit` 仍要求有效参考图，`operation: generate` 拒绝非空参考图，真实无效附件和真实遮罩不能变成新图请求。工具专用的 `model: settings` / `quality: settings` 可明确跟随已保存的设置，`settings` 不会发给网关。
 
 修复后，通过已构建的 `createPackyCodeImageTool().execute()` 回放原生参数结构（提示词替换为公共茶壶测试描述），只发出一次 `/v1/images/generations` 请求并成功返回 PNG，耗时 12.267 秒，`size: auto` 的实际图片为 1329×1183。结果可渲染成图片附件，日志和结果均不含完整 Key。该检查使用真实专用图片 Key、真实网关和本地附件测试适配器；它验证了工具参数路径，仍不等同于自动驱动整个桌面对话。记录在本地 `.artifacts/native-image-argument-replay-results.json`。
+
+## GPT Image 2.6 替换 2.5（2026-11-05）
+
+2026-11-05 的 `/api/pricing` 在 `image` 分组列出 `gpt-image-2.6-flare` 和 `gpt-image-2.6-sunburst`，端点为 `image-generation`；2.5 两款仍在列表里。插件的设置卡、`packycode_image_generate` 工具和 `scripts/image-check.mjs` 改为 2.6 两款，`gpt-image-2` 不变。
+
+官方[生图指南](https://developers.openai.com/api/docs/guides/image-generation)把 2.6 和 2.5 的 Sunburst / Flare 写在同一句质量说明里：`low`、`medium`、`high`、`xhigh`、`max`。`auto` 依据同一指南的通用输出设置说明保留。2.6 的 [Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst) 和 [Flare](https://developers.openai.com/api/docs/models/gpt-image-2.6-flare) 模型页都把 `v1/images/edits` 标为支持、`v1/responses` 标为不支持。尺寸限制、透明背景和 mask 在指南里只写在 2.5 的章节中，2.6 没有单独说明；插件沿用原有尺寸校验，本轮没有单独验证这几项。指南另写 2.6 支持 complexity、markup 编辑、SVG 和 GIF 输出，插件没有接入这些参数。
+
+已保存的 `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` 设置：从 Config schema 里直接删掉这两个值，会让选过它们的用户的插件 Config 解析失败。schema 把它们保留为隐藏值，读取图片偏好时映射到同名的 2.6 型号，质量不变；设置卡和工具只提供 2.6，并拒绝 2.5 的 id。
+
+网关实测同前：已构建的图片 client 调用 `https://cf.api.fan`，Key 只从 `packycode-api/image-keys` 读取（尾号 …ECMQ），提示和编辑指令与 2026-10-15 相同，每次 `1024x1024`、PNG、`n: 1`，无重试。
+
+| 请求型号 | 请求 quality | 生图 | 编辑 | 响应回报 quality | 生图 / 编辑耗时 |
+| --- | --- | --- | --- | --- | --- |
+| `gpt-image-2` | `low` | 通过 | 未测 | `low` | 11.6 秒 |
+| `gpt-image-2.6-flare` | `low` | 通过 | 通过 | `low` | 5.7 秒（另一轮 6.4）/ 9.0 秒 |
+| `gpt-image-2.6-flare` | `xhigh` | 通过 | 通过 | `xhigh` | 13.7 / 14.7 秒 |
+| `gpt-image-2.6-flare` | `max` | 通过 | 通过 | `max` | 24.3 / 26.1 秒 |
+| `gpt-image-2.6-sunburst` | `auto` | 通过 | 未测 | `low` | 16.1 秒 |
+| `gpt-image-2.6-sunburst` | `low` | 通过 | 通过 | `low` | 13.3 / 16.8 秒 |
+| `gpt-image-2.6-sunburst` | `xhigh` | 通过 | 通过 | `xhigh` | 50.6 / 64.4 秒 |
+| `gpt-image-2.6-sunburst` | `max` | 通过 | 通过 | `max` | 95.9 / 96.6 秒 |
+
+共 15 次请求全部成功，均返回 1024×1024 PNG。抽查的生图为白底蓝色茶壶，编辑后茶壶变橙、构图和白底保留。`auto` 发出后网关回报 `low`。响应没有可识别的 `model` 字段，所以结论仍是这些型号在当前 Key 和网关下可用、回报的 quality 与请求一致，不独立证明网关内部的模型身份。本轮没有在 DSH 桌面对话里跑完整的模型 → 工具 → 聊天预览流程。PNG 保存在本地 `.artifacts/image-check-*/`，不进入 Git 或 npm 包。
