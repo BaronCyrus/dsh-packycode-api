@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-import { IMAGE_MODEL_IDS, IMAGE_QUALITIES, validateImageOptions } from './image-models.js'
+import { IMAGE_MODELS, IMAGE_MODEL_IDS, IMAGE_QUALITIES, isMiniMaxImageModel, MINIMAX_AUTO_AREA, validateImageOptions } from './image-models.js'
 import { normalizeHost } from './hosts.js'
 import { DEFAULT_API_HOST } from './constants.js'
 import { ambientFetch, waitForSharedRequest } from './request.js'
@@ -96,10 +96,28 @@ export function decodeImagePng(encoded, maximum = MAX_IMAGE_BYTES) {
   return data
 }
 
+/**
+ * The fields each engine's Images API takes. GPT Image gets the validated
+ * options as they are. MiniMax H3 Image has no `quality` or `background`,
+ * answers with a JPEG link unless PNG and `b64_json` are asked for, and
+ * renders 4K unless told otherwise, so `auto` carries the 2K `area` tier.
+ */
+function requestFields(options, prompt) {
+  if (!isMiniMaxImageModel(options.model)) return { ...options, prompt, n: 1, output_format: 'png' }
+  return {
+    model: options.model, prompt, n: 1, size: options.size,
+    ...(options.size === 'auto' ? { area: MINIMAX_AUTO_AREA } : {}),
+    output_format: 'png', response_format: 'b64_json',
+  }
+}
+
 function imageFailure(status, value) {
   // Never echo gateway bodies, statusText, URLs, or thrown fetch messages:
   // any of them can contain the Authorization value.
   const code = value?.error?.code
+  // The gateway's routing refusal: no channel serves this model in the key's
+  // group (`分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道`).
+  if (code === 'model_not_found') return 'PackyCode image key is in a group that does not serve the selected image model. Do not retry with another model: tell the user to pick a model their key serves under Settings → PackyCode → Images, or to add an image key in a group that lists this one'
   if (code === 'moderation_blocked') return 'PackyCode image request was blocked by the image safety check; revise the prompt or references'
   if (status === 401 || status === 403) return 'PackyCode image key was rejected; check the separate image key and its model permissions'
   if (status === 429) return 'PackyCode image quota or rate limit is unavailable; check the separate image key'
@@ -117,6 +135,7 @@ export function createPackyCodeImageClient({ resolveKey, getHost, fetchImpl = am
         throw new ImageRequestError('PackyCode image edits require 1-16 reference images')
       }
       if (mask !== undefined && images === undefined) throw new ImageRequestError('PackyCode image mask requires a reference image')
+      if (mask !== undefined && isMiniMaxImageModel(options.model)) throw new ImageRequestError('PackyCode image masks are not supported by the selected model; omit maskImage or choose a GPT Image model')
       const timeout = AbortSignal.timeout(timeoutMs)
       const requestSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
       let selected
@@ -129,7 +148,7 @@ export function createPackyCodeImageClient({ resolveKey, getHost, fetchImpl = am
       if (typeof selected?.key !== 'string' || selected.key === '') {
         throw new ImageRequestError('PackyCode images need a separate image key; add one under Settings → PackyCode → Images')
       }
-      const fields = { ...options, prompt, n: 1, output_format: 'png' }
+      const fields = requestFields(options, prompt)
       let body
       const headers = { authorization: `Bearer ${selected.key}`, accept: 'application/json' }
       if (images === undefined) {
@@ -259,11 +278,11 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       prompt: { type: 'string', required: true, description: 'Complete image description or precise editing instructions.' },
       operation: { type: 'string', enum: ['generate', 'edit'], description: 'Use generate for a new image; edit requires 1-16 real referenceImages. If omitted, nonempty references select editing, while an omitted or empty array selects generation.' },
       model: { type: 'string', enum: ['settings', ...IMAGE_MODEL_IDS], description: 'Use settings (or omit) to follow the PackyCode image setting. Choose an explicit engine only when the user requests one.' },
-      quality: { type: 'string', enum: ['settings', ...IMAGE_QUALITIES], description: 'Use settings (or omit) to follow the user image setting. auto is an explicit API quality, not a request to follow settings. xhigh and max require a 2.6 model; never downgrade automatically.' },
-      size: { type: 'string', description: 'auto or widthxheight, e.g. 1024x1024; both edges multiples of 16, each <=3840, ratio <=3:1, pixels 655360..8294400.' },
-      background: { type: 'string', enum: ['auto', 'opaque', 'transparent'] },
+      quality: { type: 'string', enum: ['settings', ...IMAGE_QUALITIES], description: 'Use settings (or omit) to follow the user image setting. auto is an explicit API quality, not a request to follow settings. xhigh and max require a GPT Image 2.6 model. MiniMax H3 Image takes no quality: leave it to settings or auto. Never downgrade automatically.' },
+      size: { type: 'string', description: 'auto or widthxheight, e.g. 1024x1024; both edges multiples of 16, each <=3840, ratio <=3:1, pixels 655360..8294400. On MiniMax H3 Image auto lets the model pick the shape at about 4 million pixels (2K); give a size to fix it, e.g. 2048x2048, 2720x1536 or 1536x2720.' },
+      background: { type: 'string', enum: ['auto', 'opaque', 'transparent'], description: 'transparent needs a GPT Image model; MiniMax H3 Image does not support it.' },
       referenceImages: { type: 'array', items: referenceSchema, description: '1-16 complete attachment references for editing. Omit or use [] for a new image. Paths and unrelated images are not accepted; never drop real references after an edit fails.' },
-      maskImage: { oneOf: [{ type: 'null' }, referenceSchema], description: 'Omit or use null for new images and ordinary reference-image edits, including refining a sketch. Only supply an actual PNG mask provided for masking, matching the first reference and under 4 MB; alpha=0 marks the area to edit. Do not copy an ordinary reference into this field or invent a mask.' },
+      maskImage: { oneOf: [{ type: 'null' }, referenceSchema], description: 'Omit or use null for new images and ordinary reference-image edits, including refining a sketch. Only supply an actual PNG mask provided for masking, matching the first reference and under 4 MB; alpha=0 marks the area to edit. Do not copy an ordinary reference into this field or invent a mask. MiniMax H3 Image does not support masks.' },
     },
     output: {
       schema: imageResultSchema,
@@ -297,9 +316,13 @@ export function createPackyCodeImageTool({ client, attachments, getPreference, g
       const repeatedNonPng = repeatedIndex >= 0 && images[repeatedIndex].mediaType !== 'image/png'
       const masks = maskImage === undefined || repeatedNonPng ? undefined : await readReferences([maskImage], attachments, messages, signal)
       if (!getPreference().imageEnabled) throw new ImageRequestError('PackyCode images are disabled in settings')
-      const result = await client.request({ ...args,
-        model: args.model === 'settings' ? preference.imageModel : args.model ?? preference.imageModel,
-        quality: args.quality === 'settings' ? preference.imageQuality : args.quality ?? preference.imageQuality,
+      const model = args.model === 'settings' ? preference.imageModel : args.model ?? preference.imageModel
+      // The saved quality belongs to the saved engine. An engine named for
+      // this call that has no quality parameter cannot follow it; an engine
+      // that has one still refuses a saved quality it does not offer.
+      const savedQuality = IMAGE_MODELS[model]?.length === 1 ? IMAGE_MODELS[model][0] : preference.imageQuality
+      const result = await client.request({ ...args, model,
+        quality: args.quality === 'settings' ? savedQuality : args.quality ?? savedQuality,
       }, { signal, images, mask: masks?.[0] })
       onGenerated?.()
       signal?.throwIfAborted()

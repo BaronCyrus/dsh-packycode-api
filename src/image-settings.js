@@ -14,7 +14,7 @@ export function readImagePreference(value = {}) {
 }
 
 /** No request is sent by a settings or credential mutation. */
-export function createImageController({ ring, balance, readPreference, writePreference, isWritable }) {
+export function createImageController({ ring, balance, groups, readPreference, writePreference, isWritable }) {
   let mounted
   let disposeTool
   let generation = 0
@@ -40,6 +40,7 @@ export function createImageController({ ring, balance, readPreference, writePref
     preference,
     status,
     invalidateBalance: () => balance?.invalidate(),
+    invalidateGroups: () => groups?.invalidate(),
     async readBalance({ force = false, signal } = {}) {
       if (balance === undefined) throw new Error('PackyCode image balance is unavailable in this runtime')
       try {
@@ -47,6 +48,19 @@ export function createImageController({ ring, balance, readPreference, writePref
         return { ...value, activeId: state.activeId }
       } catch {
         throw new Error('PackyCode image balance could not be read')
+      }
+    },
+    /**
+     * Each image key's groups and the image engines they serve. Group names,
+     * their public descriptions and per-engine booleans only; no key material.
+     */
+    async readGroups({ force = false, signal } = {}) {
+      if (groups === undefined) throw new Error('PackyCode image key groups are unavailable in this runtime')
+      try {
+        const [value, state] = await Promise.all([groups.read({ force, signal }), ring.list()])
+        return { ...value, activeId: state.activeId }
+      } catch {
+        throw new Error('PackyCode image key groups could not be read')
       }
     },
     reconcile,
@@ -92,6 +106,8 @@ export function createImageController({ ring, balance, readPreference, writePref
       if (!Object.hasOwn(operations, operation)) throw new Error('Unknown PackyCode image key operation')
       await operations[operation]()
       balance?.invalidate()
+      // A renamed or reselected key keeps its groups; a new or removed one does not.
+      if (operation === 'add' || operation === 'remove') groups?.invalidate()
       await reconcile()
       return status()
     },

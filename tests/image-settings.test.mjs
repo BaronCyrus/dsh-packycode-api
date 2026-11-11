@@ -103,6 +103,48 @@ test('image balance RPC forwards force/cancellation and hides unexpected storage
   assert.equal(JSON.stringify(failure).includes('sk-fixture'), false)
 })
 
+test('image group RPC answers with group names and engine coverage only, and follows key changes', async () => {
+  let seen
+  let failing = false
+  let invalidated = 0
+  const store = credentials()
+  const imageRing = new PackyCodeKeyRing(store, { recordId: 'image-keys' })
+  const images = createImageController({ ring: imageRing, readPreference: () => ({}), isWritable: () => true, writePreference: async () => {},
+    groups: { invalidate: () => { invalidated += 1 }, read: async options => {
+      seen = options
+      if (failing) throw new Error('PackyCode sk-fixture-image-secret')
+      return { fetchedAt: 1, descriptions: { 'image-sale': 'image优惠渠道' }, requirements: { 'MiniMax-H3-Image': ['image'] },
+        keys: (await imageRing.list()).keys.map(({ id }) => ({ id, groups: ['image-sale'], coverage: { 'gpt-image-2': true, 'MiniMax-H3-Image': false } })) }
+    } },
+  })
+  const rpc = createPackyCodeRpc({ images })
+  const added = await rpc('images/keys/add', { key: 'sk-fixture-image-groups', label: 'sale' })
+  assert.equal(invalidated, 1)
+  const signal = new AbortController().signal
+  const reply = await rpc('images/groups', { force: true }, signal)
+  assert.equal(reply.ok, true)
+  assert.deepEqual([seen.force, seen.signal], [true, signal])
+  const id = added.value.keys[0].id
+  assert.deepEqual(reply.value, { fetchedAt: 1, descriptions: { 'image-sale': 'image优惠渠道' }, requirements: { 'MiniMax-H3-Image': ['image'] }, activeId: id,
+    keys: [{ id, groups: ['image-sale'], coverage: { 'gpt-image-2': true, 'MiniMax-H3-Image': false } }] })
+  assert.equal(JSON.stringify(reply).includes('sk-fixture'), false)
+  // Renaming or reselecting a key keeps its groups; removing it drops the reading.
+  await rpc('images/keys/rename', { id, label: 'renamed' })
+  await rpc('images/keys/select', { id })
+  assert.equal(invalidated, 1)
+  failing = true
+  const failure = await rpc('images/groups')
+  assert.equal(failure.ok, false)
+  assert.equal(failure.error.message, 'PackyCode image key groups could not be read')
+  assert.equal(JSON.stringify(failure).includes('sk-fixture'), false)
+  await rpc('images/keys/remove', { id })
+  assert.equal(invalidated, 2)
+  // Without a group reader the endpoint refuses instead of guessing.
+  const bare = await createPackyCodeRpc({ images: setup().images })('images/groups')
+  assert.equal(bare.ok, false)
+  assert.match(bare.error.message, /unavailable in this runtime/u)
+})
+
 test('image credentials are isolated from conversational keys, including selection/removal', async () => {
   const { store, ring, imageRing, images } = setup()
   await ring.add('sk-fixture-conversation', 'chat')
@@ -155,6 +197,21 @@ test('quality is checked before writes and switching to Image 2 explicitly reset
   assert.deepEqual(readImagePreference({ imageModel: { get: () => 'gpt-image-2.6-sunburst' }, imageQuality: { get: () => 'xhigh' } }).imageQuality, 'xhigh')
 })
 
+test('MiniMax H3 Image is a saved choice whose only quality is auto', async () => {
+  for (const model of ['MiniMax-H3-Image', 'MiniMax-H3-Image-Highspeed']) {
+    assert.equal(fieldValue(Config({ imageModel: model }).imageModel), model)
+    // A quality saved for another engine is not read onto it.
+    assert.deepEqual(readImagePreference(Config({ imageModel: model, imageQuality: 'max' })), { imageEnabled: true, imageModel: model, imageQuality: 'auto' })
+    const { images, updates } = setup({ preference: { imageModel: 'gpt-image-2.6-sunburst', imageQuality: 'max' } })
+    // Switching to it resets the saved quality; a quality it does not have is refused before any write.
+    await images.update({ imageModel: model })
+    assert.deepEqual(updates, [{ imageModel: model, imageQuality: 'auto' }])
+    await assert.rejects(() => images.update({ imageModel: model, imageQuality: 'high' }), /not supported/u)
+    assert.equal(updates.length, 1)
+    assert.deepEqual((await images.status()).models.find(entry => entry.id === model), { id: model, qualities: ['auto'] })
+  }
+})
+
 test('a saved 2.5 engine still loads and is read as its 2.6 successor with the same quality', async () => {
   for (const [retired, successor] of [['gpt-image-2.5-flare', 'gpt-image-2.6-flare'], ['gpt-image-2.5-sunburst', 'gpt-image-2.6-sunburst']]) {
     const config = Config({ imageModel: retired, imageQuality: 'max' })
@@ -163,12 +220,12 @@ test('a saved 2.5 engine still loads and is read as its 2.6 successor with the s
   }
   assert.throws(() => Config({ imageModel: 'gpt-image-9' }))
   const offered = Config.dict.imageModel.list.filter(item => item.meta?.hidden !== true).map(item => item.value)
-  assert.deepEqual(offered, ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
+  assert.deepEqual(offered, ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'MiniMax-H3-Image', 'MiniMax-H3-Image-Highspeed'])
   const { images, updates } = setup({ preference: { imageModel: 'gpt-image-2.5-sunburst', imageQuality: 'xhigh' } })
   const state = await images.status()
   assert.equal(state.imageModel, 'gpt-image-2.6-sunburst')
   assert.equal(state.imageQuality, 'xhigh')
-  assert.deepEqual(state.models.map(model => model.id), ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
+  assert.deepEqual(state.models.map(model => model.id), ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'MiniMax-H3-Image', 'MiniMax-H3-Image-Highspeed'])
   await assert.rejects(() => images.update({ imageModel: 'gpt-image-2.5-flare' }), /not supported/u)
   assert.equal(updates.length, 0)
   await images.update({ imageQuality: 'max' })

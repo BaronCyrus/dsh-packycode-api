@@ -22,7 +22,7 @@ import { dshTitleRequest } from '../tests/fixtures/dsh-session-title.mjs'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
 
-export const AGENT_MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+export const AGENT_MODELS = Object.freeze(['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 export const AGENT_CHECK_KINDS = Object.freeze(['read', 'edit', 'deny', 'plan', 'question', 'image', 'title'])
 const SYSTEM = 'You are an AI agent powered by DeepSeek Harness.'
 /** Tools as a DSH step offers them; a request without any is no agent's step and is answered once. */

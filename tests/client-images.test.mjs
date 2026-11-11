@@ -15,8 +15,24 @@ test('built image settings persist quality choices, constrain menus by model and
   const balanceReads = []
   let balanceMode = 'fresh'
   let invalidations = 0
+  let groupMode = 'unread'
+  const groupReads = []
   const images = createImageController({
     ring,
+    // What the host reads for each image key: its groups and the engines they serve.
+    groups: {
+      invalidate() {},
+      async read(options) {
+        groupReads.push(options)
+        if (groupMode === 'unread') throw new Error('group fixture unavailable')
+        const served = groupMode === 'image'
+        return { fetchedAt: 1000, descriptions: { 'image-sale': 'image优惠渠道', image: '官方稳定image 聚合' },
+          requirements: { 'MiniMax-H3-Image': ['image'], 'MiniMax-H3-Image-Highspeed': ['image'] },
+          keys: (await ring.list()).keys.map(({ id }) => groupMode === 'rejected'
+            ? { id, rejected: true, coverage: { 'gpt-image-2': false, 'gpt-image-2.6-flare': false, 'gpt-image-2.6-sunburst': false, 'MiniMax-H3-Image': false, 'MiniMax-H3-Image-Highspeed': false } }
+            : { id, groups: [served ? 'image' : 'image-sale'], coverage: { 'gpt-image-2': true, 'gpt-image-2.6-flare': true, 'gpt-image-2.6-sunburst': true, 'MiniMax-H3-Image': served, 'MiniMax-H3-Image-Highspeed': served } }) }
+      },
+    },
     balance: {
       invalidate() { invalidations += 1 },
       async read(options) {
@@ -93,6 +109,14 @@ test('built image settings persist quality choices, constrain menus by model and
   assert.equal(select(zh.imagesQuality).props.value, 'max')
   select(zh.imagesModel).props.onChange({ target: { value: 'gpt-image-2' } }); await tick()
   assert.equal(select(zh.imagesQuality).props.value, 'auto')
+  // MiniMax H3 Image has no quality levels: the menu offers auto alone.
+  assert.deepEqual(nodes(select(zh.imagesModel)).filter(node => node.type === 'option').map(node => node.props.children),
+    ['GPT Image 2', 'GPT Image 2.6 Flare', 'GPT Image 2.6 Sunburst', 'MiniMax H3 Image', 'MiniMax H3 Image Highspeed'])
+  select(zh.imagesModel).props.onChange({ target: { value: 'MiniMax-H3-Image-Highspeed' } }); await tick()
+  assert.equal(select(zh.imagesModel).props.value, 'MiniMax-H3-Image-Highspeed')
+  assert.deepEqual(nodes(select(zh.imagesQuality)).filter(node => node.type === 'option').map(node => node.props.value), ['auto'])
+  select(zh.imagesModel).props.onChange({ target: { value: 'gpt-image-2' } }); await tick()
+  assert.equal(nodes(select(zh.imagesQuality)).filter(node => node.type === 'option').length, 4)
   const password = () => show().find(node => node.type === 'input' && node.props.type === 'password')
   password().props.onChange({ target: { value: 'sk-fixture-separate-image' } })
   assert.equal(password().props.value, 'sk-fixture-separate-image')
@@ -139,6 +163,39 @@ test('built image settings persist quality choices, constrain menus by model and
   refresh().props.onClick(); await tick()
   assert.match(text(), /balance fixture unavailable/u)
   assert.doesNotMatch(text(), /\$9\.50/u)
+  // The key's groups decide which engines the menu offers. Unread groups hide nothing.
+  const offeredModels = () => nodes(select(zh.imagesModel)).filter(node => node.type === 'option').map(node => node.props.children)
+  const tags = () => rendered().filter(node => node.props?.className === 'pkc-tag').map(node => node.props.children)
+  assert.equal(offeredModels().length, 5)
+  assert.deepEqual(tags(), [])
+  groupMode = 'image-sale'
+  refresh().props.onClick(); await tick()
+  assert.equal(groupReads.at(-1).force, true)
+  assert.deepEqual(tags(), ['image-sale'])
+  assert.deepEqual(offeredModels(), ['GPT Image 2', 'GPT Image 2.6 Flare', 'GPT Image 2.6 Sunburst'])
+  assert.ok(text().includes('当前图片 Key 的分组（image-sale）不支持这些图片型号，已从上面的列表隐藏：MiniMax H3 Image、MiniMax H3 Image Highspeed。'))
+  assert.equal(rendered().some(node => node.props?.className === 'pkc-warn'), false)
+  // A saved engine the key is not served stays in the menu, marked, with a warning that names the group it needs.
+  select(zh.imagesModel).props.onChange({ target: { value: 'MiniMax-H3-Image' } }); await tick()
+  assert.deepEqual(offeredModels(), ['GPT Image 2', 'GPT Image 2.6 Flare', 'GPT Image 2.6 Sunburst', 'MiniMax H3 Image（当前 Key 不支持）'])
+  assert.equal(rendered().find(node => node.props?.className === 'pkc-warn').props.children,
+    '当前图片 Key 的分组（image-sale）不支持 MiniMax H3 Image，用它生图会被网关拒绝。请换一个型号，或添加分组包含它的图片 Key。需要分组：image。')
+  assert.ok(text().includes('已从上面的列表隐藏：MiniMax H3 Image Highspeed。'))
+  // A key in the `image` group is offered every engine again, with no warning.
+  groupMode = 'image'
+  refresh().props.onClick(); await tick()
+  assert.deepEqual(tags(), ['image'])
+  assert.equal(offeredModels().length, 5)
+  assert.equal(rendered().some(node => node.props?.className === 'pkc-warn'), false)
+  assert.doesNotMatch(text(), /已从上面的列表隐藏/u)
+  // A key the gateway rejects serves nothing: only the saved engine is left, and the warning says why.
+  groupMode = 'rejected'
+  refresh().props.onClick(); await tick()
+  assert.deepEqual(offeredModels(), ['MiniMax H3 Image（当前 Key 不支持）'])
+  assert.match(rendered().find(node => node.props?.className === 'pkc-warn').props.children, /被网关拒绝/u)
+  assert.equal(JSON.stringify(rendered()).includes('sk-fixture'), false)
+  groupMode = 'image'
+  select(zh.imagesModel).props.onChange({ target: { value: 'gpt-image-2' } }); await tick()
   show().find(node => node.type === 'button' && node.props.children === zh.keyRemove).props.onClick(); await tick()
   assert.equal(invalidations, 2)
   assert.match(text(), /尚未添加图片 Key/u)

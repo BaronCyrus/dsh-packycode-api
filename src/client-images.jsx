@@ -1,13 +1,30 @@
 import * as react from 'react'
 
 import { IMAGE_CHAT_KIND, imageConversationNode } from './image-conversation.js'
-import { KeyBalance } from './client-balance.jsx'
+import { fill, KeyBalance } from './client-balance.jsx'
 import { ImageShortcutBalance } from './client-image-balance.jsx'
 import { readOriginalImage } from './client-image-download.js'
 import { createImageViewer, PackyCodeImageViewer } from './client-image-viewer.jsx'
 import { KeyRenameForm, useKeyRename } from './client-key-rename.jsx'
 
-const imageModelLabel = id => id.replace('gpt-image-', 'GPT Image ').replace('-flare', ' Flare').replace('-sunburst', ' Sunburst')
+const imageModelLabel = id => id.startsWith('MiniMax-') ? id.replaceAll('-', ' ')
+  : id.replace('gpt-image-', 'GPT Image ').replace('-flare', ' Flare').replace('-sunburst', ' Sunburst')
+
+/** An image key's groups, as the gateway named them. */
+function ImageKeyGroups({ group, descriptions, loading, t }) {
+  if (group === undefined) return loading ? <span className="pkc-meta">{t('groupsChecking')}</span> : null
+  if (group.rejected === true) return <span className="pkc-error">{t('groupsRejected')}</span>
+  const names = Array.isArray(group.groups) ? group.groups : []
+  return <>
+    <div className="pkc-groups">
+      <span className="pkc-label">{t('groupsTitle')}</span>
+      {names.length === 0
+        ? <span className="pkc-meta">{group.error === undefined ? '—' : `${t('groupsUnknown')}: ${group.error}`}</span>
+        : names.map(name => <span className="pkc-tag" key={name} title={descriptions?.[name] ?? name}>{name}</span>)}
+    </div>
+    {group.stale !== undefined && <span className="pkc-meta">{t('groupsStale')}</span>}
+  </>
+}
 
 /** Only projections come back from the host; the password draft is cleared on success. */
 export function PackyCodeImagesCard({ call, t }) {
@@ -19,7 +36,24 @@ export function PackyCodeImagesCard({ call, t }) {
   const [balanceError, setBalanceError] = react.useState()
   const [balanceLoading, setBalanceLoading] = react.useState(true)
   const balanceGeneration = react.useRef(0)
+  const [groups, setGroups] = react.useState()
+  const [groupsLoading, setGroupsLoading] = react.useState(true)
+  const groupsGeneration = react.useRef(0)
   const mounted = react.useRef(false)
+  // Without a reading every engine stays offered: an engine is hidden only on evidence.
+  const readGroups = async (force = false) => {
+    if (!mounted.current) return
+    const generation = ++groupsGeneration.current
+    setGroupsLoading(true)
+    try {
+      const value = await call('images/groups', { force })
+      if (mounted.current && groupsGeneration.current === generation) setGroups(value)
+    } catch {
+      if (mounted.current && groupsGeneration.current === generation) setGroups(undefined)
+    } finally {
+      if (mounted.current && groupsGeneration.current === generation) setGroupsLoading(false)
+    }
+  }
   const readBalance = async (force = false) => {
     if (!mounted.current) return
     const generation = ++balanceGeneration.current
@@ -39,8 +73,9 @@ export function PackyCodeImagesCard({ call, t }) {
     call('images/status').then(value => { if (mounted.current) setState(value) })
       .catch(() => { if (mounted.current) setError(t('imagesLoadFailed')) })
     void readBalance()
+    void readGroups()
     const timer = window.setInterval(() => { void readBalance() }, 60_000)
-    return () => { mounted.current = false; balanceGeneration.current += 1; window.clearInterval(timer) }
+    return () => { mounted.current = false; balanceGeneration.current += 1; groupsGeneration.current += 1; window.clearInterval(timer) }
   }, [call, t])
   const mutate = async (endpoint, payload = {}) => {
     setBusy(true)
@@ -51,6 +86,7 @@ export function PackyCodeImagesCard({ call, t }) {
       if (mounted.current && endpoint.startsWith('images/keys/')) {
         setBalance(undefined)
         void readBalance(true)
+        void readGroups(endpoint === 'images/keys/add' || endpoint === 'images/keys/remove')
       }
       window.dispatchEvent(new Event('packycode-images-updated'))
       return true
@@ -63,10 +99,21 @@ export function PackyCodeImagesCard({ call, t }) {
   const disabled = busy || state?.writable !== true
   const models = state?.models ?? []
   const qualities = models.find(model => model.id === state?.imageModel)?.qualities ?? []
+  // The key in use decides: images never fall over to another key.
+  const activeGroup = groups?.keys?.find(entry => entry.id === (state?.keys ?? []).find(key => key.active)?.id)
+  const unserved = id => activeGroup?.coverage?.[id] === false
+  const groupNames = (activeGroup?.groups ?? []).join(' / ') || '—'
+  // Engines the key's groups do not serve leave the menu. The saved one stays, marked, until another is picked.
+  const hidden = models.filter(model => unserved(model.id) && model.id !== state?.imageModel)
+  const offered = models.filter(model => !hidden.includes(model))
+  const savedUnserved = state !== undefined && unserved(state.imageModel)
+  // Pricing names the groups that list an engine, when it lists the engine at all:
+  // read from a mainland address it leaves out the GPT Image and Claude models.
+  const required = groups?.requirements?.[state?.imageModel] ?? []
   const rows = (state?.keys ?? []).map(entry => balance?.keys?.find(row => row.id === entry.id) ?? { id: entry.id })
   return <section className="pkc-card">
     <header className="pkc-head"><h3 className="pkc-title">{t('imagesTitle')}</h3><span className="pkc-actions">
-      <button className="pkc-btn" type="button" disabled={busy || balanceLoading} onClick={() => { void readBalance(true) }}>{balanceLoading ? t('refreshing') : t('refresh')}</button>
+      <button className="pkc-btn" type="button" disabled={busy || balanceLoading} onClick={() => { void readBalance(true); void readGroups(true) }}>{balanceLoading ? t('refreshing') : t('refresh')}</button>
     </span></header>
     <p className="pkc-note">{t('imagesIntro')}</p>
     {state !== undefined && <>
@@ -79,9 +126,15 @@ export function PackyCodeImagesCard({ call, t }) {
       <label className="pkc-setting"><span className="pkc-label">{t('imagesModel')}</span>
         <select className="pkc-input pkc-image-choice" value={state.imageModel} disabled={disabled || !state.imageEnabled}
           onChange={event => { void mutate('images/update', { imageModel: event.target.value, imageQuality: 'auto' }) }}>
-          {models.map(model => <option key={model.id} value={model.id}>{imageModelLabel(model.id)}</option>)}
+          {offered.map(model => <option key={model.id} value={model.id}>{`${imageModelLabel(model.id)}${unserved(model.id) ? t('imagesModelUnservedMark') : ''}`}</option>)}
         </select>
       </label>
+      {savedUnserved && <p className="pkc-warn">{`${fill(t(activeGroup.rejected === true ? 'imagesModelKeyRejected' : 'imagesModelUnserved'), {
+        model: imageModelLabel(state.imageModel), groups: groupNames,
+      })}${activeGroup.rejected !== true && required.length > 0 ? fill(t('imagesModelRequired'), { required: required.join(' / ') }) : ''}`}</p>}
+      {hidden.length > 0 && activeGroup.rejected !== true && <p className="pkc-note">{fill(t('imagesModelsHidden'), {
+        groups: groupNames, models: hidden.map(model => imageModelLabel(model.id)).join(t('listSeparator')),
+      })}</p>}
       <label className="pkc-setting"><span className="pkc-label">{t('imagesQuality')}</span>
         <select className="pkc-input pkc-image-choice" value={state.imageQuality} disabled={disabled || !state.imageEnabled}
           onChange={event => { void mutate('images/update', { imageQuality: event.target.value }) }}>
@@ -100,6 +153,7 @@ export function PackyCodeImagesCard({ call, t }) {
             <button className="pkc-btn" data-variant="ghost" type="button" disabled={busy} onClick={() => rename.start(entry)}>{t('keyRename')}</button>
             <button className="pkc-btn" data-variant="danger" type="button" disabled={busy} onClick={() => { void mutate('images/keys/remove', { id: entry.id }) }}>{t('keyRemove')}</button>
           </span>}</div>
+          <ImageKeyGroups group={groups?.keys?.find(group => group.id === entry.id)} descriptions={groups?.descriptions} loading={groupsLoading} t={t} />
           <KeyBalance row={rows.find(row => row.id === entry.id)} t={t} />
         </div>)}
       </div>

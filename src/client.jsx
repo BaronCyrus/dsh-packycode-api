@@ -29,7 +29,7 @@ const SEARCH_SETTLE_MS = 1_500
 const INSTALL_POLL_MS = 2_000
 /** The auto review counts are re-read this often while the page is open. */
 const REVIEW_POLL_MS = 5_000
-const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
+const CLAUDE_MODELS = ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 const OWN_SEARCH_IDS = { auto: 'packycode-api-auto', packycode: 'packycode-api' }
 const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
 /** The catalog's models by family, for the "reaches" line under each key. */
@@ -39,7 +39,7 @@ const MODEL_FAMILIES = [
   ['Grok', ['grok-4.7']],
   ['Hunyuan', ['hy4']],
   ['Gemini', ['gemini-4-argon', 'gemini-3.8-flash']],
-  ['Claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
+  ['Claude', ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
   // Not in the picker: auto review's classifier.
   ['Jev', ['jev-latest']],
 ]

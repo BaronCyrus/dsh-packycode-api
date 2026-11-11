@@ -89,6 +89,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
       balance.invalidate()
       groups?.invalidate()
       images?.invalidateBalance?.()
+      images?.invalidateGroups?.()
       return status()
     },
     'claude-cli/status': payload => cli().status({ force: payload?.force === true }),
@@ -117,6 +118,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     'models/update': payload => models().update({ selectedIds: payload?.selectedIds }),
     'images/status': () => imageSupport().status(),
     'images/balance': (payload, signal) => imageSupport().readBalance({ force: payload?.force === true, signal }),
+    'images/groups': (payload, signal) => imageSupport().readGroups({ force: payload?.force === true, signal }),
     'images/original': (payload, signal) => originals().info(payload, signal),
     'images/original/chunk': (payload, signal) => originals().chunk(payload, signal),
     'images/update': payload => imageSupport().update(payload),

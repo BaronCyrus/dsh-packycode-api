@@ -90,7 +90,7 @@ dsh-packycode-api@1.4.7
 
 **看余额。** 「账户与 Key」里每个 Key 显示它自己的剩余、已用与额度（额度 = 剩余 + 已用），不限额的 Key 显示「不限额度」；多个 Key 不相加成合计。API Key 只能读到自己的额度，读不到 PackyCode 账号的总余额，账号余额请到 PackyCode 控制台查看。读失败的 Key 会在它那一行注明原因；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
 
-**用 Claude。** 直接选择三个 Claude 模型之一。Key 在 `cc` 分组时，这个会话由本机的官方 Claude Code CLI 完成，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code`），版本过低或有新版本时在同一处点「更新 Claude Code CLI」；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，通道由分组决定，不能手动切换；分组还没读到时先走 CLI。经 HTTP 时工具由 DSH 执行，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样；经 CLI 时由 Claude Code 自己执行，差别见下方「Claude Code CLI 通道」。
+**用 Claude。** 直接选择四个 Claude 模型之一。Key 在 `cc` 分组时，这个会话由本机的官方 Claude Code CLI 完成，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code`），版本过低或有新版本时在同一处点「更新 Claude Code CLI」；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，通道由分组决定，不能手动切换；分组还没读到时先走 CLI。经 HTTP 时工具由 DSH 执行，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样；经 CLI 时由 Claude Code 自己执行，差别见下方「Claude Code CLI 通道」。
 
 **网页搜索。** DSH 的 `web_search` 默认调用 DeepSeek 官方接口（用 `DEEPSEEK_API_KEY` 计费）。在 **设置 → PackyCode → 网页搜索** 里可以改走 PackyCode：
 
@@ -163,9 +163,13 @@ Claude 与其它模型一样，通过 DSH 的 `packycode_image_generate` 工具�
 
 `gpt-image-2` 的质量为 `auto / low / medium / high`；两款 2.6 另支持 `xhigh / max`。设置里原来选的 2.5 Flare / Sunburst 会按同名的 2.6 型号读取，质量不变，无需重新设置。质量按 Images API 的 `quality` 原样发送，不作为文字推理强度；不会自动换型号、降档或重试付费请求。输出先采用 PNG，每次一张，聊天预览之外的原图保存在 `~/.dsh/packycode-api/images/`（设置了 `DSH_HOME` 时跟随该目录）。参考图与可选 PNG mask 必须来自当前会话；不能用路径替代附件引用。
 
+`MiniMax-H3-Image` 和 `MiniMax-H3-Image-Highspeed`（出图更快、单价更高）走同样的两个端点，但参数不同：没有质量档位（设置里只有「自动」，请求不带 `quality`），不支持透明背景和 mask，带这两项的请求会在发出前被拒绝，不会丢掉后照常生图。MiniMax 按输出像素计费，不给尺寸时默认出 4K；插件在尺寸为 `auto` 时附带 `area: "2K"`，由模型按描述或参考图选比例、约 400 万像素出图，也可以在对话里指定尺寸（如 `2720x1536`），上限与 GPT Image 相同（单边 3840、829 万像素）。
+
+图片卡片会在每个图片 Key 下显示它的分组。型号列表只列出当前使用的 Key 所在分组支持的型号，并在下方说明哪些型号因分组不支持而隐藏；已保存的型号若不被当前 Key 支持，会保留在列表里并标注「当前 Key 不支持」，同时给出警告和所需分组，不会自动改成别的型号。例如 MiniMax 两个型号在 PackyCode 只开给 `image` 分组，`image-sale` 分组的 Key 看不到它们。分组没读到时不隐藏任何型号。
+
 点击生成图可在应用内查看大图，右上角关闭按钮左侧的「下载原图」可选择保存位置，另存本机保留的完整 PNG。取消保存不会报错；若原图已被移走或删除，会提示失败，不会改为下载聊天缩略图。已有会话也可使用此功能，前提是记录对应的本机原图仍存在。
 
-用户填入图片 Key 后，可运行 `node scripts/image-check.mjs --all --edit` 验证三个型号与一次编辑；用 `--model <型号> --edit` 单独验证某个型号的生图和编辑，搭配 `--quality xhigh` 或 `--quality max` 验证质量。测试会消耗图片额度，输出写入 `.artifacts/`，日志只显示 Key 的掩码尾号，并记录网关回报的型号/质量。
+用户填入图片 Key 后，可运行 `node scripts/image-check.mjs --all --edit` 验证全部型号与一次编辑（Key 所在分组不提供的型号会单独报错，不影响其它型号）；用 `--model <型号> --edit` 单独验证某个型号的生图和编辑，搭配 `--quality xhigh` 或 `--quality max` 验证质量。测试会消耗图片额度，输出写入 `.artifacts/`，日志只显示 Key 的掩码尾号，并记录网关回报的型号/质量。
 
 2026-11-05 实测：2.6 Flare 和 2.6 Sunburst 都通过 `low`、`xhigh`、`max` 的生图与编辑，响应回报的 quality 与请求一致；`gpt-image-2` 通过 `low` 生图，Sunburst 的 `auto` 被网关回报为 `low`。合计 15 次请求全部成功，无重试，均返回 1024×1024 PNG；编辑正确改色并保留构图。Flare 的 xhigh 生图/编辑约 14/15 秒、max 约 24/26 秒；Sunburst 的 xhigh 约 51/64 秒、max 约 96/97 秒。这是已构建图片 client 的网关验证；本轮未新建 DSH 对话验证完整聊天流程。完整范围和记录见[协议核查与网关实测](docs/research/image-api.md)。
 
@@ -230,7 +234,8 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 | `hy4`（Hy4，腾讯混元） | HTTP，Responses，可带图；1024K 上下文（输入最多 960K），64K 输出 | 可关；只有 `high` | `hunyuan-officially` |
 | `gemini-4-argon`（Gemini 4 Argon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `gemini-3.8-flash`（Gemini 3.8 Flash） | HTTP，Gemini 原生流式，可带图；1,048,576 输入，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
-| `claude-opus-5-5` | Anthropic Messages，可带图和原生工具：`cc` 分组由本机 Claude Code CLI 当 agent，其它分组走 HTTP | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 以设置页读取的 Claude 分组覆盖为准 |
+| `claude-fable-5-2`（Claude Fable 5.2） | Anthropic Messages，可带图和原生工具：`cc` 分组由本机 Claude Code CLI 当 agent，其它分组走 HTTP；1M 上下文，128K 输出 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 以设置页读取的 Claude 分组覆盖为准 |
+| `claude-opus-5-5` | 同上 | 同上 | 同上 |
 | `claude-sonnet-5-5` | 同上 | 同上 | 同上 |
 | `claude-haiku-5-5` | 同上；Claude 会话标题固定走它 | 同上 | 同上 |
 
@@ -268,7 +273,7 @@ DeepSeek Flash 走网关的 Responses 接口（`/api/pricing` 列出 `openai-res
 - 两条通道的 Claude 对话都保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题由 `claude-haiku-5-5` 生成（与对话走同一条通道）；GPT-6 Astra 与 GPT-5.6 Sol 的标题交给 GPT-6.1 Sol，DeepSeek V4 Pro 的标题交给 DeepSeek Flash。
 - 1.2.x 的 `claudeCliMode`、`claudeCliCwd` 设置不再恢复：Claude Code 的权限由会话的 DSH 权限预设决定，工作目录就是会话目录。名为 `claude_code` 的工具现在是 cc 会话里显示 Claude Code 工具调用的镜像工具，只由插件使用，不是 1.2.x 的委派工具。`claudeCliPath` 重新生效，用于指定 CLI 位置（留空则按常见安装位置和 PATH 查找）。1.3.4 的 `claudeTransport` 已移除，profile 里残留的值会被忽略。除非你在 CLI 卡片里点「更新 Claude Code CLI」，用户独立安装的 Claude Code 不会被改动。
 - Codex 的 Responses 请求仍需要 `prompt_cache_key`；插件补上缺失的会话标识，其它 Responses 模型省略该字段。
-- 构建后可用 `node scripts/claude-check.mjs` 验证三个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注、中文标题和计划模式（只读查询 → `exit_plan_mode` 提交计划 → 审批），并核对业务答案；加 `--transport cli` 则改跑 cc 通道的检查（`scripts/claude-agent-check.mjs`）：在临时目录里让 Claude Code 自己读文件计算、改文件（授权批准）、删文件（授权拒绝）、计划审阅后实施、提问、看图和起标题，核对文件和答案，并统计网关的「客户端异常」和「反滥用」拒绝次数。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。
+- 构建后可用 `node scripts/claude-check.mjs` 验证四个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注、中文标题和计划模式（只读查询 → `exit_plan_mode` 提交计划 → 审批），并核对业务答案；加 `--transport cli` 则改跑 cc 通道的检查（`scripts/claude-agent-check.mjs`）：在临时目录里让 Claude Code 自己读文件计算、改文件（授权批准）、删文件（授权拒绝）、计划审阅后实施、提问、看图和起标题，核对文件和答案，并统计网关的「客户端异常」和「反滥用」拒绝次数。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。
 - 连续对话可用 `node scripts/claude-conversation-check.mjs --model claude-haiku-5-5 --rounds 3 --key-label <备注名> --output .artifacts/claude-conversation.json`：同一插件适配器处理独立会话，每组保留六轮对话和完整工具历史，检查追问中的数值一致性、最终 JSON 和异常字符；遇到失败停止该批次并保留记录。单请求默认 65 秒、输出上限 2048 token；诊断可通过 `--timeout-ms`（5000–300000）和 `--max-tokens`（1024–128000）显式调整。`--capture-wire` 记录这组模拟业务的完整请求、非认证头和中断前的流事件，用于精确重放；不记录 Key。报告包含场景版本、适配器生命周期、所用上限、首响应和完整响应耗时。这些选项不修改插件的运行参数。
 
 </details>

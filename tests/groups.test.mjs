@@ -10,6 +10,7 @@ import {
   parseSelectedGroups,
   pickKeyForModel,
 } from '../src/groups.js'
+import { IMAGE_MODEL_IDS } from '../src/image-models.js'
 
 /** The gateway's own refusal text for a model the token cannot route. */
 const REFUSAL = (groups) => `当前令牌未覆盖供应商 ""（模型=${GROUP_PROBE_MODEL}，已选分组=[${groups.join(' ')}]） (request id: 01M4SRE5WPZ0QTBASEW8KNN68F)`
@@ -21,6 +22,7 @@ const PRICING = {
     { model_name: 'deepseek-v4-pro', enable_groups: ['deepseek-officially', 'deepseek-sale'] },
     { model_name: 'gpt-6.1-sol', enable_groups: ['codex', 'codex-sale', 'azure-officially'] },
     { model_name: 'gpt-6-astra', enable_groups: ['azure-officially', 'codex', 'codex-sale'] },
+    { model_name: 'claude-fable-5-2', enable_groups: ['aws-q', 'cc-expensive', 'cc', 'claude-officially', 'cc-sale'], supported_endpoint_types: ['anthropic'] },
     { model_name: 'claude-opus-5-5', enable_groups: ['cc', 'cc-expensive', 'claude-officially', 'cc-sale'] },
     { model_name: 'claude-sonnet-5-5', enable_groups: ['cc-expensive', 'claude-officially', 'cc-sale', 'cc'] },
     { model_name: 'claude-haiku-5-5', enable_groups: ['claude-officially', 'cc'] },
@@ -82,7 +84,7 @@ test('a reading that could not reach a key is retried after a short wait, not af
 test('pricing keeps the catalog models\' groups and each group\'s description', () => {
   const pricing = parsePricing(PRICING)
   // jev-latest is not in the picker, but auto review asks it, so its group counts.
-  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6-astra', 'gpt-6.1-sol', 'hy4', 'jev-latest'])
+  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6-astra', 'gpt-6.1-sol', 'hy4', 'jev-latest'])
   assert.deepEqual(pricing.modelGroups['jev-latest'], ['typesafe-officially'])
   assert.deepEqual(pricing.modelGroups.hy4, ['hunyuan-officially'])
   assert.deepEqual(pricing.modelGroups['claude-haiku-5-5'], ['cc', 'claude-officially'])
@@ -98,6 +100,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'gpt-6.1-sol': true,
     'gpt-6-astra': true,
     'hy4': false,
+    'claude-fable-5-2': false,
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,
@@ -106,9 +109,10 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   // Only typesafe-officially reaches Jev, and only hunyuan-officially Hy4.
   assert.equal(catalogCoverage({ groups: ['typesafe-officially'], modelGroups })['jev-latest'], true)
   assert.equal(catalogCoverage({ groups: ['codex-sale', 'hunyuan-officially'], modelGroups }).hy4, true)
-  // cc-sale serves Opus and Sonnet but not Haiku.
+  // cc-sale serves Fable, Opus and Sonnet but not Haiku.
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-haiku-5-5'], false)
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-opus-5-5'], true)
+  assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-fable-5-2'], true)
   // The key's own model list wins a disagreement in the reachable direction.
   assert.equal(catalogCoverage({ groups: ['codex'], models: new Set(['claude-opus-5-5']), modelGroups })['claude-opus-5-5'], true)
   // No groups, no pricing, no model list: nothing is claimed.
@@ -124,6 +128,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'hy4': false,
     'gemini-4-argon': false,
     'gemini-3.8-flash': false,
+    'claude-fable-5-2': false,
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,
@@ -140,6 +145,48 @@ test('Gemini coverage uses gateway evidence without guessing a token group', () 
   assert.equal(catalogCoverage({ groups: ['codex'], modelGroups })['gemini-3.8-flash'], false)
   assert.equal(catalogCoverage({ models: new Set(['gemini-3.8-flash']) })['gemini-3.8-flash'], true)
   assert.equal(catalogCoverage({ groups: ['codex'] })['gemini-3.8-flash'], undefined)
+})
+
+test('an image key ring reads which image engines each key is served', async () => {
+  const pricing = {
+    data: [
+      { model_name: 'gpt-image-2', enable_groups: ['image', 'image-sale'] },
+      { model_name: 'gpt-image-2.6-flare', enable_groups: ['image-sale', 'image'] },
+      { model_name: 'gpt-image-2.6-sunburst', enable_groups: ['image-sale', 'image'] },
+      { model_name: 'MiniMax-H3-Image', enable_groups: ['image'], supported_endpoint_types: ['image-generation'] },
+      { model_name: 'MiniMax-H3-Image-Highspeed', enable_groups: ['image'], supported_endpoint_types: ['image-generation'] },
+      { model_name: 'deepseek-flash', enable_groups: ['deepseek-officially'] },
+    ],
+    usable_group: { image: '官方稳定image 聚合', 'image-sale': 'image优惠渠道' },
+  }
+  const keys = [
+    { id: 's', label: 'sale', key: 'sk-image-sale-SSSS', disabled: false },
+    { id: 'o', label: 'official', key: 'sk-image-official-OOOO', disabled: false },
+    { id: 'r', label: 'revoked', key: 'sk-image-revoked-RRRR', disabled: false },
+  ]
+  const gpt = ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']
+  const net = gateway({
+    pricing,
+    groupsByKey: { 'sk-image-sale-SSSS': ['image-sale'], 'sk-image-official-OOOO': ['image'], 'sk-image-revoked-RRRR': 'rejected' },
+    modelsByKey: { 'sk-image-sale-SSSS': gpt, 'sk-image-official-OOOO': [...gpt, ...IMAGE_MODEL_IDS.filter(id => id.startsWith('MiniMax-'))] },
+  })
+  const reader = createGroupReader({ listKeys: async () => keys, getHosts: () => ({ apiHost: 'https://gw.example', statusHost: 'https://status.example' }), fetchImpl: net.fetchImpl, modelIds: IMAGE_MODEL_IDS })
+  const reading = await reader.read()
+  const served = Object.fromEntries(gpt.map(id => [id, true]))
+  assert.deepEqual(reading.keys[0], { id: 's', groups: ['image-sale'], coverage: { ...served, 'MiniMax-H3-Image': false, 'MiniMax-H3-Image-Highspeed': false } })
+  assert.deepEqual(reading.keys[1], { id: 'o', groups: ['image'], coverage: { ...served, 'MiniMax-H3-Image': true, 'MiniMax-H3-Image-Highspeed': true } })
+  assert.equal(reading.keys[2].rejected, true)
+  assert.deepEqual(Object.values(reading.keys[2].coverage), IMAGE_MODEL_IDS.map(() => false))
+  // Only the image engines are kept from pricing; a conversation model is not.
+  assert.deepEqual(Object.keys(reading.requirements).sort(), [...IMAGE_MODEL_IDS].sort())
+  assert.deepEqual(reading.requirements['MiniMax-H3-Image'], ['image'])
+  assert.deepEqual(reading.descriptions, { image: '官方稳定image 聚合', 'image-sale': 'image优惠渠道' })
+  assert.equal(reader.covers('s', 'MiniMax-H3-Image'), false)
+  assert.equal(reader.covers('o', 'MiniMax-H3-Image-Highspeed'), true)
+  assert.equal(JSON.stringify(reading).includes('sk-image'), false)
+  for (const call of net.calls) assert.equal(call.redirect, 'error')
+  // The refusal an image-sale key got for a MiniMax engine on 2026-11-11 names its one group.
+  assert.deepEqual(parseSelectedGroups('分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道（distributor），请尝试切换其他分组 (request id: 01M754ZW8JDFJ80RPBXYPKZTRA)'), ['image-sale'])
 })
 
 function gateway({ groupsByKey, modelsByKey = {}, pricing = PRICING, fail = {} }) {

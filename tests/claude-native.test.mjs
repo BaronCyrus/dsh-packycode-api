@@ -10,7 +10,7 @@ import { anthropicStream } from './fixtures/anthropic.mjs'
 import { dshTitleRequest } from './fixtures/dsh-session-title.mjs'
 
 const KEY = 'sk-native-fixture-not-a-real-key'
-const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
+const MODELS = ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 const user = { role: 'user', content: 'Reply ok', timestamp: 1 }
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u
 

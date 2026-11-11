@@ -4,11 +4,18 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { CLAUDE_MODELS, createClaudeCheck } from './claude-check.mjs'
+import { createClaudeCheck } from './claude-check.mjs'
 import { readStoredKey } from './stored-key.mjs'
 import { redactSecrets } from '../src/secret-redactor.js'
 import { TEST_MESSAGE_POLICY_CODE } from '../src/failures.js'
 import { CLAUDE_SCENARIO_VERSION } from './claude-scenarios.mjs'
+
+/**
+ * The window samples the three 5.5 models: its per-round request budget and
+ * feature rotation are sized for three. Claude Fable 5.2 is checked with
+ * scripts/claude-check.mjs instead.
+ */
+const CLAUDE_MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 
 const INTERVAL_MS = 15 * 60_000
 const FORMAT = 'native-claude-stability/1'

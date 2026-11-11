@@ -12,7 +12,7 @@ const CLIENT_VERSION = '2.1.295'
 const USER_AGENT = `claude-cli/${CLIENT_VERSION} (external, sdk-cli)`
 const CLIENT_BETA = 'claude-code-20250219'
 const UPDATES_BETA = 'thinking-display-updates-2026-08-18'
-const THINKING_DISPLAY = Object.freeze({ 'claude-haiku-5-5': 'omitted', 'claude-sonnet-5-5': 'updates', 'claude-opus-5-5': 'updates' })
+const THINKING_DISPLAY = Object.freeze({ 'claude-haiku-5-5': 'omitted', 'claude-sonnet-5-5': 'updates', 'claude-opus-5-5': 'updates', 'claude-fable-5-2': 'updates' })
 const IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
 

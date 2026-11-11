@@ -1,4 +1,4 @@
-# GPT Image 2 / 2.5 / 2.6 Images API 核查
+# GPT Image 2 / 2.5 / 2.6 与 MiniMax H3 Image：Images API 核查
 
 核查日期：2026-10-15（Asia/Shanghai）。协议核查部分只查阅公开资料；末尾另记录用户添加独立图片 Key 并授权测试后的 PackyCode 网关结果。协议能力与实际网关结果分开记录，不记录任何完整凭据。
 
@@ -98,3 +98,63 @@ JSON 编辑的字段为 `images: [{ image_url: "…" }]` 或 `images: [{ file_id
 | `gpt-image-2.6-sunburst` | `max` | 通过 | 通过 | `max` | 95.9 / 96.6 秒 |
 
 共 15 次请求全部成功，均返回 1024×1024 PNG。抽查的生图为白底蓝色茶壶，编辑后茶壶变橙、构图和白底保留。`auto` 发出后网关回报 `low`。响应没有可识别的 `model` 字段，所以结论仍是这些型号在当前 Key 和网关下可用、回报的 quality 与请求一致，不独立证明网关内部的模型身份。本轮没有在 DSH 桌面对话里跑完整的模型 → 工具 → 聊天预览流程。PNG 保存在本地 `.artifacts/image-check-*/`，不进入 Git 或 npm 包。
+
+## MiniMax H3 Image 接入（2026-11-11）
+
+2026-11-11 的 `/api/pricing` 在 `image` 分组列出 `MiniMax-H3-Image` 和 `MiniMax-H3-Image-Highspeed`，端点类型为 `image-generation`（`/v1/images/generations`，附加路径 `/v1/images/edits`），计费方式 `image_billing: "token"`；两款都不在 `image-sale` 分组。站内公告（`/api/status` 的 `announcements`，同日发布）写两个端点两款都支持、编辑支持 1~16 张参考图、「两款模型参数与限制相同，Highspeed 版本出图更快」。PackyCode 的文档仓库还没有这两个型号的页面。
+
+### MiniMax 官方协议
+
+来源：MiniMax 的[生图指南](https://platform.minimax.io/docs/guides/image-generation)、[文生图参考](https://platform.minimax.io/docs/api-reference/image-generation-h3-generations)和[图片编辑参考](https://platform.minimax.io/docs/api-reference/image-generation-h3-edits)。H3 Image 的原生接口就是这两个 Images API 路径，字段与 GPT Image 不同：
+
+| 字段 | MiniMax H3 Image |
+| --- | --- |
+| `prompt` | 必填，最长 32000 字符 |
+| `n` | 1–10，默认 1 |
+| `size` | `auto`（默认）或 `WIDTHxHEIGHT`：面积 655,360–20,000,000 像素，宽高比 1:3 至 3:1，不缩放不取整，越界返回 400；没有 16 的倍数要求 |
+| `area` | `1K` / `2K` / `4K`，**默认 `4K`**；与 `WIDTHxHEIGHT` 的 `size` 同时发送返回 400 |
+| `aspect_ratio` | `auto` 或 `X:Y`；与 `WIDTHxHEIGHT` 的 `size` 同时发送返回 400 |
+| `output_format` | `png` / `jpeg` / `jpg` / `webp`，**默认 `jpeg`** |
+| `response_format` | `url`（默认）或 `b64_json`；`b64_json` 时 PNG 总面积上限 20,000,000 像素 |
+| `quality`、`background` | schema 里没有；指南把透明背景列为不支持 |
+| `mask` | 不支持，返回 400 |
+| 编辑参考图 | multipart 的 `image` 或 `image[]`，1–16 张，JPG / PNG / WEBP / HEIC / HEIF，单张不超过 64 MiB，边长 128–8192 |
+
+响应为 `data[].b64_json`（或 `url`）加每张图的实际 `size` 和 `revised_prompt`，顶层有 `output_format` 和 `usage`，没有 `quality` 字段。官方写服务端最多等待 600 秒，接口不幂等，重试会再次生成并计费。两款参数与限制相同；Highspeed 的输入图片和输出单价是标准版的两倍。
+
+### 插件的请求形状
+
+- 两款进入 `IMAGE_MODELS`，质量只有 `auto`，请求不带 `quality` 和 `background`。
+- 显式发送 `output_format: "png"` 和 `response_format: "b64_json"`：插件只保存 PNG 原图，不下载网关给的链接。
+- `size` 为 `auto` 时附带 `area: "2K"`（`MINIMAX_AUTO_AREA`），比例由模型按描述或参考图决定。不这样做，MiniMax 按默认 `4K` 出图，像素和费用是 2K 的四倍，并超过插件保存图片的上限（单边 3840、8,294,400 像素）。显式尺寸不带 `area`（两者同发返回 400）。
+- 显式尺寸沿用原有校验（两边为 16 的倍数、单边不超过 3840、宽高比不超过 3:1、655,360–8,294,400 像素），是 MiniMax 允许范围的子集；4K 档暂不提供。
+- 透明背景和 mask 在发出请求前拒绝，不丢弃后照常生图。工具调用为本次请求点名 MiniMax、而设置里保存的是另一型号的质量时，按 `auto` 处理；显式传入它没有的质量仍被拒绝。
+- 网关的路由拒绝（`error.code: "model_not_found"`，如 `分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道`）改为提示图片 Key 所在分组不提供该型号，并明确要求不要换型号重试、让用户在设置里选型号或换 Key，不回显网关原文。
+- 超时仍是插件原有的 5 分钟，低于官方的 600 秒建议；实测 2K 生图和编辑都在 30 秒内。
+
+### 网关实测（2026-11-11）
+
+已构建的图片 client 调用 `https://cf.api.fan`，Key 只从 `packycode-api/image-keys` 读取（尾号 …ECMQ），提示和编辑指令同前（白底蓝色茶壶；编辑为改成橙色），每次 `n: 1`、PNG，无重试。
+
+这把 Key 当天先在 `image-sale` 分组：两款 MiniMax 型号都被网关在到达上游前拒绝（HTTP 503 `model_not_found`），没有产生图片。用户把它改到 `image` 分组后：
+
+| 请求型号 | 请求尺寸 | 生图 | 编辑 | 返回尺寸 | 生图 / 编辑耗时 |
+| --- | --- | --- | --- | --- | --- |
+| `MiniMax-H3-Image` | `1024x1024` | 通过 | 通过 | 1024×1024 | 11.4 / 16.3 秒 |
+| `MiniMax-H3-Image-Highspeed` | `1024x1024` | 通过 | 通过 | 1024×1024 | 8.1 / 9.8 秒 |
+| `MiniMax-H3-Image` | `auto`（附带 `area: "2K"`） | 通过 | 通过 | 2048×2048 | 14.6 / 25.6 秒 |
+
+6 次请求全部返回可解码的 PNG（`data[].b64_json`），尺寸与请求一致。抽查的生图为白底蓝色茶壶，编辑后茶壶为橙色。响应没有 `model` 和 `quality` 字段，带每张图的 `size`、`revised_prompt` 和 `usage`。
+
+另用一次直接请求确认网关转发 `area`：JSON 生图发 `size: "auto"` 加 `area: "1K"` 和一段宽幅风景描述，返回 1568×672 的 PNG（约 105 万像素，比例由模型选定），`usage.output_tokens` 为 4116。multipart 编辑同样转发 `area`（上表第三行的编辑返回 2048×2048）。1K 这张图的输出 token 与 2K 档的起点（约 4096）接近，所以 `auto` 选 2K。本轮没有测透明背景和 mask 的上游行为（插件在发出前拒绝）、4K 档、多张参考图和 5 分钟以上的请求。
+
+同日用同一把 Key 回归 `gpt-image-2.6-flare` 的 `low`：生图 34.1 秒、编辑 48.5 秒，都成功，响应回报 `model: gpt-image-2.6-flare` 和 `quality: low`；请求的是 `1024x1024`，两次返回的 PNG 都是 1254×1254（2026-11-05 同样的请求返回 1024×1024）。GPT Image 的请求字段本次没有改动。
+
+### 图片 Key 的分组（2026-11-11）
+
+图片 Key 所在分组决定它能用哪些型号：`gpt-image-*` 同时列在 `image` 和 `image-sale`，MiniMax 两款只列在 `image`。桌面对话里用 `image-sale` 的 Key 选 MiniMax 生图时，工具返回分组提示，对话模型（DeepSeek Flash）随即自行换了型号重试，这违背「不自动换型号」。因此：
+
+- 插件对图片 Key 复用对话 Key 的分组读取器（`createGroupReader`，`modelIds` 传图片型号）：向 `/v1/chat/completions` 发一个网关无法路由的模型名，从拒绝文本里读出分组；读 `/v1/models` 得到这把 Key 能用的模型；读公开的 `/api/pricing` 得到每个型号所在的分组。三个读取都不计费、有超时、拒绝重定向，返回浏览器的只有分组名、分组说明和每个型号的布尔值。
+- 实测（Key 在 `image` 分组）：拒绝文本为 `分组 image 下模型 dsh-packycode-group-probe 无可用渠道（distributor）`，`/v1/models` 列出 `MiniMax-H3-Image`、`MiniMax-H3-Image-Highspeed`、`gpt-image-2`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`，已构建的读取器 2.7 秒读完，五个型号都判为可用。
+- `/api/pricing` 的内容随请求出口变化：同一时刻从本机直连只返回 42 个模型、13 个分组，没有 Claude 和 `gpt-image-*`，也没有 `image-sale`；经代理返回 85 个模型、26 个分组。所以型号是否可用以「分组命中」或「`/v1/models` 列出」任一为准，只有两者都有反证时才判为不可用；定价里查不到型号时，设置卡不显示「需要分组」。
+- 设置卡在每个图片 Key 下显示分组；型号列表只列当前使用的 Key 可用的型号，下方说明被隐藏的型号；已保存的型号若不可用，保留在列表里并标注，另给警告，不自动改设置。分组没读到时不隐藏任何型号。图片请求只用当前使用的 Key，不会换到另一把 Key。

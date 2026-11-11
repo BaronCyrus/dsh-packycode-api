@@ -146,7 +146,7 @@ test('Anthropic server tools retain their defined names', async t => {
   assert.match(body.tools[1].name, /^mcp__dsh__/u)
 })
 
-for (const id of ['claude-sonnet-5-5', 'claude-opus-5-5']) test(`${id} exposes CLI progress updates with the required beta and preserves explicit summary requests`, async t => {
+for (const id of ['claude-fable-5-2', 'claude-sonnet-5-5', 'claude-opus-5-5']) test(`${id} exposes CLI progress updates with the required beta and preserves explicit summary requests`, async t => {
   const requests = []
   t.mock.method(globalThis, 'fetch', async (input, init) => { const request = new Request(input, init); const body = await request.json(); requests.push({ body, headers: request.headers }); return anthropicStream(body.model) })
   const provider = hostProvider(createPackyCodeProvider()), model = provider.getModels().find(m => m.id === id)

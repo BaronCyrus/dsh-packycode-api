@@ -16,7 +16,7 @@ import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
 import { CLAUDE_SCENARIO_VERSION, createBusinessScenario, matchesBusinessAnswer, matchesPlan, PLAN_POLICY } from './claude-scenarios.mjs'
 
-export const CLAUDE_MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+export const CLAUDE_MODELS = Object.freeze(['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 export const CLAUDE_CHECK_KINDS = Object.freeze(['text', 'tool', 'image', 'title', 'plan'])
 const BASE_SYSTEM = 'You are an assistant inside DeepSeek Harness. Follow the user request using only the supplied DSH tools.'
 

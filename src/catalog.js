@@ -11,8 +11,8 @@
  *   ends early. So every model pins the protocol its vendor serves here.
  *
  * Effort levels come from each vendor's documentation, because an effort the
- * model does not support is refused before the request is sent: Claude Opus
- * 5.5 (platform.claude.com effort docs), GPT-6.1 Sol, GPT-6.1 Terra, GPT-6
+ * model does not support is refused before the request is sent: Claude Fable
+ * 5.2 and Opus 5.5 (platform.claude.com effort docs), GPT-6.1 Sol, GPT-6.1 Terra, GPT-6
  * Astra and GPT-5.6 Sol `reasoning.effort` (developers.openai.com model
  * pages), DeepSeek thinking mode (`low|high|max` effort, or off, for Flash
  * and V4 Pro alike), Grok 4.7
@@ -60,7 +60,7 @@ const DEEPSEEK_LEVELS = Object.freeze({
 })
 
 /**
- * Claude 5.5 models, GPT-6.1 Sol, and GPT-6 Astra cannot disable reasoning, so `off` is
+ * Claude Fable 5.2, the Claude 5.5 models, GPT-6.1 Sol, and GPT-6 Astra cannot disable reasoning, so `off` is
  * pinned unsupported; GPT-5.6 Sol is kept on the same levels. Claude effort is
  * sent through the native Messages API.
  */
@@ -288,6 +288,28 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_048_576,
     maxTokens: 65_536,
     thinkingLevelMap: GEMINI_LEVELS,
+  }),
+  Object.freeze({
+    // platform.claude.com/docs/en/models/fable-5-2/overview: 1M context (the
+    // default and the maximum) and 128K output; thinking is always on and
+    // adaptive, `output_config.effort` low | medium | high | xhigh | max is
+    // the only depth control, and temperature is rejected. PackyCode lists
+    // it with the `anthropic` endpoint alone, in every Claude group.
+    id: 'claude-fable-5-2',
+    name: 'Claude Fable 5.2',
+    api: 'anthropic-messages',
+    provider: PROVIDER,
+    baseUrl: MESSAGES_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    thinkingLevelMap: ALWAYS_THINKING_LEVELS,
+    compat: Object.freeze({
+      forceAdaptiveThinking: true,
+      supportsTemperature: false,
+    }),
   }),
   Object.freeze({
     id: 'claude-opus-5-5',

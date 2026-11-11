@@ -34,6 +34,7 @@ const TITLE_MODELS = Object.freeze({
   'deepseek-v4-pro': 'deepseek-flash',
   'gpt-6-astra': 'gpt-6.1-sol',
   'gpt-5.6-sol': 'gpt-6.1-sol',
+  'claude-fable-5-2': 'claude-haiku-5-5',
   'claude-opus-5-5': 'claude-haiku-5-5',
   'claude-sonnet-5-5': 'claude-haiku-5-5',
 })

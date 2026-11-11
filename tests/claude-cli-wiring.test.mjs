@@ -15,7 +15,7 @@ const FAKE_CLI = fileURLToPath(new URL('./fixtures/fake-claude-agent.mjs', impor
 const CC_KEY = 'sk-wiring-cc-key-AAAA'
 const SALE_KEY = 'sk-wiring-cc-sale-key-BBBB'
 const GROUPS = { [CC_KEY]: ['cc', 'codex'], [SALE_KEY]: ['cc-sale'] }
-const CLAUDE = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
+const CLAUDE = ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 /** A DSH step always offers its tools; a request without any is no agent's step. */
 const TOOLS = [{ name: 'bash', description: 'Run a shell command.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } }]
 

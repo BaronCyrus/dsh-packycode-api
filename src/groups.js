@@ -87,13 +87,15 @@ export function parseSelectedGroups(message) {
  * Normalize `/api/pricing`: the groups each covered model is enabled in, and
  * each group's public description.
  * @param payload - the parsed pricing body.
+ * @param modelIds - the models to keep: the conversation catalog's, or the
+ *   image engines' for the image key ring.
  * @returns `{ modelGroups, descriptions }`, or undefined when unrecognized.
  */
-export function parsePricing(payload) {
+export function parsePricing(payload, modelIds = PACKYCODE_COVERED_MODEL_IDS) {
   if (!record(payload) || !Array.isArray(payload.data)) return undefined
   const modelGroups = {}
   for (const item of payload.data) {
-    if (!record(item) || !PACKYCODE_COVERED_MODEL_IDS.includes(item.model_name) || !Array.isArray(item.enable_groups)) continue
+    if (!record(item) || !modelIds.includes(item.model_name) || !Array.isArray(item.enable_groups)) continue
     modelGroups[item.model_name] = [...new Set(item.enable_groups.filter(name => typeof name === 'string' && GROUP_NAME.test(name)))].sort()
   }
   const descriptions = {}
@@ -111,12 +113,13 @@ export function parsePricing(payload) {
  * Which covered models a key can reach. Either source decides: a model the
  * key's groups are enabled for, or one its model list shows. A model is only
  * marked unreachable on evidence; with neither source it is left unknown.
- * @param options - the key's groups, its model ids, and pricing's model groups.
+ * @param options - the key's groups, its model ids, pricing's model groups,
+ *   and the models to decide (the conversation catalog's by default).
  * @returns covered model id → reachable, for the models with evidence.
  */
-export function catalogCoverage({ groups, models, modelGroups }) {
+export function catalogCoverage({ groups, models, modelGroups, modelIds = PACKYCODE_COVERED_MODEL_IDS }) {
   const coverage = {}
-  for (const id of PACKYCODE_COVERED_MODEL_IDS) {
+  for (const id of modelIds) {
     const enabled = modelGroups?.[id]
     const byGroups = groups === undefined || enabled === undefined ? undefined : enabled.some(name => groups.includes(name))
     const byModels = models === undefined ? undefined : models.has(id)
@@ -147,12 +150,15 @@ function errorMessage(text) {
 
 /**
  * Cached, single-flight group reader.
- * @param options - key listing, host resolution, and transport knobs.
+ * @param options - key listing, host resolution, the models whose coverage
+ *   is read (`modelIds`: the conversation catalog's by default, the image
+ *   engines' for the image key ring), and transport knobs.
  * @returns `{ read, snapshot, covers, requiredGroups, invalidate }`.
  */
 export function createGroupReader({
   listKeys,
   getHosts,
+  modelIds = PACKYCODE_COVERED_MODEL_IDS,
   fetchImpl = ambientFetch,
   now = Date.now,
   ttlMs = DEFAULT_GROUP_TTL_MS,
@@ -173,7 +179,7 @@ export function createGroupReader({
       try {
         const response = await request(`${host}/api/pricing`, { headers: { Accept: 'application/json' } }, signal)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const pricing = parsePricing(await response.json())
+        const pricing = parsePricing(await response.json(), modelIds)
         if (pricing === undefined) throw new Error('unrecognized pricing payload')
         return pricing
       } catch (error) {
@@ -252,13 +258,13 @@ export function createGroupReader({
       if (value?.rejected === true) {
         // Evidence, not a failed read: a rejected key reaches nothing.
         lastGood.delete(entry.id)
-        return { id: entry.id, rejected: true, coverage: Object.fromEntries(PACKYCODE_COVERED_MODEL_IDS.map(id => [id, false])), error: new RejectedKeyError().message }
+        return { id: entry.id, rejected: true, coverage: Object.fromEntries(modelIds.map(id => [id, false])), error: new RejectedKeyError().message }
       }
       if (value !== undefined) {
         const reading = {
           id: entry.id,
           ...(value.groups === undefined ? {} : { groups: value.groups }),
-          coverage: catalogCoverage({ groups: value.groups, models: value.models, modelGroups: pricing?.modelGroups }),
+          coverage: catalogCoverage({ groups: value.groups, models: value.models, modelGroups: pricing?.modelGroups, modelIds }),
         }
         lastGood.set(entry.id, { value: reading, fetchedAt: now() })
         return reading

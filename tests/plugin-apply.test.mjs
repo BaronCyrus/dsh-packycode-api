@@ -78,7 +78,7 @@ test('registers one route and one directory entry, and defers the browser surfac
   // DSH 0.2.1 lists a route's models only once its key resolves.
   await new PackyCodeKeyRing(ctx.credentials).add('sk-apply-listing-fixture', 'listing')
   const models = await registered.adapters[0].adapter.listModels('packycode')
-  assert.deepEqual(models.map(model => model.id), ['deepseek-flash', 'deepseek-v4-pro', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol', 'grok-4.7', 'hy4', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+  assert.deepEqual(models.map(model => model.id), ['deepseek-flash', 'deepseek-v4-pro', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol', 'grok-4.7', 'hy4', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
 
   assert.deepEqual(registered.directories[0], [{
     provider: 'packycode',
@@ -153,14 +153,14 @@ test('Claude turns on a key outside the CLI-only groups stay on HTTP, ignoring 1
     requests.push(body)
     return anthropicStream(body.model)
   })
-  for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  for (const model of ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     const prepared = await registered.adapters[0].adapter.prepareCall('packycode', model)
     const chunks = []
     for await (const chunk of prepared.stream({ provider: 'packycode', model, maxTokens: 2048, messages: [{ role: 'user', content: [{ type: 'text', text: 'ok' }] }] })) chunks.push(chunk)
     assert.equal(chunks.at(-1).reason.kind, 'stop')
     assert.equal(requests.at(-1).model, model)
   }
-  assert.equal(requests.length, 3)
+  assert.equal(requests.length, 4)
 })
 
 test('the registered route clarifies only the initiating session cwd and follows later directory changes', async t => {

@@ -326,9 +326,12 @@ export function apply(ctx, config) {
   const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== ''
     ? process.env.DSH_HOME
     : join(homedir(), '.dsh')
+  /** The image keys' groups, read when the settings card asks: an engine may be listed in `image` and not in `image-sale`. */
+  const imageGroups = createGroupReader({ listKeys: () => imageRing.secrets(), getHosts: hosts, modelIds: IMAGE_MODEL_IDS })
   const images = createImageController({
     ring: imageRing,
     balance: imageBalance,
+    groups: imageGroups,
     readPreference: () => source() ?? {},
     writePreference: patch => imagePreference.set(patch),
     isWritable: () => imagePreference.writable === true && typeof imagePreference.set === 'function',
@@ -390,6 +393,7 @@ export function apply(ctx, config) {
       balance.invalidate()
       imageBalance.invalidate()
       groups.invalidate()
+      imageGroups.invalidate()
       modelSelection.reconcile()
       void images.reconcile().catch(() => undefined)
       void search.reconcile()

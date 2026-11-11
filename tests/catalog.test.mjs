@@ -9,7 +9,7 @@ import { DEFAULT_API_HOST, DEFAULT_REASONING_LEVEL, PROVIDER } from '../src/cons
 const byId = id => PACKYCODE_MODELS.find(model => model.id === id)
 
 test('ships the configured model ids in picker order', () => {
-  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'deepseek-v4-pro', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol', 'grok-4.7', 'hy4', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'deepseek-v4-pro', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol', 'grok-4.7', 'hy4', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
   for (const model of PACKYCODE_MODELS) assert.equal(model.provider, PROVIDER)
 })
 
@@ -54,8 +54,8 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
   assert.equal(byId('gpt-5.6-sol').baseUrl, `${DEFAULT_API_HOST}/v1`)
   assert.equal(byId('gpt-5.6-sol').contextWindow, 1_050_000)
   assert.equal(byId('gpt-5.6-sol').maxTokens, 128_000)
-  // platform.claude.com: every Claude 5.5 model, Haiku included, has a 1M context and 128K output.
-  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  // platform.claude.com: Claude Fable 5.2 and every Claude 5.5 model, Haiku included, have a 1M context and 128K output.
+  for (const id of ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).contextWindow, 1_000_000, id)
     assert.equal(byId(id).maxTokens, 128_000, id)
   }
@@ -85,7 +85,7 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
   assert.equal(byId('gemini-3.8-flash').contextWindow, 1_048_576)
   assert.equal(byId('gemini-3.8-flash').maxTokens, 65_536)
   // Anthropic traffic carries no /v1: the Anthropic client appends /v1/messages.
-  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  for (const id of ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).api, 'anthropic-messages')
     assert.equal(byId(id).baseUrl, DEFAULT_API_HOST)
   }
@@ -106,7 +106,7 @@ test("offers each vendor's documented effort levels", () => {
   assert.deepEqual(getSupportedThinkingLevels(byId('hy4')), ['off', 'high'])
   assert.deepEqual(getSupportedThinkingLevels(byId('gemini-4-argon')), ['low', 'medium', 'high'])
   assert.deepEqual(getSupportedThinkingLevels(byId('gemini-3.8-flash')), ['low', 'medium', 'high'])
-  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  for (const id of ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.deepEqual(getSupportedThinkingLevels(byId(id)), ['low', 'medium', 'high', 'xhigh', 'max'])
   }
 })
@@ -127,8 +127,8 @@ test('declares the wire dialect each protocol needs', () => {
     assert.equal(byId(id).compat, undefined, id)
     assert.equal(byId(id).thinkingLevelMap.off, undefined, id)
   }
-  // Claude 5.x always thinks adaptively and rejects temperature.
-  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+  // Claude Fable 5.2 and the 5.5 models always think adaptively and reject temperature.
+  for (const id of ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).compat.forceAdaptiveThinking, true)
     assert.equal(byId(id).compat.supportsTemperature, false)
   }

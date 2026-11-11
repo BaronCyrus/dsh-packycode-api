@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { IMAGE_MODELS, validateImageOptions } from '../src/image-models.js'
+import { IMAGE_MODELS, isMiniMaxImageModel, validateImageOptions } from '../src/image-models.js'
 import { createPackyCodeImageClient, createPackyCodeImageTool, decodeImagePng, IMAGE_TOOL_NAME } from '../src/images.js'
 import { JPEG, WEBP } from './fixtures/images.mjs'
 
@@ -15,9 +15,10 @@ const REF = { attachmentId: `sha256:${'a'.repeat(64)}`, mediaType: 'image/png', 
 const imageResponse = (extra = {}) => new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }], ...extra }), { headers: { 'content-type': 'application/json' } })
 const args = { prompt: 'A blue teapot', model: 'gpt-image-2.6-sunburst', quality: 'max' }
 const client = (options = {}) => createPackyCodeImageClient({ resolveKey: async () => ({ key: KEY }), getHost: () => 'https://gateway.invalid', ...options })
+const MINIMAX = ['MiniMax-H3-Image', 'MiniMax-H3-Image-Highspeed']
 
 test('generation sends the exact model-specific quality and no legacy or reasoning fields', async () => {
-  for (const [model, qualities] of Object.entries(IMAGE_MODELS)) {
+  for (const [model, qualities] of Object.entries(IMAGE_MODELS).filter(([model]) => !isMiniMaxImageModel(model))) {
     for (const quality of qualities) {
       let request
       const value = await client({ fetchImpl: async (url, init) => { request = { url, ...init }; return imageResponse({ model, quality }) } }).request({ ...args, model, quality })
@@ -30,6 +31,78 @@ test('generation sends the exact model-specific quality and no legacy or reasoni
       assert.equal(JSON.stringify(value).includes(KEY), false)
     }
   }
+})
+
+test('MiniMax H3 Image is asked for a PNG as base64 at an explicit size, without quality or background', async () => {
+  assert.deepEqual(Object.keys(IMAGE_MODELS).filter(isMiniMaxImageModel), MINIMAX)
+  for (const model of MINIMAX) {
+    assert.deepEqual([...IMAGE_MODELS[model]], ['auto'])
+    const requests = []
+    const api = client({ fetchImpl: async (url, init) => { requests.push({ url, ...init }); return imageResponse({ output_format: 'png' }) } })
+    // MiniMax renders 4K when no tier is given, so `auto` carries the 2K area.
+    const automatic = await api.request({ prompt: args.prompt, model })
+    assert.equal(requests[0].url, 'https://gateway.invalid/v1/images/generations')
+    assert.equal(requests[0].redirect, 'error')
+    assert.equal(requests[0].headers.authorization, `Bearer ${KEY}`)
+    assert.deepEqual(JSON.parse(requests[0].body), { model, prompt: args.prompt, n: 1, size: 'auto', area: '2K', output_format: 'png', response_format: 'b64_json' })
+    assert.deepEqual([automatic.requestedModel, automatic.requestedQuality, automatic.requestedSize, automatic.quality], [model, 'auto', 'auto', undefined])
+    // An explicit size goes without `area`, which MiniMax refuses beside it; nothing else is added.
+    await api.request({ prompt: args.prompt, model, quality: 'auto', size: '2720x1536', background: 'opaque' })
+    assert.deepEqual(JSON.parse(requests[1].body), { model, prompt: args.prompt, n: 1, size: '2720x1536', output_format: 'png', response_format: 'b64_json' })
+    assert.equal(JSON.stringify(automatic).includes(KEY), false)
+  }
+})
+
+test('MiniMax H3 Image refuses a quality, a transparent background and a mask before any request', async () => {
+  let calls = 0
+  const api = client({ fetchImpl: async () => { calls += 1; return imageResponse() } })
+  for (const model of MINIMAX) {
+    for (const quality of ['low', 'medium', 'high', 'xhigh', 'max']) await assert.rejects(() => api.request({ prompt: args.prompt, model, quality }), /quality is not supported by the selected model/u)
+    await assert.rejects(() => api.request({ prompt: args.prompt, model, background: 'transparent' }), /transparent background is not supported by the selected model/u)
+    await assert.rejects(() => api.request({ prompt: args.prompt, model }, { images: [{ data: PNG, ...REF }], mask: { data: PNG, mediaType: 'image/png' } }), /masks are not supported by the selected model/u)
+    for (const size of ['1025x1024', '4096x4096', '4096x1024']) await assert.rejects(() => api.request({ prompt: args.prompt, model, size }), /supported widthxheight/u)
+  }
+  assert.equal(calls, 0)
+})
+
+test('MiniMax H3 Image edits upload the references as multipart without quality, background or mask', async t => {
+  let captured
+  const server = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    captured = { url: request.url, headers: request.headers, body: Buffer.concat(chunks).toString('latin1') }
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ data: [{ b64_json: PNG.toString('base64'), size: '2048x2048' }], output_format: 'png' }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  const host = `http://127.0.0.1:${server.address().port}/v1`
+  await client({ getHost: () => host }).request({ prompt: args.prompt, model: 'MiniMax-H3-Image-Highspeed' }, { images: [{ data: PNG, ...REF }, { data: JPEG, mediaType: 'image/jpeg', width: 1, height: 1 }] })
+  assert.equal(captured.url, '/v1/images/edits')
+  assert.equal(captured.headers.authorization, `Bearer ${KEY}`)
+  assert.match(captured.headers['content-type'], /^multipart\/form-data; boundary=/u)
+  assert.match(captured.body, /name="model"\r\n\r\nMiniMax-H3-Image-Highspeed\r\n/u)
+  assert.match(captured.body, /name="size"\r\n\r\nauto\r\n/u)
+  assert.match(captured.body, /name="area"\r\n\r\n2K\r\n/u)
+  assert.match(captured.body, /name="output_format"\r\n\r\npng\r\n/u)
+  assert.match(captured.body, /name="response_format"\r\n\r\nb64_json\r\n/u)
+  assert.match(captured.body, /name="image\[\]"; filename="reference-1.png"/u)
+  assert.match(captured.body, /name="image\[\]"; filename="reference-2.jpg"/u)
+  assert.doesNotMatch(captured.body, /name="(?:quality|background|mask|aspect_ratio)"/u)
+})
+
+test('a key whose group does not serve the image model is told so, without the gateway text', async () => {
+  let calls = 0
+  const refusal = () => new Response(JSON.stringify({ error: { code: 'model_not_found', message: `分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道（distributor） ${KEY}`, type: 'packy_api_error' } }), { status: 503 })
+  await assert.rejects(() => client({ fetchImpl: async () => { calls += 1; return refusal() } }).request({ prompt: args.prompt, model: 'MiniMax-H3-Image' }), error => {
+    assert.match(error.message, /group that does not serve the selected image model/u)
+    // The calling model once answered this refusal by switching engines on its own.
+    assert.match(error.message, /Do not retry with another model/u)
+    assert.equal(error.message.includes(KEY), false)
+    assert.equal(error.message.includes('image-sale'), false)
+    return true
+  })
+  assert.equal(calls, 1)
 })
 
 test('invalid model, quality, size, prompt and mask are rejected before any network request', async () => {
@@ -210,6 +283,34 @@ test('settings sentinels follow saved image preferences while explicit overrides
   const explicit = await tool.execute({ prompt: args.prompt, model: 'gpt-image-2', quality: 'auto' }, exec)
   assert.equal(explicit.requestedModel, 'gpt-image-2')
   assert.equal(explicit.requestedQuality, 'auto')
+})
+
+test('an engine without a quality parameter does not inherit the quality saved for another engine', async t => {
+  const { tool, exec, calls } = await toolFixture(t)
+  // The saved setting is 2.6 Sunburst at max; MiniMax named for this call takes no quality.
+  for (const quality of [undefined, 'settings', 'auto']) {
+    const value = await tool.execute({ prompt: args.prompt, model: 'MiniMax-H3-Image', ...(quality === undefined ? {} : { quality }) }, exec)
+    assert.deepEqual([value.requestedModel, value.requestedQuality], ['MiniMax-H3-Image', 'auto'])
+    assert.equal(Object.hasOwn(JSON.parse(calls.at(-1).init.body), 'quality'), false)
+  }
+  // An explicit quality it does not have is still refused, and so is a saved
+  // quality on an engine that has qualities but not that one.
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, model: 'MiniMax-H3-Image', quality: 'max' }, exec), /quality is not supported by the selected model/u)
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, model: 'gpt-image-2' }, exec), /quality is not supported by the selected model/u)
+  assert.equal(calls.length, 3)
+})
+
+test('a real PNG mask on a MiniMax H3 Image edit is refused, never dropped or turned into a generation', async t => {
+  const MASK = { ...REF, attachmentId: `sha256:${'b'.repeat(64)}`, name: 'mask.png' }
+  const { tool, exec, calls } = await toolFixture(t, { getSessionMessages: async () => [{ content: [{ type: 'image', attachment: REF }, { type: 'image', attachment: MASK }] }] })
+  await assert.rejects(() => tool.execute({ prompt: args.prompt, model: 'MiniMax-H3-Image', referenceImages: [REF], maskImage: MASK }, exec), /masks are not supported by the selected model/u)
+  assert.equal(calls.length, 0)
+  // The same edit without the mask goes to the edits endpoint.
+  await tool.execute({ prompt: args.prompt, model: 'MiniMax-H3-Image', referenceImages: [REF], maskImage: null }, exec)
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].url, /\/images\/edits$/u)
+  assert.equal(calls[0].init.body.get('mask'), null)
+  assert.deepEqual([calls[0].init.body.get('size'), calls[0].init.body.get('area')], ['auto', '2K'])
 })
 
 test('DSH edits resolve trusted session references rather than model-supplied metadata', async t => {
