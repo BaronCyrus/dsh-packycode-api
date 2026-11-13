@@ -33,9 +33,9 @@ const snapshot = (overrides = {}) => ({
   ...overrides,
 })
 
-test('jev-latest is a classifier the picker never lists, reached over System One', () => {
+test('jev-1.14.0 is a classifier the picker never lists, reached over System One', () => {
   assert.deepEqual(PACKYCODE_CLASSIFIER_MODELS.map(model => [model.id, model.type, model.api, model.contextWindow]), [
-    ['jev-latest', 'classifier', 'typesafe-system-one', 64_000],
+    ['jev-1.14.0', 'classifier', 'typesafe-system-one', 64_000],
   ])
   assert.equal(PACKYCODE_MODEL_IDS.includes(AUTO_REVIEW_JEV), false)
   assert.equal(PACKYCODE_MODEL_IDS.includes(AUTO_REVIEW_FLASH), true)
@@ -108,7 +108,7 @@ test('Jev\'s answers become the official decision', () => {
   assert.deepEqual(Object.values(decideFromJev(jevBody({ low: 0.02, medium: 0.98, authorized: 0.9 }))).slice(0, 2), ['allow', 'medium'])
   const unasked = decideFromJev(jevBody({ low: 0.02, medium: 0.98, authorized: 0.05 }))
   assert.deepEqual([unasked.decision, unasked.risk], ['deny', 'medium'])
-  assert.match(unasked.reason, /^jev-latest 判定为中风险操作/u)
+  assert.match(unasked.reason, /^jev-1\.14\.0 判定为中风险操作/u)
   // High risk blocks even when explicitly requested, and even when low leads.
   assert.deepEqual(Object.values(decideFromJev(jevBody({ high: 0.9, medium: 0.1, low: 0, authorized: 0.95 }))).slice(0, 2), ['deny', 'high'])
   assert.deepEqual(Object.values(decideFromJev(jevBody({ high: 0.25, medium: 0, low: 0.75 }))).slice(0, 2), ['deny', 'high'])
@@ -152,7 +152,7 @@ test('a Jev review asks System One with the plugin\'s own key, the official poli
   assert.equal(decision.decision, 'allow')
   assert.equal(typeof decision.keyId, 'string')
   const [request] = seen
-  assert.deepEqual([request.url, request.auth, request.redirect, request.body.model], ['https://gw.example/v1/systemone', 'Bearer sk-reviewkey-0001', 'error', 'jev-latest'])
+  assert.deepEqual([request.url, request.auth, request.redirect, request.body.model], ['https://gw.example/v1/systemone', 'Bearer sk-reviewkey-0001', 'error', AUTO_REVIEW_JEV])
   assert.equal(request.body.state.policy, OFFICIAL_POLICY)
   assert.deepEqual(Object.keys(request.body.questions), ['risk', 'authorized'])
 })
@@ -166,7 +166,7 @@ test('a key whose group lacks Jev is passed over, and an exhausted key moves asi
     onKeyFailure: (kind, _message, key) => failures.push([kind, key.slice(-4)]),
     fetchImpl: async (_url, init) => {
       const key = init.headers.authorization.slice(-4)
-      if (key === '0001') return respond(503, { error: { message: '分组 deepseek-officially 下模型 jev-latest 无可用渠道（distributor）' } })
+      if (key === '0001') return respond(503, { error: { message: '分组 deepseek-officially 下模型 jev-1.14.0 无可用渠道（distributor）' } })
       if (key === '0002') return respond(403, { error: { message: '用户额度不足, 剩余额度: $0.00' } })
       return respond(200, jevBody({ high: 0.9, medium: 0.1, low: 0 }))
     },
@@ -203,7 +203,7 @@ test('a review without keys, with only uncovered keys, or with a malformed answe
     fetchImpl: async () => respond(400, { error: { message: 'model_not_found for sk-secretvalue-9999' } }),
   })
   const error = await uncovered.review(OFFICIAL_POLICY, SECTIONS).catch(failure => failure)
-  assert.match(error.message, /no stored API key's group covers jev-latest/u)
+  assert.match(error.message, /no stored API key's group covers jev-1\.14\.0/u)
   assert.equal(error.message.includes('sk-secretvalue-9999'), false)
   const malformed = createJevReviewer({ ring, hosts: () => ({ apiHost: 'x' }), fetchImpl: async () => respond(200, { answers: {} }) })
   await assert.rejects(malformed.review(OFFICIAL_POLICY, SECTIONS), /no risk answer/u)

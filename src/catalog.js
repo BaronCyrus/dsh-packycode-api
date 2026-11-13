@@ -377,12 +377,14 @@ export const PACKYCODE_MODEL_IDS = Object.freeze(PACKYCODE_MODELS.map(model => m
  * JSON state over the System One protocol, which PackyCode lists as the
  * `systemone` endpoint (`POST /v1/systemone`) in the `typesafe-officially`
  * group. Auto review asks it whether a tool call may run. The descriptor
- * follows pi-ai's own TypeSafe catalog entry (64K context, text only).
+ * follows pi-ai's own TypeSafe catalog entry (64K context, text only), and
+ * the id is the version PackyCode publishes, since it no longer lists a
+ * `jev-latest` alias.
  */
 export const PACKYCODE_CLASSIFIER_MODELS = Object.freeze([
   Object.freeze({
     type: 'classifier',
-    id: 'jev-latest',
+    id: 'jev-1.14.0',
     name: 'Jev',
     api: 'typesafe-system-one',
     provider: PROVIDER,

@@ -28,7 +28,7 @@ const PRICING = {
     { model_name: 'claude-haiku-5-5', enable_groups: ['claude-officially', 'cc'] },
     { model_name: 'grok-4.6', enable_groups: ['grok-sale'] },
     { model_name: 'hy4', enable_groups: ['hunyuan-officially'], supported_endpoint_types: ['anthropic', 'openai', 'openai-response'] },
-    { model_name: 'jev-latest', enable_groups: ['typesafe-officially'], supported_endpoint_types: ['systemone'] },
+    { model_name: 'jev-1.14.0', enable_groups: ['typesafe-officially'], supported_endpoint_types: ['systemone'] },
   ],
   usable_group: { cc: 'claude code专用', codex: 'codex专用', 'kimi-sale': ' 便宜的kimi分组，非逆向', '<script>': 'x' },
 }
@@ -83,9 +83,9 @@ test('a reading that could not reach a key is retried after a short wait, not af
 
 test('pricing keeps the catalog models\' groups and each group\'s description', () => {
   const pricing = parsePricing(PRICING)
-  // jev-latest is not in the picker, but auto review asks it, so its group counts.
-  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6-astra', 'gpt-6.1-sol', 'hy4', 'jev-latest'])
-  assert.deepEqual(pricing.modelGroups['jev-latest'], ['typesafe-officially'])
+  // jev-1.14.0 is not in the picker, but auto review asks it, so its group counts.
+  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6-astra', 'gpt-6.1-sol', 'hy4', 'jev-1.14.0'])
+  assert.deepEqual(pricing.modelGroups['jev-1.14.0'], ['typesafe-officially'])
   assert.deepEqual(pricing.modelGroups.hy4, ['hunyuan-officially'])
   assert.deepEqual(pricing.modelGroups['claude-haiku-5-5'], ['cc', 'claude-officially'])
   assert.deepEqual(pricing.descriptions, { cc: 'claude code专用', codex: 'codex专用', 'kimi-sale': '便宜的kimi分组，非逆向' })
@@ -104,10 +104,10 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,
-    'jev-latest': false,
+    'jev-1.14.0': false,
   })
   // Only typesafe-officially reaches Jev, and only hunyuan-officially Hy4.
-  assert.equal(catalogCoverage({ groups: ['typesafe-officially'], modelGroups })['jev-latest'], true)
+  assert.equal(catalogCoverage({ groups: ['typesafe-officially'], modelGroups })['jev-1.14.0'], true)
   assert.equal(catalogCoverage({ groups: ['codex-sale', 'hunyuan-officially'], modelGroups }).hy4, true)
   // cc-sale serves Fable, Opus and Sonnet but not Haiku.
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-haiku-5-5'], false)
@@ -132,7 +132,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'claude-opus-5-5': false,
     'claude-sonnet-5-5': false,
     'claude-haiku-5-5': false,
-    'jev-latest': false,
+    'jev-1.14.0': false,
   })
 })
 

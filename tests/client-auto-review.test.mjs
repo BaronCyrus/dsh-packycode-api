@@ -13,12 +13,12 @@ const settle = () => act(async () => { await new Promise(resolve => setImmediate
 const text = node => typeof node === 'string' ? node : node.children.map(text).join('')
 const fill = (template, values) => template.replace(/\{(\w+)\}/gu, (match, name) => values[name] === undefined ? match : String(values[name]))
 
-const MODELS = [{ id: 'jev-latest', name: 'jev-latest' }, { id: 'deepseek-flash', name: 'DeepSeek Flash' }, { id: 'session', name: 'session model' }]
+const MODELS = [{ id: 'jev-1.14.0', name: 'jev-1.14.0' }, { id: 'deepseek-flash', name: 'DeepSeek Flash' }, { id: 'session', name: 'session model' }]
 
 /** The built settings page against a channel that answers the auto review endpoints. */
 async function reviewFixture(t, status, groups = { keys: [], descriptions: {} }) {
   const calls = []
-  let current = { model: 'jev-latest', models: MODELS, writable: true, official: { enabled: true, offered: true }, counts: { reviewed: 0, allowed: 0, denied: 0, failed: 0 }, ...status }
+  let current = { model: 'jev-1.14.0', models: MODELS, writable: true, official: { enabled: true, offered: true }, counts: { reviewed: 0, allowed: 0, denied: 0, failed: 0 }, ...status }
   const answers = {
     status: () => ({ activeId: null, writable: true, hosts: {}, defaults: {}, keys: [] }),
     balance: () => ({ activeId: null, fetchedAt: 1, keys: [] }),
@@ -73,7 +73,7 @@ async function reviewFixture(t, status, groups = { keys: [], descriptions: {} })
 test('with DSH\'s auto review on, the card shows the reviewer and what it has answered', async t => {
   const page = await reviewFixture(t, {
     counts: { reviewed: 5, allowed: 3, denied: 1, failed: 1 },
-    last: { at: 1, outcome: 'denied', model: 'jev-latest', version: 'jev-1.14.0', tool: 'bash', ms: 352, risk: 'medium' },
+    last: { at: 1, outcome: 'denied', model: 'jev-1.14.0', version: 'jev-1.14.0', tool: 'bash', ms: 352, risk: 'medium' },
   })
   const body = text(page.card())
   assert.ok(body.includes(zh.reviewOfficialOn))
@@ -83,7 +83,7 @@ test('with DSH\'s auto review on, the card shows the reviewer and what it has an
   assert.ok(body.includes(fill(zh.reviewCounts, { reviewed: 5, allowed: 3, denied: 1, failed: 1 })))
   assert.ok(body.includes(fill(zh.reviewLast, { tool: 'bash', outcome: zh.reviewOutcomeDenied, model: 'jev-1.14.0', seconds: '0.4' })))
   assert.ok(body.includes(zh.reviewMenuNote), 'the card explains that the menu text is DSH\'s')
-  assert.equal(page.radio('jev-latest').props['aria-checked'], true)
+  assert.equal(page.radio('jev-1.14.0').props['aria-checked'], true)
   assert.ok(page.radio(zh.reviewModelSession), 'the session model is a choice')
 })
 
@@ -106,9 +106,9 @@ test('picking a reviewer writes only that preference', async t => {
 })
 
 test('the card warns when no key reaches the chosen reviewer', async t => {
-  const groups = { keys: [{ id: 'a', groups: ['cc', 'codex'], coverage: { 'jev-latest': false, 'deepseek-flash': true } }], descriptions: {} }
+  const groups = { keys: [{ id: 'a', groups: ['cc', 'codex'], coverage: { 'jev-1.14.0': false, 'deepseek-flash': true } }], descriptions: {} }
   const uncovered = await reviewFixture(t, {}, groups)
-  assert.ok(text(uncovered.card()).includes(fill(zh.reviewUncovered, { model: 'jev-latest' })))
+  assert.ok(text(uncovered.card()).includes(fill(zh.reviewUncovered, { model: 'jev-1.14.0' })))
   const covered = await reviewFixture(t, { model: 'deepseek-flash' }, groups)
   assert.equal(text(covered.card()).includes(fill(zh.reviewUncovered, { model: 'DeepSeek Flash' })), false)
   const session = await reviewFixture(t, { model: 'session' }, groups)
@@ -117,5 +117,5 @@ test('the card warns when no key reaches the chosen reviewer', async t => {
 
 test('each key\'s reach line lists Jev', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.match(source, /\["Jev", \["jev-latest"\]\]/u)
+  assert.match(source, /\["Jev", \["jev-1\.14\.0"\]\]/u)
 })

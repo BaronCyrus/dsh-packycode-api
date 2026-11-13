@@ -18,7 +18,7 @@ import { join } from 'node:path'
 
 import z from '@deepseek-ai/schemastery'
 
-import { AUTO_REVIEW_MODELS, createJevReviewer, DEFAULT_AUTO_REVIEW_MODEL } from './auto-review.js'
+import { AUTO_REVIEW_MODELS, createJevReviewer, DEFAULT_AUTO_REVIEW_MODEL, RETIRED_AUTO_REVIEW_MODELS } from './auto-review.js'
 import { createAutoReviewController } from './auto-review-controller.js'
 import { createBalanceReader } from './balance.js'
 import { createClaudeAgentBridge } from './claude-agent-tools.js'
@@ -86,10 +86,15 @@ export const Config = z.object({
   /** Path to the Claude Code CLI; empty means "the usual install places, then PATH". */
   claudeCliPath: live(z.string().default('')),
   /**
-   * Which model DSH's official 自动审查 reviews with: `jev-latest` or
-   * `deepseek-flash` through PackyCode, or `session` for its own default.
+   * Which model DSH's official 自动审查 reviews with: `jev-1.14.0` or
+   * `deepseek-flash` through PackyCode, or `session` for its own default. A
+   * retired reviewer value still parses as a hidden choice and reads as its
+   * successor, like a retired image engine.
    */
-  autoReviewModel: live(z.union([...AUTO_REVIEW_MODELS]).default(DEFAULT_AUTO_REVIEW_MODEL)),
+  autoReviewModel: live(z.union([
+    ...AUTO_REVIEW_MODELS,
+    ...Object.keys(RETIRED_AUTO_REVIEW_MODELS).map(id => z.const(id).hidden()),
+  ]).default(DEFAULT_AUTO_REVIEW_MODEL)),
 })
 
 export function apply(ctx, config) {
@@ -534,6 +539,7 @@ export {
   jevState,
   officialAnswer,
   readReviewSections,
+  RETIRED_AUTO_REVIEW_MODELS,
 } from './auto-review.js'
 export { AUTO_PRESET, createAutoReviewController, DSH_AUTO_REVIEW_ROW, readAutoReviewChoice } from './auto-review-controller.js'
 export { createBalanceReader, parseTokenUsage } from './balance.js'

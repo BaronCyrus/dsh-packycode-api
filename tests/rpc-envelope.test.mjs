@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { readAutoReviewChoice } from '../src/auto-review-controller.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeRpc } from '../src/rpc.js'
 import { createSearchController } from '../src/search-controller.js'
@@ -76,26 +77,32 @@ test('a credential store failure reaches the panel as the ring\'s own sentence',
   assert.equal(connectionFailure(await rpc('keys/remove-all', {})).message, 'PackyCode could not save the key change in DSH\'s credential store')
 })
 
-test('the auto review setting is volatile, defaults to jev-latest, and accepts only its three reviewers', () => {
+test('the auto review setting is volatile, defaults to jev-1.14.0, and keeps jev-latest as a retired choice', () => {
   assert.equal(Config.dict.autoReviewModel.meta.volatile, true)
   assert.equal(Object.hasOwn(Config.dict, 'autoReview'), false, 'DSH\'s own plugin switches auto review on and off')
-  assert.equal(fieldValue(Config({}).autoReviewModel), 'jev-latest')
+  assert.equal(fieldValue(Config({}).autoReviewModel), 'jev-1.14.0')
   for (const model of ['deepseek-flash', 'session']) assert.equal(fieldValue(Config({ autoReviewModel: model }).autoReviewModel), model)
+  // A saved jev-latest still parses (dropping it would fail the plugin Config) and reads as the versioned model.
+  const retired = Config({ autoReviewModel: 'jev-latest' })
+  assert.equal(fieldValue(retired.autoReviewModel), 'jev-latest')
+  assert.deepEqual(readAutoReviewChoice(retired), { model: 'jev-1.14.0' })
+  const offered = Config.dict.autoReviewModel.list.filter(item => item.meta?.hidden !== true).map(item => item.value)
+  assert.deepEqual(offered, ['jev-1.14.0', 'deepseek-flash', 'session'])
   assert.throws(() => Config({ autoReviewModel: 'gpt-6.1-sol' }))
 })
 
 test('the auto review endpoints pass only their own fields, and a refusal is a valid Connection failure', async () => {
   const seen = []
   const autoReview = {
-    status: () => ({ model: 'jev-latest' }),
+    status: () => ({ model: 'jev-1.14.0' }),
     update: async patch => {
       seen.push(patch)
       if (patch.autoReviewModel === 'gpt-6.1-sol') throw new Error('That PackyCode auto review model is not supported')
-      return { model: patch.autoReviewModel ?? 'jev-latest' }
+      return { model: patch.autoReviewModel ?? 'jev-1.14.0' }
     },
   }
   const rpc = createPackyCodeRpc({ autoReview })
-  assert.deepEqual(await rpc('auto-review/status', {}), { ok: true, value: { model: 'jev-latest' } })
+  assert.deepEqual(await rpc('auto-review/status', {}), { ok: true, value: { model: 'jev-1.14.0' } })
   const saved = await rpc('auto-review/update', { autoReviewModel: 'deepseek-flash', apiKey: 'sk-ignored' })
   assert.deepEqual(saved.value, { model: 'deepseek-flash' })
   assert.deepEqual(seen, [{ autoReviewModel: 'deepseek-flash' }])

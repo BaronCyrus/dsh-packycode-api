@@ -237,7 +237,7 @@ export const zh = {
   reviewOfficialOff: '官方自动审查未开启',
   reviewEnableHint: '还没有开启：在 DSH 左侧「插件」页找到「自动授权审查」并开启，然后在输入框的权限菜单里选「自动审查」。',
   reviewModelTitle: '审查模型',
-  reviewModelJev: 'jev-latest',
+  reviewModelJev: 'jev-1.14.0',
   reviewModelFlash: 'DeepSeek Flash',
   reviewModelSession: '跟随对话模型',
   reviewModelJevHint: 'TypeSafe 的决策分类模型，一次约 0.4 秒，只按输入计费；拒绝时只给出风险等级。需要 Key 的分组包含 typesafe-officially。',
@@ -249,7 +249,7 @@ export const zh = {
   reviewOutcomeAllowed: '放行',
   reviewOutcomeDenied: '拒绝',
   reviewOutcomeFailed: '失败',
-  reviewMenuNote: '权限菜单里「自动审查」的说明写的是「由同一模型审查」，那是 DSH 的文字；选了 jev-latest 或 DeepSeek Flash 时，实际由所选模型审查。审查失败时，官方会拒绝这次调用，不会执行。',
+  reviewMenuNote: '权限菜单里「自动审查」的说明写的是「由同一模型审查」，那是 DSH 的文字；选了 jev-1.14.0 或 DeepSeek Flash 时，实际由所选模型审查。审查失败时，官方会拒绝这次调用，不会执行。',
 }
 
 export const en = {
@@ -484,7 +484,7 @@ export const en = {
   reviewOfficialOff: 'Official auto review is off',
   reviewEnableHint: 'Not on yet: open DSH’s Plugins page in the sidebar, switch on “Auto authorization review”, then pick Auto review in the composer’s permission menu.',
   reviewModelTitle: 'Reviewer',
-  reviewModelJev: 'jev-latest',
+  reviewModelJev: 'jev-1.14.0',
   reviewModelFlash: 'DeepSeek Flash',
   reviewModelSession: 'Conversation model',
   reviewModelJevHint: 'TypeSafe’s decision classifier: about 0.4 s per review, billed by input only; a denial names only the risk level. Needs a key whose group includes typesafe-officially.',
@@ -496,5 +496,5 @@ export const en = {
   reviewOutcomeAllowed: 'allowed',
   reviewOutcomeDenied: 'denied',
   reviewOutcomeFailed: 'failed',
-  reviewMenuNote: 'The description under Auto review in the permission menu comes from DSH and says the same model reviews; with jev-latest or DeepSeek Flash chosen here, that model reviews. When a review fails, DSH refuses the call instead of running it.',
+  reviewMenuNote: 'The description under Auto review in the permission menu comes from DSH and says the same model reviews; with jev-1.14.0 or DeepSeek Flash chosen here, that model reviews. When a review fails, DSH refuses the call instead of running it.',
 }

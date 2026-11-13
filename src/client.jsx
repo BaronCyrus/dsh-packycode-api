@@ -41,7 +41,7 @@ const MODEL_FAMILIES = [
   ['Gemini', ['gemini-4-argon', 'gemini-3.8-flash']],
   ['Claude', ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
   // Not in the picker: auto review's classifier.
-  ['Jev', ['jev-latest']],
+  ['Jev', ['jev-1.14.0']],
 ]
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -554,8 +554,8 @@ function SearchCard({ call, t }) {
 // ── auto review ─────────────────────────────────────────────────────────────
 
 const REVIEW_OUTCOMES = { allowed: 'reviewOutcomeAllowed', denied: 'reviewOutcomeDenied', failed: 'reviewOutcomeFailed' }
-const REVIEW_LABELS = { 'jev-latest': 'reviewModelJev', 'deepseek-flash': 'reviewModelFlash', session: 'reviewModelSession' }
-const REVIEW_HINTS = { 'jev-latest': 'reviewModelJevHint', 'deepseek-flash': 'reviewModelFlashHint', session: 'reviewModelSessionHint' }
+const REVIEW_LABELS = { 'jev-1.14.0': 'reviewModelJev', 'deepseek-flash': 'reviewModelFlash', session: 'reviewModelSession' }
+const REVIEW_HINTS = { 'jev-1.14.0': 'reviewModelJevHint', 'deepseek-flash': 'reviewModelFlashHint', session: 'reviewModelSessionHint' }
 
 /** Which model DSH's official auto review uses; the official plugin owns the rest. */
 function AutoReviewCard({ call, t }) {

@@ -8,7 +8,7 @@
  * request per tool call passes through DSH's `llm/stream` waterfall like
  * every model call; the listener recognizes it and answers it with the
  * reviewer chosen under Settings → PackyCode:
- * - `jev-latest`: over System One, written back as the official answer;
+ * - `jev-1.14.0`: over System One, written back as the official answer;
  * - `deepseek-flash`: the same request, addressed to the PackyCode route;
  * - `session`: untouched, as without this plugin.
  * Every other request, conversation turns included, goes on unchanged. A
@@ -21,6 +21,7 @@
 import {
   answerChunks,
   AUTO_REVIEW_FLASH,
+  AUTO_REVIEW_JEV,
   AUTO_REVIEW_MODEL_NAMES,
   AUTO_REVIEW_MODELS,
   AUTO_REVIEW_SESSION,
@@ -29,6 +30,7 @@ import {
   isOfficialReviewRequest,
   officialAnswer,
   readReviewSections,
+  RETIRED_AUTO_REVIEW_MODELS,
 } from './auto-review.js'
 import { PROVIDER } from './constants.js'
 import { fieldValue } from './preferences.js'
@@ -38,9 +40,10 @@ export const DSH_AUTO_REVIEW_ROW = 'auto-review'
 /** DSH's id of the 自动审查 permission preset. */
 export const AUTO_PRESET = 'auto'
 
-/** Normalize a stored preference; anything unknown reads as the default. */
+/** Normalize a stored preference; a retired reviewer reads as its successor, anything else unknown as the default. */
 export function readAutoReviewChoice(value) {
-  const model = fieldValue(value?.autoReviewModel)
+  const saved = fieldValue(value?.autoReviewModel)
+  const model = Object.hasOwn(RETIRED_AUTO_REVIEW_MODELS, saved) ? RETIRED_AUTO_REVIEW_MODELS[saved] : saved
   return { model: AUTO_REVIEW_MODELS.includes(model) ? model : DEFAULT_AUTO_REVIEW_MODEL }
 }
 
@@ -116,7 +119,7 @@ export function createAutoReviewController({
       tool = sections.pendingAction.name
       const decision = await jev.review(options.system, sections, signal)
       settle(decision.decision === 'allow' ? 'allowed' : 'denied', {
-        model: 'jev-latest', tool, ms: now() - started, risk: decision.risk,
+        model: AUTO_REVIEW_JEV, tool, ms: now() - started, risk: decision.risk,
         ...(decision.version === undefined ? {} : { version: decision.version }),
       })
       yield* answerChunks(officialAnswer(decision), decision.usage)
@@ -126,7 +129,7 @@ export function createAutoReviewController({
         return
       }
       const message = errorText(error)
-      settle('failed', { model: 'jev-latest', tool, ms: now() - started, error: message })
+      settle('failed', { model: AUTO_REVIEW_JEV, tool, ms: now() - started, error: message })
       yield failureChunk(message)
     }
   }

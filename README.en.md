@@ -32,7 +32,7 @@ The `PackyCode` model group ships with the plugin. No YAML edits and no separate
 | **Claude route by group** | The `cc` group only serves the official client, so Claude sessions on `cc` keys are carried out by this device's Claude Code itself, with its own system prompt and tools, while DSH shows every tool call and handles permissions, plan review and questions; `cc-sale`, `cc-expensive`, `claude-officially` and other groups use the plugin's HTTP route with DSH's own agent |
 | **Web search through PackyCode** | Optional: DSH's `web_search` searches through PackyCode, with a DeepSeek or GPT backend, for every request or for PackyCode models only |
 | **Image generation and editing** | Separate image keys, GPT Image 2 / 2.6 Flare / 2.6 Sunburst, model and quality settings, reference edits and original PNG storage; generation and editing verified against the gateway |
-| **Auto review on your model** | With DSH's built-in “Auto authorization review” switched on, the permission menu's Auto review can review each tool call with jev-latest or DeepSeek Flash; the rules and outcomes stay the official ones |
+| **Auto review on your model** | With DSH's built-in “Auto authorization review” switched on, the permission menu's Auto review can review each tool call with jev-1.14.0 or DeepSeek Flash; the rules and outcomes stay the official ones |
 | **Credentials stay on the machine** | Keys live in the DSH credential file. The browser receives labels, state, and balances only |
 
 <img width="774" height="455" alt="截屏2026-10-15 10 34 28" src="https://github.com/user-attachments/assets/c5eaa535-dd1e-4e2f-be9f-c181404d4dd6" />
@@ -48,10 +48,10 @@ You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH se
 Open the desktop application's **Plugins** page, click **Add plugin**, and enter the package name **with a version** as the **package name or address**:
 
 ```text
-dsh-packycode-api@1.4.8
+dsh-packycode-api@1.4.9
 ```
 
-Choose the **official** install source, then click **Install**. `1.4.8` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
+Choose the **official** install source, then click **Install**. `1.4.9` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
 
 > **Always include the version.** With a bare `dsh-packycode-api`, the install prompt shows the newest version on npm, but DSH's bundled pnpm by default installs only versions published at least 24 hours ago, so you can end up several releases behind with no sign of it in the prompt. With an exact version, pnpm installs that version and adds it to the profile's `minimumReleaseAgeExclude` itself. Afterwards, check **Current version** under **Settings → PackyCode → Plugin version**.
 
@@ -72,7 +72,7 @@ Choose a model from the `PackyCode` group. Of the thirteen models, Claude runs t
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.4.8`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.4.9`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -185,9 +185,11 @@ By default DSH reviews with the conversation's own model. This plugin leaves the
 
 | Reviewer | Notes | Group needed |
 | --- | --- | --- |
-| jev-latest (default) | TypeSafe's decision classifier: about 0.4 s per review, billed by input only; a denial names only the risk level | `typesafe-officially` |
+| jev-1.14.0 (default) | TypeSafe's decision classifier: about 0.4 s per review, billed by input only; a denial names only the risk level | `typesafe-officially` |
 | DeepSeek Flash | About 2 s per review, and a denial says why | `deepseek-officially` / `deepseek-sale` |
 | Conversation model | Leave the review alone, as DSH does by default | — |
+
+A saved `jev-latest` still works and reviews with `jev-1.14.0`.
 
 Steps:
 
@@ -206,17 +208,17 @@ The card shows whether DSH's plugin is on, how many reviews this plugin answered
   - and it expects one `{"risk","decision","reason"?}` object back.
 - Every model request passes DSH's `llm/stream` waterfall. The plugin recognizes only this request there; conversation turns and everything else go on untouched.
 - **DeepSeek Flash** gets the same request, re-addressed to the PackyCode route; DSH still reads its answer.
-- **jev-latest** cannot write that object. The plugin passes the four sections and the official policy text to System One as the state and asks two questions: the risk, and whether you explicitly asked for this action.
+- **jev-1.14.0** cannot write that object. The plugin passes the four sections and the official policy text to System One as the state and asks two questions: the risk, and whether you explicitly asked for this action.
   - It allows a call when the probability of "low risk, or medium risk you asked for" is at least 0.6 and that of high risk is below 0.2.
-  - A denial says that jev-latest judged the call medium or high risk.
-  - jev-latest has a small context, so a long history is cut starting from the oldest entries; your instructions are kept first.
-- What is reviewed, the rules, and what an allow or a denial does all stay DSH's. DSH refuses a call whose review failed (for example, no key reaches jev-latest), and the plugin keeps that.
+  - A denial says that jev-1.14.0 judged the call medium or high risk.
+  - jev-1.14.0 has a small context, so a long history is cut starting from the oldest entries; your instructions are kept first.
+- What is reviewed, the rules, and what an allow or a denial does all stay DSH's. DSH refuses a call whose review failed (for example, no key reaches jev-1.14.0), and the plugin keeps that.
 - Measured on 37 scenarios with the official request format and the official parser: both reviewers matched all 35 scenarios that have a clear answer.
-  - jev-latest's median was 0.35 s, DeepSeek Flash's 2.3 s.
+  - jev-1.14.0's median was 0.35 s, DeepSeek Flash's 2.3 s.
 - If a later DSH changes the review request:
   - a request the plugin no longer recognizes goes on untouched, reviewed by the conversation model;
-  - a format jev-latest cannot read fails that review, which shows in the card's counts.
-- The description under Auto review in the menu says the same model reviews; that is DSH's text. With jev-latest or DeepSeek Flash chosen, that model reviews.
+  - a format jev-1.14.0 cannot read fails that review, which shows in the card's counts.
+- The description under Auto review in the menu says the same model reviews; that is DSH's text. With jev-1.14.0 or DeepSeek Flash chosen, that model reviews.
 
 </details>
 
@@ -241,7 +243,7 @@ The card shows whether DSH's plugin is on, how many reviews this plugin answered
 
 A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
 
-`jev-latest` (TypeSafe Jev) is not in the model picker: it is a decision model that answers classification questions and cannot hold a conversation, so it only serves [Auto review](#auto-review). The plugin calls `/v1/systemone` host-side; it needs a key in the `typesafe-officially` group, and each key's Jev entry under Accounts and keys shows whether it can.
+`jev-1.14.0` (TypeSafe Jev) is not in the model picker: it is a decision model that answers classification questions and cannot hold a conversation, so it only serves [Auto review](#auto-review). PackyCode lists it by version and no longer offers the `jev-latest` alias, so the plugin sends `jev-1.14.0` itself. It calls `/v1/systemone` host-side and needs a key in the `typesafe-officially` group; each key's Jev entry under Accounts and keys shows whether it can.
 
 Of the thirteen models in the current catalog, all but DeepSeek V4 Pro declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Responses request. DeepSeek V4 Pro takes text only, per DeepSeek's [models and pricing page](https://api-docs.deepseek.com/quick_start/pricing/): DSH does not let you attach an image to it, and an image already in the session (say, one switched over from Flash) is sent as a one-line "image omitted" note. PackyCode's gateway does not refuse an image sent to V4 Pro; it drops it.
 
@@ -280,9 +282,9 @@ DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `open
 
 ## Update and uninstall
 
-> **Upgrading from 1.3.2 or earlier:** install `dsh-packycode-api@1.4.8` on the Plugins page instead of clicking **Update plugin** in the old settings card. The old button bypasses pnpm's release-age policy: if the version it installs is less than 24 hours old, the profile refuses every other plugin install until that version is 24 hours old. After the install and a restart, the button is the fixed one, and later updates can use it.
+> **Upgrading from 1.3.2 or earlier:** install `dsh-packycode-api@1.4.9` on the Plugins page instead of clicking **Update plugin** in the old settings card. The old button bypasses pnpm's release-age policy: if the version it installs is less than 24 hours old, the profile refuses every other plugin install until that version is 24 hours old. After the install and a restart, the button is the fixed one, and later updates can use it.
 
-**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. The install keeps pnpm's release-age policy instead of overriding it: by default pnpm installs the version at once and records it in the profile's `minimumReleaseAgeExclude`; under a stricter pnpm policy the button says when the update can run. The newer version is read from npm, while pnpm downloads it from the profile's own install source: right after a release that source (a regional mirror in particular) may not have it yet, and the button asks you to update again in a few minutes; when the source cannot be reached, it asks you to check the network or proxy. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.4.8`); without it you may get a version that is merely the newest one published at least 24 hours ago.
+**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. The install keeps pnpm's release-age policy instead of overriding it: by default pnpm installs the version at once and records it in the profile's `minimumReleaseAgeExclude`; under a stricter pnpm policy the button says when the update can run. The newer version is read from npm, while pnpm downloads it from the profile's own install source: right after a release that source (a regional mirror in particular) may not have it yet, and the button asks you to update again in a few minutes; when the source cannot be reached, it asks you to check the network or proxy. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.4.9`); without it you may get a version that is merely the newest one published at least 24 hours ago.
 
 **Coming back from a local-path install, uninstall first.** An update is a `pnpm add`: it rewrites the files inside the package directory and leaves a `node_modules` that an earlier local-path install left there. That older tree keeps shadowing the packages the DSH installation provides, so the plugin row fails to load with no visible reason. **Uninstall** runs `pnpm remove`, which deletes the package directory outright — only a reinstall after that is clean. `node scripts/install-check.mjs` reports whether a profile is in that state.
 
@@ -298,7 +300,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 Output means a leftover tree: a registry install ships no `node_modules`, so this one usually comes from an earlier local-path install (`file:`, or a bare path instead of `link:`). It sits inside the profile directory, and DSH resolves a plugin's imports from inside the profile first, so the plugin gets those old copies — for example `@deepseek-ai/schemastery` 3.18.2, which has no `Schema.volatile()`, so the module throws while it is imported. When an import fails the Loader creates no fiber for that row and no client bundle is composed either, so the model route, the RPC channel, and the settings panel all stay absent.
 
-Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.4.8`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.4.9`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
 
 **Right after a first install, every card in Settings shows `transport failure for /packycode-api/…: HTTP 405`?** The installed version is 1.1.6 or earlier, usually because only the bare package name was entered: the install prompt shows the newest version, but pnpm installs the newest one published at least 24 hours ago (see **Install the plugin**). Those older versions can register their settings channel only after DSH restarts and rebuilds its `connection` service. So right after a first install `/packycode-api` does not exist yet, requests fall through to the static page, and it answers 405; the model route and the settings panel itself load normally. From 1.1.7 on, a first install needs no restart. Check which version was installed:
 

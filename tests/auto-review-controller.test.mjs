@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { format } from 'node:util'
 
-import { answerChunks } from '../src/auto-review.js'
+import { answerChunks, AUTO_REVIEW_JEV } from '../src/auto-review.js'
 import { createAutoReviewController, DSH_AUTO_REVIEW_ROW, readAutoReviewChoice } from '../src/auto-review-controller.js'
 import { OFFICIAL_POLICY, officialRequest, readDecision } from './fixtures/official-auto-review.mjs'
 
@@ -14,7 +14,7 @@ const SNAPSHOT = {
 }
 
 /** The controller around fakes for Jev, DSH's LLM service and the host lookups. */
-function harness({ model = 'jev-latest', jev, flashAnswer = '{"risk":"low","decision":"allow"}', entry, presets = [], writable = true } = {}) {
+function harness({ model = AUTO_REVIEW_JEV, jev, flashAnswer = '{"risk":"low","decision":"allow"}', entry, presets = [], writable = true } = {}) {
   const values = { autoReviewModel: model }
   const writes = []
   const logs = []
@@ -61,11 +61,14 @@ function harness({ model = 'jev-latest', jev, flashAnswer = '{"risk":"low","deci
   return { controller, values, writes, logs, reviews, streamed, sessionModel }
 }
 
-test('the stored preference reads as jev-latest unless it names another reviewer', () => {
-  assert.deepEqual(readAutoReviewChoice(undefined), { model: 'jev-latest' })
+test('the stored preference reads as jev-1.14.0 unless it names another reviewer, and jev-latest reads as its successor', () => {
+  assert.deepEqual(readAutoReviewChoice(undefined), { model: AUTO_REVIEW_JEV })
   assert.deepEqual(readAutoReviewChoice({ autoReviewModel: { get: () => 'session' } }), { model: 'session' })
   assert.deepEqual(readAutoReviewChoice({ autoReviewModel: 'deepseek-flash' }), { model: 'deepseek-flash' })
-  assert.deepEqual(readAutoReviewChoice({ autoReviewModel: 'gpt-6.1-sol' }), { model: 'jev-latest' })
+  assert.deepEqual(readAutoReviewChoice({ autoReviewModel: 'gpt-6.1-sol' }), { model: AUTO_REVIEW_JEV })
+  // PackyCode retired the alias: a saved jev-latest still reviews with the versioned model.
+  assert.deepEqual(readAutoReviewChoice({ autoReviewModel: 'jev-latest' }), { model: 'jev-1.14.0' })
+  assert.deepEqual(readAutoReviewChoice({ autoReviewModel: { get: () => 'jev-latest' } }), { model: 'jev-1.14.0' })
 })
 
 test('every request that is not the official review goes on untouched', () => {
@@ -83,7 +86,7 @@ test('with the session model chosen, the official review is left to DSH', () => 
   assert.equal(reviews.length, 0)
 })
 
-test('jev-latest answers the official review in the official format', async () => {
+test('jev-1.14.0 answers the official review in the official format', async () => {
   const { controller, reviews, logs, sessionModel } = harness()
   const signal = new AbortController().signal
   const decision = await readDecision(controller.listener(officialRequest(SNAPSHOT, { signal }), sessionModel))
@@ -99,8 +102,16 @@ test('jev-latest answers the official review in the official format', async () =
   assert.match(logs[0][1], /^packycode-api: auto review allowed bash \(jev-1\.14\.0, low risk, \d+ ms\)$/u)
 })
 
+test('a saved jev-latest choice still reviews with jev-1.14.0', async () => {
+  const { controller, reviews, sessionModel } = harness({ model: 'jev-latest' })
+  assert.equal(controller.status().model, AUTO_REVIEW_JEV)
+  assert.deepEqual(await readDecision(controller.listener(officialRequest(SNAPSHOT), sessionModel)), { risk: 'low', decision: 'allow' })
+  assert.equal(reviews.length, 1)
+  assert.deepEqual(controller.status().models.map(entry => entry.id), ['jev-1.14.0', 'deepseek-flash', 'session'])
+})
+
 test('a Jev denial carries its reason to the official reviewer', async () => {
-  const reason = 'jev-latest 判定为中风险操作，且没有找到你对此操作的明确指示'
+  const reason = 'jev-1.14.0 判定为中风险操作，且没有找到你对此操作的明确指示'
   const { controller, sessionModel } = harness({ jev: () => ({ decision: 'deny', risk: 'medium', reason }) })
   assert.deepEqual(await readDecision(controller.listener(officialRequest(SNAPSHOT), sessionModel)), { risk: 'medium', decision: 'deny', reason })
   assert.equal(controller.status().counts.denied, 1)
@@ -152,13 +163,15 @@ test('Flash\'s answers are counted as the official reviewer will read them', asy
 test('the status says whether DSH\'s auto review is on, and the preference is validated', async () => {
   const off = harness()
   assert.deepEqual(off.controller.status().official, { enabled: false, offered: false })
-  assert.deepEqual(off.controller.status().models.map(entry => entry.id), ['jev-latest', 'deepseek-flash', 'session'])
+  assert.deepEqual(off.controller.status().models.map(entry => entry.id), ['jev-1.14.0', 'deepseek-flash', 'session'])
   const on = harness({ entry: { options: { id: DSH_AUTO_REVIEW_ROW }, disabled: false }, presets: ['read-only', 'workspace-write', 'danger-full-access', 'auto'] })
   assert.deepEqual(on.controller.status().official, { enabled: true, offered: true })
   const disabled = harness({ entry: { options: { id: DSH_AUTO_REVIEW_ROW, disabled: true }, disabled: true } })
   assert.equal(disabled.controller.status().official.enabled, false)
 
   await assert.rejects(on.controller.update({ autoReviewModel: 'gpt-6.1-sol' }), /model is not supported/u)
+  // The retired alias is read, never offered or written.
+  await assert.rejects(on.controller.update({ autoReviewModel: 'jev-latest' }), /model is not supported/u)
   assert.deepEqual(on.writes, [])
   assert.equal((await on.controller.update({ autoReviewModel: 'session' })).model, 'session')
   assert.deepEqual(on.writes, [{ autoReviewModel: 'session' }])

@@ -16,7 +16,7 @@
  * with an optional `reason` on a denial.
  *
  * - `deepseek-flash` gets the same request, addressed to the PackyCode route.
- * - `jev-latest`, TypeSafe's classifier, cannot write that object. The
+ * - `jev-1.14.0`, TypeSafe's classifier, cannot write that object. The
  *   sections become a System One state with the official policy in it, Jev
  *   answers two typed questions, and the decision is written back as the
  *   official JSON object.
@@ -30,8 +30,12 @@ import { classifyClientPolicy, classifyCoverage, classifyGatewayFailure } from '
 import { orderKeysFor } from './key-chooser.js'
 import { ambientFetch, boundedFetch } from './request.js'
 
-/** TypeSafe's decision model, reached through the `typesafe-officially` group. */
-export const AUTO_REVIEW_JEV = 'jev-latest'
+/**
+ * TypeSafe's decision model, reached through the `typesafe-officially` group.
+ * PackyCode publishes it under its exact version (the `jev-latest` alias was
+ * retired), so this id moves with TypeSafe's releases.
+ */
+export const AUTO_REVIEW_JEV = 'jev-1.14.0'
 /** DeepSeek Flash on the PackyCode route. */
 export const AUTO_REVIEW_FLASH = 'deepseek-flash'
 /** Leave the official reviewer on the session's own model. */
@@ -39,9 +43,18 @@ export const AUTO_REVIEW_SESSION = 'session'
 /** The reviewer choices, in the order the settings show them. */
 export const AUTO_REVIEW_MODELS = Object.freeze([AUTO_REVIEW_JEV, AUTO_REVIEW_FLASH, AUTO_REVIEW_SESSION])
 export const DEFAULT_AUTO_REVIEW_MODEL = AUTO_REVIEW_JEV
+/**
+ * Reviewer values the settings once offered, mapped to what replaced them. A
+ * saved preference still names them, so the Config keeps them as hidden
+ * values (dropping them would fail the plugin's Config at load) and reading
+ * the preference moves them to the successor.
+ */
+export const RETIRED_AUTO_REVIEW_MODELS = Object.freeze({
+  'jev-latest': AUTO_REVIEW_JEV,
+})
 /** Names for logs and the settings card; the card localizes the session choice. */
 export const AUTO_REVIEW_MODEL_NAMES = Object.freeze({
-  [AUTO_REVIEW_JEV]: 'jev-latest',
+  [AUTO_REVIEW_JEV]: AUTO_REVIEW_JEV,
   [AUTO_REVIEW_FLASH]: 'DeepSeek Flash',
   [AUTO_REVIEW_SESSION]: 'session model',
 })
@@ -293,9 +306,9 @@ export function decideFromJev(body) {
   const medium = probability(shares?.medium)
   const high = probability(shares?.high)
   if (risk?.type !== 'choice' || low === undefined || medium === undefined || high === undefined) {
-    throw new Error('PackyCode auto review: jev-latest returned no risk answer')
+    throw new Error(`PackyCode auto review: ${AUTO_REVIEW_JEV} returned no risk answer`)
   }
-  if (authorized === undefined) throw new Error('PackyCode auto review: jev-latest returned no authorization answer')
+  if (authorized === undefined) throw new Error(`PackyCode auto review: ${AUTO_REVIEW_JEV} returned no authorization answer`)
   const allowProbability = low + medium * authorized
   const allowed = allowProbability >= JEV_ALLOW_THRESHOLD && high < JEV_HIGH_RISK_LIMIT
   const usage = record(body?.usage) && Number.isFinite(body.usage.input_tokens)
@@ -312,8 +325,8 @@ export function decideFromJev(body) {
     decision: 'deny',
     risk: blocking,
     reason: blocking === 'high'
-      ? 'jev-latest 判定为高风险操作（如外发凭据或敏感数据），需要你亲自决定'
-      : 'jev-latest 判定为中风险操作，且没有找到你对此操作的明确指示',
+      ? `${AUTO_REVIEW_JEV} 判定为高风险操作（如外发凭据或敏感数据），需要你亲自决定`
+      : `${AUTO_REVIEW_JEV} 判定为中风险操作，且没有找到你对此操作的明确指示`,
     ...common,
   }
 }
@@ -407,7 +420,7 @@ export function createJevReviewer({ ring, hosts, covers, onKeyFailure, fetchImpl
       parsed = await response.json()
     } catch (error) {
       if (signal?.aborted === true) throw error
-      throw new Error('PackyCode auto review got an unreadable answer from jev-latest', { cause: error })
+      throw new Error(`PackyCode auto review got an unreadable answer from ${AUTO_REVIEW_JEV}`, { cause: error })
     }
     // A gateway channel can answer 200 with an error object.
     if (record(parsed?.error)) return { failure: mask(text(parsed.error.message) || JSON.stringify(parsed.error).slice(0, MAX_ERROR_DETAIL_CHARS), key), status: response.status }
@@ -444,7 +457,7 @@ export function createJevReviewer({ ring, hosts, covers, onKeyFailure, fetchImpl
         break
       }
       if (uncovered) {
-        throw new Error(`PackyCode auto review: no stored API key's group covers jev-latest. Gateway said: ${lastFailure}`)
+        throw new Error(`PackyCode auto review: no stored API key's group covers ${AUTO_REVIEW_JEV}. Gateway said: ${lastFailure}`)
       }
       throw new Error(`PackyCode auto review failed: ${lastFailure ?? 'no detail'}`)
     },
