@@ -4,13 +4,23 @@ import { format } from 'node:util'
 
 import { answerChunks, AUTO_REVIEW_JEV } from '../src/auto-review.js'
 import { createAutoReviewController, DSH_AUTO_REVIEW_ROW, readAutoReviewChoice } from '../src/auto-review-controller.js'
-import { OFFICIAL_POLICY, officialRequest, readDecision } from './fixtures/official-auto-review.mjs'
+import { OFFICIAL_POLICY, officialRequest, officialRequest2022, readDecision } from './fixtures/official-auto-review.mjs'
 
 const SNAPSHOT = {
   cwd: '/work/project',
   projectInstructions: [],
   history: [{ kind: 'user-message', role: 'human-instruction', source: { kind: 'user', rpcId: 'r1' }, content: [{ type: 'text', text: 'run the tests' }] }],
   action: { mode: 'native', name: 'bash', description: 'Run a shell command.', parameters: { type: 'object' }, arguments: { command: 'pnpm test' } },
+}
+
+/** A 0.2.2 snapshot: the pending call is the last Session item. */
+const SNAPSHOT_2022 = {
+  cwd: '/work/project',
+  history: [
+    { kind: 'user-message', role: 'user-instruction', source: { kind: 'user', rpcId: 'r1' }, content: [{ type: 'text', text: 'run the tests' }] },
+    { kind: 'tool-schema', role: 'fact', mode: 'native', name: 'bash', description: 'Run a shell command.', parameters: { type: 'object' } },
+    { kind: 'tool-call', role: 'fact', mode: 'native', name: 'bash', arguments: '{"command":"pnpm test"}' },
+  ],
 }
 
 /** The controller around fakes for Jev, DSH's LLM service and the host lookups. */
@@ -108,6 +118,36 @@ test('a saved jev-latest choice still reviews with jev-1.14.0', async () => {
   assert.deepEqual(await readDecision(controller.listener(officialRequest(SNAPSHOT), sessionModel)), { risk: 'low', decision: 'allow' })
   assert.equal(reviews.length, 1)
   assert.deepEqual(controller.status().models.map(entry => entry.id), ['jev-1.14.0', 'deepseek-flash', 'session'])
+})
+
+test('DSH 0.2.2\'s review request is answered by jev-1.14.0 in the official format', async () => {
+  const { controller, reviews, sessionModel } = harness()
+  assert.deepEqual(await readDecision(controller.listener(officialRequest2022(SNAPSHOT_2022), sessionModel)), { risk: 'low', decision: 'allow' })
+  assert.equal(reviews.length, 1)
+  assert.equal(reviews[0].sections.pendingAction.name, 'bash')
+  assert.deepEqual(reviews[0].sections.pendingAction.arguments, { command: 'pnpm test' })
+  assert.deepEqual(controller.status().counts, { reviewed: 1, allowed: 1, denied: 0, failed: 0 })
+})
+
+test('a review request from a layout this version cannot read fails closed instead of passing through', async () => {
+  const { controller, reviews, sessionModel } = harness()
+  const request = officialRequest2022(SNAPSHOT_2022)
+  const unreadable = { ...request, messages: [...request.messages, { role: 'user', content: [{ type: 'text', text: 'not the official layout' }] }] }
+  await assert.rejects(readDecision(controller.listener(unreadable, sessionModel)), /cannot read this DSH version's review request/u)
+  assert.equal(reviews.length, 0)
+  assert.equal(controller.status().counts.failed, 1)
+})
+
+test('DeepSeek Flash gets DSH 0.2.2\'s request as it is, addressed to the PackyCode route', async () => {
+  const { controller, streamed, sessionModel } = harness({ model: 'deepseek-flash' })
+  const request = officialRequest2022(SNAPSHOT_2022, { provider: 'openai-codex', model: 'gpt-6.1-sol' })
+  assert.deepEqual(await readDecision(controller.listener(request, sessionModel)), { risk: 'low', decision: 'allow' })
+  const [routed] = streamed
+  assert.deepEqual([routed.provider, routed.model], ['packycode', 'deepseek-flash'])
+  assert.equal(routed.system, request.system)
+  assert.equal(routed.messages, request.messages)
+  assert.equal(routed.temperature, 0)
+  assert.equal(routed.purpose, 'auto-review')
 })
 
 test('a Jev denial carries its reason to the official reviewer', async () => {

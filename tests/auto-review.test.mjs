@@ -20,7 +20,7 @@ import {
 import { PACKYCODE_CLASSIFIER_MODELS, PACKYCODE_MODEL_IDS } from '../src/catalog.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { fakeCredentials } from './helpers.mjs'
-import { OFFICIAL_POLICY, officialRequest, readDecision, reviewUserText } from './fixtures/official-auto-review.mjs'
+import { OFFICIAL_POLICY, OFFICIAL_POLICY_2022, officialRequest, officialRequest2022, readDecision, reviewUserText } from './fixtures/official-auto-review.mjs'
 
 const human = (text, rpcId = 'rpc-1') => ({ kind: 'user-message', role: 'human-instruction', source: { kind: 'user', rpcId }, content: [{ type: 'text', text }] })
 const call = (name, args) => ({ kind: 'tool-call', role: 'fact', mode: 'native', name, arguments: JSON.stringify(args) })
@@ -41,14 +41,41 @@ test('jev-1.14.0 is a classifier the picker never lists, reached over System One
   assert.equal(PACKYCODE_MODEL_IDS.includes(AUTO_REVIEW_FLASH), true)
 })
 
-test('only the official reviewer\'s request is recognized; conversation turns are not', () => {
+/** A 0.2.2 snapshot: one retained Session item per message, the pending call last. */
+const snapshot2022 = (overrides = {}) => ({
+  cwd: '/work/project',
+  history: [
+    { kind: 'user-message', role: 'user-instruction', source: { kind: 'user', rpcId: 'rpc-1' }, content: [{ type: 'text', text: 'fix the failing test' }] },
+    { kind: 'tool-schema', role: 'fact', mode: 'native', name: 'bash', description: 'Run a shell command in the working directory.', parameters: { type: 'object', properties: { command: { type: 'string' } } } },
+    { kind: 'tool-call', role: 'fact', mode: 'native', name: 'bash', arguments: '{"command":"pnpm test"}' },
+  ],
+  ...overrides,
+})
+
+test('DSH 0.2.2\'s review request is recognized and read back into its items', () => {
+  const request = officialRequest2022(snapshot2022())
+  assert.equal(isOfficialReviewRequest(request), true)
+  const sections = readReviewSections(request)
+  assert.equal(sections.format, 'session-items')
+  assert.deepEqual(sections.environment, { cwd: '/work/project' })
+  assert.deepEqual(sections.history.map(entry => entry.kind), ['user-message', 'tool-schema'])
+  assert.equal(sections.pendingAction.name, 'bash')
+  assert.deepEqual(sections.pendingAction.arguments, { command: 'pnpm test' })
+  assert.equal(sections.pendingAction.description, 'Run a shell command in the working directory.')
+  assert.equal(sections.pendingAction.parameters.type, 'object')
+  // Text that is not one JSON item still fails closed.
+  const broken = { ...request, messages: [...request.messages.slice(0, -1), { role: 'user', content: [{ type: 'text', text: 'not json' }] }] }
+  assert.throws(() => readReviewSections(broken), /cannot read this DSH version's review request/u)
+})
+
+test('the official reviewer is recognized by its fixed policy, across both message layouts', () => {
   assert.equal(isOfficialReviewRequest(officialRequest(snapshot())), true)
+  assert.equal(isOfficialReviewRequest(officialRequest2022(snapshot2022())), true)
   const turn = { provider: 'packycode', model: 'deepseek-flash', messages: [{ role: 'system', content: [{ type: 'text', text: 'You are a coding agent.' }] }, { role: 'user', content: [{ type: 'text', text: 'hi' }] }] }
   assert.equal(isOfficialReviewRequest(turn), false)
   const official = officialRequest(snapshot())
   assert.equal(isOfficialReviewRequest({ ...official, system: 'Summarize the conversation.' }), false)
-  assert.equal(isOfficialReviewRequest({ ...official, messages: [...official.messages, { role: 'user', content: [{ type: 'text', text: 'x' }] }] }), false)
-  assert.equal(isOfficialReviewRequest({ ...official, messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] }), false)
+  assert.equal(isOfficialReviewRequest({ ...official, system: undefined }), false)
 })
 
 test('the official review message reads back into its four sections', () => {
@@ -91,6 +118,15 @@ test('Jev reads the official policy and the sections, bounded for its context', 
   assert.deepEqual(fitted.history.filter(entry => entry.role === 'human-instruction').map(entry => entry.content[0].text), ['the task', 'and then commit'])
   assert.ok(fitted.pendingAction.arguments.command.length <= JEV_LIMITS.actionStringChars)
   assert.equal(JSON.stringify(fitted).includes('x'.repeat(100)), false, 'attachments keep only their kind')
+})
+
+test('Jev reads the 0.2.2 environment and one state per session item', () => {
+  const state = jevState(OFFICIAL_POLICY_2022, readReviewSections(officialRequest2022(snapshot2022())))
+  assert.equal(state.policy, OFFICIAL_POLICY_2022)
+  assert.deepEqual(state.environment, { cwd: '/work/project' })
+  assert.equal(state.history[0].role, 'user-instruction')
+  assert.equal(state.pendingAction.name, 'bash')
+  assert.deepEqual(state.pendingAction.arguments, { command: 'pnpm test' })
 })
 
 const jevBody = ({ high = 0, medium = 0, low = 1, authorized = 0, model = 'jev-1.14.0' } = {}) => ({

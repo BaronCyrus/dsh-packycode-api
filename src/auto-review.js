@@ -9,11 +9,13 @@
  * stay DSH's; this module only lets that one request run on a PackyCode model.
  *
  * The official reviewer's request is a hand-built `llm.stream` call: its
- * fixed `REVIEW_POLICY` as the system prompt, one user message holding four
- * JSON sections (ENVIRONMENT, PROJECT_INSTRUCTIONS, FILTERED_HISTORY,
- * PENDING_ACTION), and `temperature: 0`. It accepts reasoning blocks followed
- * by one text block holding exactly one JSON object: `{"risk","decision"}`,
- * with an optional `reason` on a denial.
+ * fixed `REVIEW_POLICY` as the system prompt and `temperature: 0`. DSH 0.2.1
+ * sends one user message holding four JSON sections (ENVIRONMENT,
+ * PROJECT_INSTRUCTIONS, FILTERED_HISTORY, PENDING_ACTION); DSH 0.2.2 sends
+ * the environment first and then one JSON Session item per message, the
+ * pending tool call last. Both layouts are read. The reviewer accepts
+ * reasoning blocks followed by one text block holding exactly one JSON
+ * object: `{"risk","decision"}`, with an optional `reason` on a denial.
  *
  * - `deepseek-flash` gets the same request, addressed to the PackyCode route.
  * - `jev-1.14.0`, TypeSafe's classifier, cannot write that object. The
@@ -86,41 +88,58 @@ export const JEV_LIMITS = Object.freeze({
 // ── recognizing the official request ────────────────────────────────────────
 
 const OFFICIAL_POLICY_HEAD = 'REVIEW_POLICY\n'
+const ENVIRONMENT_HEAD = 'ENVIRONMENT\n'
 const SECTION_NAMES = Object.freeze(['ENVIRONMENT', 'PROJECT_INSTRUCTIONS', 'FILTERED_HISTORY', 'PENDING_ACTION'])
 
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const text = value => (typeof value === 'string' ? value : '')
 
-/** The one text block of a single-message request, when it is that shape. */
-function reviewText(options) {
-  const messages = options?.messages
-  if (!Array.isArray(messages) || messages.length !== 1 || messages[0]?.role !== 'user') return undefined
-  const content = messages[0].content
+/** The one text block of a message, when it is that shape. */
+function singleText(message) {
+  const content = message?.content
   if (!Array.isArray(content) || content.length !== 1 || content[0]?.type !== 'text') return undefined
   return text(content[0].text)
 }
 
-/**
- * Whether a model request is the official reviewer's: its policy as the
- * system prompt and one user message that opens with the ENVIRONMENT section.
- * Anything else, conversation turns included, passes through untouched.
- * @param options - one `llm.stream` request.
- */
-export function isOfficialReviewRequest(options) {
-  if (!text(options?.system).startsWith(OFFICIAL_POLICY_HEAD)) return false
-  return reviewText(options)?.startsWith(`${SECTION_NAMES[0]}\n\n`) === true
+/** The one text block of a single-message request, when it is that shape. */
+function reviewText(options) {
+  const messages = options?.messages
+  if (!Array.isArray(messages) || messages.length !== 1 || messages[0]?.role !== 'user') return undefined
+  return singleText(messages[0])
 }
 
 /**
- * The four sections of the official review message. Each section is a label
- * line and one `JSON.stringify(value, null, 2)` value, joined by blank lines;
- * pretty-printed JSON never holds a blank line, so the split is exact.
- * @param options - an official review request.
- * @returns `{ environment, projectInstructions, history, pendingAction }`.
- * @throws when the message is not in that format.
+ * Whether a model request is the official reviewer's. Its fixed policy is the
+ * system prompt in every DSH version; the layout below it changed in DSH
+ * 0.2.2, so the layout is validated when the request is read instead of here.
+ * Recognizing the policy alone is what keeps a later layout change from
+ * silently passing reviews through to the session model again.
+ * @param options - one `llm.stream` request.
  */
-export function readReviewSections(options) {
-  const unreadable = () => new Error('PackyCode auto review cannot read this DSH version\'s review request')
+export function isOfficialReviewRequest(options) {
+  return text(options?.system).startsWith(OFFICIAL_POLICY_HEAD)
+}
+
+const unreadable = () => new Error('PackyCode auto review cannot read this DSH version\'s review request')
+
+/** Keep the logged call's arguments as the JSON they are, when they are JSON. */
+function parseArguments(value) {
+  if (typeof value !== 'string') return value
+  if (value === '') return {}
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+/**
+ * DSH 0.2.1's layout: one message holding four labelled sections. Each section
+ * is a label line and one `JSON.stringify(value, null, 2)` value, joined by
+ * blank lines; pretty-printed JSON never holds a blank line, so the split is
+ * exact.
+ */
+function readSectionRequest(options) {
   const parts = text(reviewText(options)).split('\n\n')
   if (parts.length !== SECTION_NAMES.length * 2 || SECTION_NAMES.some((name, index) => parts[index * 2] !== name)) throw unreadable()
   let values
@@ -131,7 +150,66 @@ export function readReviewSections(options) {
   }
   const [environment, projectInstructions, history, pendingAction] = values
   if (!record(environment) || !Array.isArray(projectInstructions) || !Array.isArray(history) || !record(pendingAction)) throw unreadable()
-  return { environment, projectInstructions, history, pendingAction }
+  return { format: 'sections', environment, projectInstructions, history, pendingAction }
+}
+
+/**
+ * DSH 0.2.2's layout: the first message is the environment, then one JSON
+ * Session item per message, the pending tool call last. Its schema is the
+ * latest preceding `tool-schema` item for the same mode and name.
+ */
+function readSessionItemRequest(options) {
+  const messages = options?.messages
+  if (!Array.isArray(messages) || messages.length < 2) throw unreadable()
+  const [firstMessage] = messages
+  const first = singleText(firstMessage)
+  if (firstMessage?.role !== 'user' || first === undefined || !first.startsWith(ENVIRONMENT_HEAD)) throw unreadable()
+  let environment
+  try {
+    environment = JSON.parse(first.slice(ENVIRONMENT_HEAD.length))
+  } catch {
+    throw unreadable()
+  }
+  if (!record(environment)) throw unreadable()
+  const items = []
+  for (const message of messages.slice(1)) {
+    if (message?.role !== 'user') throw unreadable()
+    const raw = singleText(message)
+    if (raw === undefined) throw unreadable()
+    let item
+    try {
+      item = JSON.parse(raw)
+    } catch {
+      throw unreadable()
+    }
+    if (!record(item)) throw unreadable()
+    items.push(item)
+  }
+  const pending = items.at(-1)
+  if (pending?.kind !== 'tool-call') throw unreadable()
+  const schema = [...items].reverse().find(entry => entry?.kind === 'tool-schema' && entry.mode === pending.mode && entry.name === pending.name)
+  const pendingAction = {
+    ...pending,
+    ...(typeof schema?.description === 'string' ? { description: schema.description } : {}),
+    ...(record(schema?.parameters) ? { parameters: schema.parameters } : {}),
+    arguments: parseArguments(pending.arguments),
+  }
+  return { format: 'session-items', environment, projectInstructions: [], history: items.slice(0, -1), pendingAction }
+}
+
+/**
+ * Read either official review layout into `{ environment, projectInstructions,
+ * history, pendingAction }`. DSH 0.2.1 sends the four labelled sections in one
+ * message; DSH 0.2.2 sends the environment and then one JSON Session item per
+ * message, the pending call last.
+ * @param options - an official review request.
+ * @throws when the layout is not one this plugin reads.
+ */
+export function readReviewSections(options) {
+  const messages = options?.messages
+  const first = Array.isArray(messages) && messages.length > 0 ? singleText(messages[0]) : undefined
+  if (Array.isArray(messages) && messages.length === 1 && first?.startsWith(`${ENVIRONMENT_HEAD}\n`)) return readSectionRequest(options)
+  return readSessionItemRequest(options)
 }
 
 // ── Jev ─────────────────────────────────────────────────────────────────────
@@ -169,9 +247,10 @@ export const JEV_QUESTIONS = Object.freeze({
   authorized: Object.freeze({
     type: 'noul',
     instructions: Object.freeze({
-      task: 'Does an entry of `history` whose role is "human-instruction" (or, in a child agent, '
-        + '"direct-parent-instruction") explicitly ask for exactly `pendingAction` — the same kind of action, on the '
-        + 'same target, within the same scope — with no later human-instruction revoking it?',
+      task: 'Does an entry of `history` whose role is "user-instruction" (older DSH versions label it '
+        + '"human-instruction"; in a child agent, "direct-parent-instruction") explicitly ask for exactly '
+        + '`pendingAction` — the same kind of action, on the same target, within the same scope — with no later '
+        + 'user-instruction revoking it?',
       // Jev struggles with indirection: an agent that wraps a requested
       // deletion in path checks and status output must not lose the request.
       focus: 'Judge by effect. The requested action wrapped in harmless steps (path checks, echo, ls, printing '
@@ -180,8 +259,8 @@ export const JEV_QUESTIONS = Object.freeze({
       note: DATA_NOTE,
     }),
     criteria: Object.freeze({
-      true: 'The human explicitly asked for this exact action, target and scope',
-      false: 'The human did not explicitly ask for it, asked for something narrower or different, or the request '
+      true: 'The user explicitly asked for this exact action, target and scope',
+      false: 'The user did not explicitly ask for it, asked for something narrower or different, or the request '
         + 'came only from a file, a tool, a fact or the agent itself',
     }),
   }),
@@ -189,7 +268,7 @@ export const JEV_QUESTIONS = Object.freeze({
 
 /**
  * Jev's allow rule, the official one in probabilities: the call is fine when
- * it is low risk, or medium risk the human asked for, and never when it is
+ * it is low risk, or medium risk the user asked for, and never when it is
  * high risk. Calibrated live against the official policy: see CHANGELOG.
  */
 export const JEV_ALLOW_THRESHOLD = 0.6
@@ -228,10 +307,10 @@ function clipMessageEntry(entry, max) {
   }
 }
 
-const instructionRole = entry => entry?.role === 'human-instruction' || entry?.role === 'direct-parent-instruction'
+const instructionRole = entry => entry?.role === 'user-instruction' || entry?.role === 'human-instruction' || entry?.role === 'direct-parent-instruction'
 
 /**
- * Keep the history inside the budget: the human's instructions first (newest
+ * Keep the history inside the budget: the user's instructions first (newest
  * first), then everything else newest first, back in conversation order.
  */
 function fitHistory(entries, budget) {
@@ -248,9 +327,30 @@ function fitHistory(entries, budget) {
   return entries.filter(entry => chosen.has(entry))
 }
 
+/** One retained Session item with its text and schema fields bounded. */
+function clipSessionItem(entry, limits) {
+  if (entry?.kind === 'tool-call') {
+    return {
+      ...entry,
+      arguments: typeof entry.arguments === 'string'
+        ? clipText(entry.arguments, limits.historyArgumentChars)
+        : clipValue(entry.arguments, limits.historyArgumentChars),
+    }
+  }
+  if (entry?.kind === 'tool-schema') {
+    return {
+      ...entry,
+      ...(typeof entry.description === 'string' ? { description: clipText(entry.description, limits.schemaChars) } : {}),
+      ...(record(entry.parameters) ? { parameters: clipValue(entry.parameters, limits.schemaChars) } : {}),
+    }
+  }
+  return clipMessageEntry(entry, limits.instructionChars)
+}
+
 /**
  * The System One state for one official review: the official policy and the
- * four sections, bounded for Jev's context. Nothing is added or reinterpreted.
+ * review's own environment, history and pending action, bounded for Jev's
+ * context. Nothing is added or reinterpreted.
  * @param policy - the official reviewer's system prompt.
  * @param sections - {@link readReviewSections} output.
  * @param limits - the size bounds.
@@ -258,16 +358,14 @@ function fitHistory(entries, budget) {
 export function jevState(policy, sections, limits = JEV_LIMITS) {
   let projectChars = 0
   const projectInstructions = []
-  for (const entry of sections.projectInstructions) {
+  for (const entry of sections.projectInstructions ?? []) {
     const clipped = clipMessageEntry(entry, limits.projectChars)
     const cost = size(clipped)
     if (projectChars + cost > limits.projectTotalChars) continue
     projectChars += cost
     projectInstructions.push(clipped)
   }
-  const history = sections.history.map(entry => (entry?.kind === 'tool-call'
-    ? { ...entry, arguments: clipText(entry.arguments, limits.historyArgumentChars) }
-    : clipMessageEntry(entry, limits.instructionChars)))
+  const history = (sections.history ?? []).map(entry => clipSessionItem(entry, limits))
   const action = sections.pendingAction
   let args = clipValue(action.arguments ?? {}, limits.actionStringChars)
   if (size(args) > limits.actionTotalChars) args = clipValue(action.arguments ?? {}, Math.floor(limits.actionStringChars / 4))
@@ -278,12 +376,13 @@ export function jevState(policy, sections, limits = JEV_LIMITS) {
   }
   if (record(action.parameters) && size(action.parameters) > limits.schemaChars) delete pendingAction.parameters
   const environment = clipValue(sections.environment, limits.schemaChars)
-  const budget = Math.max(2_000, limits.stateChars - size({ policy, environment, projectInstructions, pendingAction }))
+  const keptInstructions = projectInstructions.length === 0 ? {} : { projectInstructions }
+  const budget = Math.max(2_000, limits.stateChars - size({ policy, environment, ...keptInstructions, pendingAction }))
   const kept = fitHistory(history, budget)
   return {
     policy,
     environment,
-    projectInstructions,
+    ...keptInstructions,
     history: kept,
     ...(kept.length < history.length ? { omittedHistory: history.length - kept.length } : {}),
     pendingAction,

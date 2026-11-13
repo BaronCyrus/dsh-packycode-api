@@ -579,7 +579,7 @@ export { createImageController, readImagePreference } from './image-settings.js'
 export { createPackyCodeImageClient, createPackyCodeImageTool, decodeImagePng, IMAGE_TOOL_NAME, IMAGE_TIMEOUT_MS, MAX_IMAGE_BYTES, pngDimensions } from './images.js'
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'
 export { createPackyCodeProvider, guardKeyRotation } from './provider.js'
-export { createPackyCodeProfile, createRouteAdapter } from './route.js'
+export { createPackyCodeProfile, createRouteAdapter, withoutReviewTemperature } from './route.js'
 export { createPackyCodeRpc } from './rpc.js'
 export {
   buildSearchRequest,

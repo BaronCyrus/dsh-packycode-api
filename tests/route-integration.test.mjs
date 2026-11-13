@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { PACKYCODE_MODEL_IDS } from '../src/catalog.js'
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PROVIDER } from '../src/constants.js'
-import { createPackyCodeProfile, createRouteAdapter } from '../src/index.js'
+import { createPackyCodeProfile, createRouteAdapter, withoutReviewTemperature } from '../src/index.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeProvider } from '../src/provider.js'
+import { responsesStream } from './fixtures/responses.mjs'
 import { fakeCredentials } from './helpers.mjs'
 
 /**
@@ -62,6 +64,43 @@ test('without a usable key the route lists no models instead of failing, where D
   assert.deepEqual((await adapter.listModels(PROVIDER)).map(model => model.id), [...PACKYCODE_MODEL_IDS])
   await ring.disable(stored.id, 'quota')
   assert.deepEqual((await adapter.listModels(PROVIDER)).map(model => model.id), expected, 'every key moved aside')
+})
+
+test('an official review request never carries temperature to a model that rejects it', async t => {
+  const plain = { provider: 'packycode', model: 'gpt-6.1-terra', temperature: 0, messages: [] }
+  assert.equal(withoutReviewTemperature(plain), plain, 'an ordinary request keeps its temperature')
+  const purpose = withoutReviewTemperature({ ...plain, purpose: 'auto-review' })
+  assert.equal('temperature' in purpose, false, '0.2.2 marks the request')
+  assert.deepEqual(purpose, { provider: 'packycode', model: 'gpt-6.1-terra', messages: [], purpose: 'auto-review' })
+  const review = withoutReviewTemperature({ ...plain, system: 'REVIEW_POLICY\nYou are the reviewer.' })
+  assert.equal('temperature' in review, false, 'a 0.2.1 review is recognized by its policy')
+  assert.deepEqual(review, { provider: 'packycode', model: 'gpt-6.1-terra', messages: [], system: 'REVIEW_POLICY\nYou are the reviewer.' })
+
+  const ring = new PackyCodeKeyRing(fakeCredentials())
+  await ring.add('sk-route-review-fixture-not-a-real-key', 'fixture')
+  const keys = { active: () => ring.activeKey(), forRequest: (_model, key) => key, onKeyFailure() {} }
+  const adapter = createRouteAdapter({ ring, keys, fallbackSessionId: 'route-fixture' })
+  const bodies = []
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    bodies.push(JSON.parse(init.body))
+    return responsesStream()
+  })
+  const send = async (options) => {
+    const prepared = await adapter.prepareCall(PROVIDER, 'gpt-6.1-terra')
+    for await (const _chunk of prepared.stream({
+      provider: PROVIDER,
+      model: 'gpt-6.1-terra',
+      sessionId: 'route-fixture',
+      maxTokens: 256,
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'Reply with ok' }], source: { kind: 'user' } })],
+      ...options,
+    })) { /* drain */ }
+  }
+  await send({ purpose: 'auto-review', temperature: 0 })
+  await send({ temperature: 0 })
+  assert.equal(bodies.length, 2)
+  assert.equal(bodies[0].temperature, undefined, 'the review drops temperature')
+  assert.equal(bodies[1].temperature, 0, 'a normal turn keeps it')
 })
 
 test('resolved metadata carries context, modalities, and the vendor efforts', async () => {
