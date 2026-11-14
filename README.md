@@ -48,10 +48,10 @@
 打开桌面应用的**插件**页，点击**添加插件**，在**包名或地址**中填入**带版本号**的包名：
 
 ```text
-dsh-packycode-api@1.4.11
+dsh-packycode-api@1.4.12
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。`1.4.11` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
+在**安装源**中选择**官方源**，然后点击**安装**。`1.4.12` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
 
 > **一定要带版本号。** 只填 `dsh-packycode-api` 时，安装前的提示显示的是 npm 上的最新版，但 DSH 自带的 pnpm 默认只安装发布满 24 小时的版本，实际装上的可能是好几个版本之前的旧版，而安装提示里看不出这一点。填写精确版本时，pnpm 会直接安装这个版本，并自动把它加入 profile 的 `minimumReleaseAgeExclude`。装好后可以在 **设置 → PackyCode → 插件版本** 核对「当前版本」。
 
@@ -65,14 +65,14 @@ dsh-packycode-api@1.4.11
 
 ### 3. 选择模型
 
-回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十三个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
+回到对话，在模型选择器里选 `PackyCode` 分组下的模型。十五个模型里，Claude 在 `cc` 分组的 Key 上由本机 Claude Code CLI 执行，其余都通过插件内 HTTP 调用；Key 的分组必须覆盖所选模型。
 
 <details>
 <summary>检查安装 / 其它 profile / 本地目录</summary>
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.4.11`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.4.12`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -234,6 +234,7 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 | `gpt-5.6-sol` | 同上 | 同上 | 同上 |
 | `grok-4.7`（Grok 4.7） | HTTP，Responses，可带图；500k 上下文 | 不能关；`low` / `medium` / `high` / `xhigh` | 以设置页从网关读取的 Grok 分组覆盖为准 |
 | `hy4`（Hy4，腾讯混元） | HTTP，Responses，可带图；1024K 上下文（输入最多 960K），64K 输出 | 可关；只有 `high` | `hunyuan-officially` |
+| `gemini-4-carbon`（Gemini 4 Carbon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | 以 Key 的实时模型列表为准 |
 | `gemini-4-argon`（Gemini 4 Argon） | HTTP，Gemini 原生流式，可带图；1,048,576 上下文，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `gemini-3.8-flash`（Gemini 3.8 Flash） | HTTP，Gemini 原生流式，可带图；1,048,576 输入，65,536 输出 | 不能关；`low` / `medium` / `high` | `gemini-slb` |
 | `claude-fable-5-2`（Claude Fable 5.2） | Anthropic Messages，可带图和原生工具：`cc` 分组由本机 Claude Code CLI 当 agent，其它分组走 HTTP；1M 上下文，128K 输出 | 不能关；`low` / `medium` / `high` / `xhigh` / `max` | 以设置页读取的 Claude 分组覆盖为准 |
@@ -245,11 +246,11 @@ DSH 自带一个实验性插件「自动授权审查」，默认关闭。开启�
 
 `jev-1.14.0`（TypeSafe Jev）不在模型选择器里：它是只回答分类问题的决策模型，不能对话，只用于[自动审查](#自动审查)。PackyCode 按版本号列出它，不再提供 `jev-latest` 别名，所以插件直接发送 `jev-1.14.0`。插件在宿主侧直接调用 `/v1/systemone`，需要 Key 在 `typesafe-officially` 分组；「账户与 Key」里每个 Key 的「Jev」一项会显示能否使用。
 
-当前目录的 13 个模型中，除 DeepSeek V4 Pro 外都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。DeepSeek V4 Pro 按 [官方模型与价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 只收文字：DSH 不让给它附图，会话里已有的图片（比如从 Flash 切过来的会话）会换成一行「图片已省略」的说明再发送。PackyCode 网关收到发给 V4 Pro 的图片不报错，而是直接丢掉。
+当前目录的 15 个模型中，除 DeepSeek V4 Pro 外都声明了文字和图像输入。DeepSeek Flash 的识图能力按 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 配置；图片通过 DSH 附件服务读取，再随 Responses 请求发送。DeepSeek V4 Pro 按 [官方模型与价格页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/) 只收文字：DSH 不让给它附图，会话里已有的图片（比如从 Flash 切过来的会话）会换成一行「图片已省略」的说明再发送。PackyCode 网关收到发给 V4 Pro 的图片不报错，而是直接丢掉。
 
-Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。两款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。两者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
+Gemini 的能力与限制来自 Google 官方模型页：[Gemini 4 Carbon](https://aistudio.google.com/docs/models/gemini-4-carbon)、[Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)。三款模型统一使用 Gemini 原生协议，通过 `/v1beta/models/{model}:streamGenerateContent` 流式返回文字、思考和工具调用，图片仍由 DSH 附件服务读取。思考档位通过 `thinkingLevel` 传入。三者均使用单次流式输出上限，不执行超过 65,536 token 的自动续写。可用端点与分组以 [PackyAPI 实时模型目录](https://www.packyapi.com/api/pricing) 为准。
 
-**Gemini 工具续聊的思维签名：** PackyCode 的 Gemini 原生通道在工具调用场景下不能正确处理思维签名，会返回 HTTP 400 `Invalid thought signature` / `Corrupted thought signature`，原样重发也无济于事（PackyCode 客服的答复）。因此插件对 Gemini 4 Argon 和 Gemini 3.8 Flash 不再回传模型返回的签名，而是按 [Google 文档](https://ai.google.dev/gemini-api/docs/thought-signatures) 在需要签名的位置填入跳过校验的值 `skip_thought_signature_validator`。协议、端点和模型都不变，DSH 的回放记录仍保留原始签名。Google 提示跳过签名可能削弱多步工具调用之间的推理连贯性。Flash 仍保留原有兜底：HTTP 400 签名拒绝且尚未输出任何流事件时，等待 1 秒原样重发一次。这类 400 不会被当作 Key 失效。
+**Gemini 工具续聊的思维签名：** PackyCode 的 Gemini 原生通道在工具调用场景下不能正确处理思维签名，会返回 HTTP 400 `Invalid thought signature` / `Corrupted thought signature`，原样重发也无济于事（PackyCode 客服的答复）。因此插件对 Gemini 4 Carbon、Gemini 4 Argon 和 Gemini 3.8 Flash 不再回传模型返回的签名，而是按 [Google 文档](https://ai.google.dev/gemini-api/docs/thought-signatures) 在需要签名的位置填入跳过校验的值 `skip_thought_signature_validator`。协议、端点和模型都不变，DSH 的回放记录仍保留原始签名。Google 提示跳过签名可能削弱多步工具调用之间的推理连贯性。Flash 仍保留原有兜底：HTTP 400 签名拒绝且尚未输出任何流事件时，等待 1 秒原样重发一次。这类 400 不会被当作 Key 失效。
 
 Grok 4.7 的上下文与推理档位来自 [官方文档](https://docs.x.ai/developers/grok-4-7)。官方没有单独限制文字输出长度；插件将输出上限设为上下文大小，并按每次请求的剩余上下文收紧。
 
@@ -282,9 +283,9 @@ DeepSeek Flash 走网关的 Responses 接口（`/api/pricing` 列出 `openai-res
 
 ## 更新与卸载
 
-> **从 1.3.2 或更早版本升级：** 请在插件页填写 `dsh-packycode-api@1.4.11` 安装，不要点旧版设置页里的「更新插件」。旧按钮安装时会绕过 pnpm 的发布冷却期：装到的版本如果发布还不满 24 小时，这个 profile 在它满 24 小时之前就装不了其他插件。装好并重启后，按钮就换成了修好的版本，以后直接点即可。
+> **从 1.3.2 或更早版本升级：** 请在插件页填写 `dsh-packycode-api@1.4.12` 安装，不要点旧版设置页里的「更新插件」。旧按钮安装时会绕过 pnpm 的发布冷却期：装到的版本如果发布还不满 24 小时，这个 profile 在它满 24 小时之前就装不了其他插件。装好并重启后，按钮就换成了修好的版本，以后直接点即可。
 
-**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。安装遵守 pnpm 的发布冷却策略，不会绕过它：默认情况下 pnpm 会直接装上这个版本，并把它记进 profile 的 `minimumReleaseAgeExclude`；如果你给 pnpm 配了更严格的策略，按钮会提示什么时候可以更新。新版本号是从 npm 读到的，pnpm 却从 profile 配置的安装源下载：刚发布的版本，安装源（尤其是国内镜像）可能还没同步到，这时按钮会提示过几分钟再更新；连不上安装源时，会提示检查网络或代理。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.4.11`），否则装上的可能是发布满 24 小时的旧版。
+**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。安装遵守 pnpm 的发布冷却策略，不会绕过它：默认情况下 pnpm 会直接装上这个版本，并把它记进 profile 的 `minimumReleaseAgeExclude`；如果你给 pnpm 配了更严格的策略，按钮会提示什么时候可以更新。新版本号是从 npm 读到的，pnpm 却从 profile 配置的安装源下载：刚发布的版本，安装源（尤其是国内镜像）可能还没同步到，这时按钮会提示过几分钟再更新；连不上安装源时，会提示检查网络或代理。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.4.12`），否则装上的可能是发布满 24 小时的旧版。
 
 **从本地路径安装切回官方源时，必须先卸载。** 「更新」是 `pnpm add`，它只重写包目录里的文件，不会删除更早一次本地路径安装留在包目录内的 `node_modules`；那份旧依赖会继续挡住 DSH 自带的包，插件行加载失败且看不出原因。「卸载」执行的是 `pnpm remove`，会删掉整个包目录，重装才是干净的。用 `node scripts/install-check.mjs` 可以确认当前 profile 是否处于这个状态。
 
@@ -300,7 +301,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 有输出就是残留：从 npm 安装的包不会自带 `node_modules`，这一份通常来自更早一次「本地路径」安装（`file:` 或直接写路径，而不是 `link:`）。它位于 profile 目录内部，而 DSH 解析插件导入时优先使用 profile 内的副本，所以插件拿到的仍是那份旧依赖 —— 例如 `@deepseek-ai/schemastery` 3.18.2 没有 `Schema.volatile()`，模块在导入阶段就抛错。导入失败时 Loader 不会为这一行创建 fiber，客户端 bundle 也不会被组合，于是模型路由、RPC 通道和设置页全都不会出现。
 
-修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.4.11`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
+修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.4.12`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
 
 **首次安装后，设置页每张卡片都显示 `transport failure for /packycode-api/…: HTTP 405`？** 实际装上的是 1.1.6 或更早的版本，通常是因为安装时只填了包名：安装提示显示的是最新版，pnpm 实际装的却是发布满 24 小时的旧版（见「安装插件」）。这些旧版要等 DSH 重启、重建它的 `connection` 服务之后，才能注册设置通道。所以首次安装后 `/packycode-api` 通道还不存在，请求落到静态页面，返回 405；模型路由和设置页本身照常加载。1.1.7 起首次安装不需要重启。先确认装上的版本：
 

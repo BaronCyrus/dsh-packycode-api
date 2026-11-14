@@ -2,7 +2,7 @@
 import { clampThinkingLevel } from '@earendil-works/pi-ai'
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy'
 
-const GEMINI_MODELS = ['gemini-4-argon', 'gemini-3.8-flash']
+const GEMINI_MODELS = ['gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash']
 
 /**
  * Google's documented thought signature for a function call whose real one
@@ -55,8 +55,8 @@ function withPayload(options, rewrite) {
 const skipped = payload => ({ ...payload, contents: skipThoughtSignatures(payload.contents) })
 
 /**
- * pi-ai 0.85 treats Argon as a budget-based model, and defaults Flash to
- * MINIMAL when reasoning is omitted. Both models support LOW/MEDIUM/HIGH,
+ * Older pi-ai hosts treat Gemini 4 as budget-based models, and default Flash
+ * to MINIMAL when reasoning is omitted. These models support LOW/MEDIUM/HIGH,
  * default to MEDIUM and cannot disable thinking. Keep the native SDK stream,
  * credentials and tools; correct that config and send no real signature.
  */

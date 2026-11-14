@@ -32,7 +32,7 @@ async function page(t, cli) {
       keys: [
         { id: 'cc', groups: ['cc', 'codex'], coverage: CLAUDE_COVERAGE, claudeTransport: { transport: 'cli', reason: 'group', groups: ['cc'] } },
         { id: 'sale', groups: ['cc-sale'], coverage: CLAUDE_COVERAGE, claudeTransport: { transport: 'http', reason: 'group', groups: ['cc-sale'] } },
-        { id: 'gpt', groups: ['codex'], coverage: { 'gpt-6.1-sol': true, 'claude-opus-5-5': false }, claudeTransport: { transport: 'http', reason: 'group', groups: [] } },
+        { id: 'gpt', groups: ['codex'], coverage: { 'gpt-6.1-sol': true, 'gemini-4-carbon': true, 'claude-opus-5-5': false }, claudeTransport: { transport: 'http', reason: 'group', groups: [] } },
       ],
     }),
     'claude-cli/status': () => current,
@@ -185,4 +185,11 @@ test('each key that reaches Claude says which route its Claude requests take', a
   assert.ok(cli !== undefined)
   assert.match(cli[1], /分组 cc 只接受官方 Claude Code 客户端/u)
   assert.equal(http.length, 1, 'a key without Claude coverage gets no route chip')
+})
+
+test('a key whose only known Gemini coverage is Carbon shows the Gemini family', async t => {
+  const view = await page(t, INSTALLED)
+  const gemini = view.root.root.find(node => node.type === 'span' && node.props.title === '✓ gemini-4-carbon')
+  assert.equal(text(gemini), '✓ Gemini')
+  assert.equal(gemini.props['data-state'], 'ok')
 })

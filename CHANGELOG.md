@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.12
+
+- **Gemini 4 Carbon joins the catalog.** The plugin's stored key lists `gemini-4-carbon` in PackyCode's `/v1/models` with only the native `gemini` endpoint. The model uses `google-generative-ai` at `https://cf.api.fan/v1beta`, with text/image input, 1,048,576 context and 65,536 output per stream, following [Google's model page](https://aistudio.google.com/docs/models/gemini-4-carbon). Its thinking map offers `low` / `medium` / `high`, with no off, and the native SDK defaults to `medium`, following [Google's migration guide](https://aistudio.google.com/docs/whats-new-gemini-4-carbon). Longer output requires a separate continuation flow that this route does not implement.
+- **Carbon uses the existing Gemini integration.** It appears before Argon, is selected by default with existing model preferences, and participates in the settings page's Gemini coverage indicator. Its requests use the same thinking-level normalization and documented signature-skip value as the other Gemini models, while DSH retains returned signatures for replay. Coverage still follows the key's live model list and the gateway's pricing data; no group is guessed from the model name.
+- Validation, 2026-11-14:
+  - **Offline:** 581 tests, both rebuilt bundles and the versioned tarball. Carbon's three thinking levels, default level, image input, signed tool replay, host metadata, default selection, group coverage and built settings indicator are covered.
+  - **Live:** `scripts/live-check.mjs --model gemini-4-carbon --with-vision` returned `ok` at `high` and identified red and blue images at `low`. `scripts/gemini-tool-check.mjs --model gemini-4-carbon --reasoning medium` completed a tool call and its durable DSH continuation, with one HTTP 200 continuation request and the final answer `ok`. Both scripts used only a key already stored by this plugin.
+  - **Not checked:** the desktop app's own model picker and conversation flow; unrelated models were not re-probed for this catalog addition.
+
 ## 1.4.11
 
 - **QQ community at the bottom of the README and settings.** Both README languages now end with the plugin community's QR code. The PackyCode settings page ends with a localized Community and feedback card after Diagnostics, with the same original image scaled to fit the available width.

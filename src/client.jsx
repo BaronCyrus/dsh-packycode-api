@@ -39,7 +39,7 @@ const MODEL_FAMILIES = [
   ['GPT', ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol']],
   ['Grok', ['grok-4.7']],
   ['Hunyuan', ['hy4']],
-  ['Gemini', ['gemini-4-argon', 'gemini-3.8-flash']],
+  ['Gemini', ['gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash']],
   ['Claude', ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
   // Not in the picker: auto review's classifier.
   ['Jev', ['jev-1.14.0']],

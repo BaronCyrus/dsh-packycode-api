@@ -18,8 +18,9 @@
  * and V4 Pro alike), Grok 4.7
  * (docs.x.ai/developers/grok-4-7), Hy4 (`high` or `no_think`, TokenHub's
  * deep-thinking page cloud.tencent.com/document/product/1823/131208), and
- * Gemini 4 Argon and 3.8 Flash
- * (ai.google.dev/gemini-api/docs/models/gemini-4-argon and gemini-3.8-flash).
+ * Gemini 4 Carbon, 4 Argon and 3.8 Flash
+ * (aistudio.google.com/docs/models/gemini-4-carbon and
+ * ai.google.dev/gemini-api/docs/models/gemini-4-argon and gemini-3.8-flash).
  *
  * @module dsh-packycode-api/catalog
  */
@@ -109,7 +110,7 @@ const HY4_LEVELS = Object.freeze({
   max: null,
 })
 
-/** Gemini 4 Argon and 3.8 Flash support low | medium | high, with no off. */
+/** Gemini 4 Carbon, 4 Argon and 3.8 Flash support low | medium | high, with no off. */
 const GEMINI_LEVELS = Object.freeze({ ...ALWAYS_THINKING_LEVELS, xhigh: null, max: null })
 
 export const PACKYCODE_MODELS = Object.freeze([
@@ -253,6 +254,22 @@ export const PACKYCODE_MODELS = Object.freeze([
     contextWindow: 1_024_000,
     maxTokens: 64_000,
     thinkingLevelMap: HY4_LEVELS,
+  }),
+  Object.freeze({
+    // aistudio.google.com/docs/models/gemini-4-carbon: unified 1M context,
+    // 65,536 output per stream and low | medium | high thinking. PackyCode's
+    // key-scoped /v1/models lists only the native Gemini endpoint for Carbon.
+    id: 'gemini-4-carbon',
+    name: 'Gemini 4 Carbon',
+    api: 'google-generative-ai',
+    provider: PROVIDER,
+    baseUrl: GEMINI_BASE,
+    reasoning: true,
+    input: Object.freeze(['text', 'image']),
+    cost: NO_COST,
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+    thinkingLevelMap: GEMINI_LEVELS,
   }),
   Object.freeze({
     // ai.google.dev/gemini-api/docs/models/gemini-4-argon: unified 1M context

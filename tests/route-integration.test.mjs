@@ -137,12 +137,14 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
   assert.deepEqual(hy4.reasoning.efforts.map(effort => effort.id), ['off', 'high'])
   assert.equal(hy4.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
 
-  const gemini = await adapter.resolveModel(PROVIDER, 'gemini-4-argon')
-  assert.equal(gemini.name, 'Gemini 4 Argon')
-  assert.equal(gemini.context.contextWindow, 1_048_576)
-  assert.deepEqual([...gemini.inputModalities], ['text', 'image'])
-  assert.deepEqual(gemini.reasoning.efforts.map(effort => effort.id), ['low', 'medium', 'high'])
-  assert.equal(gemini.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
+  for (const [id, name] of [['gemini-4-carbon', 'Gemini 4 Carbon'], ['gemini-4-argon', 'Gemini 4 Argon']]) {
+    const gemini = await adapter.resolveModel(PROVIDER, id)
+    assert.equal(gemini.name, name)
+    assert.equal(gemini.context.contextWindow, 1_048_576)
+    assert.deepEqual([...gemini.inputModalities], ['text', 'image'])
+    assert.deepEqual(gemini.reasoning.efforts.map(effort => effort.id), ['low', 'medium', 'high'])
+    assert.equal(gemini.reasoning.defaultEffort, DEFAULT_REASONING_LEVEL)
+  }
   const flash = await adapter.resolveModel(PROVIDER, 'gemini-3.8-flash')
   assert.equal(flash.name, 'Gemini 3.8 Flash')
   assert.equal(flash.context.contextWindow, 1_048_576)

@@ -126,6 +126,7 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
     'gpt-5.6-sol': false,
     'grok-4.7': false,
     'hy4': false,
+    'gemini-4-carbon': false,
     'gemini-4-argon': false,
     'gemini-3.8-flash': false,
     'claude-fable-5-2': false,
@@ -137,14 +138,16 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
 })
 
 test('Gemini coverage uses gateway evidence without guessing a token group', () => {
-  const { modelGroups } = parsePricing({
-    data: [{ model_name: 'gemini-3.8-flash', enable_groups: ['fixture-gemini'] }],
-  })
-  assert.deepEqual(modelGroups['gemini-3.8-flash'], ['fixture-gemini'])
-  assert.equal(catalogCoverage({ groups: ['fixture-gemini'], modelGroups })['gemini-3.8-flash'], true)
-  assert.equal(catalogCoverage({ groups: ['codex'], modelGroups })['gemini-3.8-flash'], false)
-  assert.equal(catalogCoverage({ models: new Set(['gemini-3.8-flash']) })['gemini-3.8-flash'], true)
-  assert.equal(catalogCoverage({ groups: ['codex'] })['gemini-3.8-flash'], undefined)
+  for (const id of ['gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash']) {
+    const { modelGroups } = parsePricing({
+      data: [{ model_name: id, enable_groups: ['fixture-gemini'] }],
+    })
+    assert.deepEqual(modelGroups[id], ['fixture-gemini'])
+    assert.equal(catalogCoverage({ groups: ['fixture-gemini'], modelGroups })[id], true)
+    assert.equal(catalogCoverage({ groups: ['codex'], modelGroups })[id], false)
+    assert.equal(catalogCoverage({ models: new Set([id]) })[id], true)
+    assert.equal(catalogCoverage({ groups: ['codex'] })[id], undefined)
+  }
 })
 
 test('an image key ring reads which image engines each key is served', async () => {
