@@ -39,6 +39,7 @@ export const STYLE = `
 .pkc-input:disabled{opacity:.5}
 .pkc-diag-session{flex:1 1 260px;max-width:480px;cursor:pointer}
 .pkc-diag-text{width:100%;height:auto;min-height:220px;padding:8px 10px;line-height:18px;resize:vertical;white-space:pre;overflow:auto}
+.pkc-community-qr{display:block;align-self:flex-start;width:320px;max-width:100%;height:auto;border-radius:var(--dsw-radius-md,12px)}
 .pkc-image-choice{flex:none;width:100%;max-width:300px;cursor:pointer}
 .pkc-image-shortcut{display:inline-flex;align-items:center;gap:8px}
 .pkc-quota{position:relative;display:inline-flex;align-items:center}

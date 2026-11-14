@@ -204,6 +204,10 @@ export const zh = {
   diagNoFolder: '无目录',
   diagError: '生成诊断信息失败',
 
+  communityTitle: '交流与反馈',
+  communityIntro: '使用 QQ 扫描下方二维码，加入 DSH PackyCode 插件交流群。',
+  communityQrAlt: 'DSH PackyCode 插件 QQ 群二维码',
+
   searchTitle: '网页搜索',
   searchScope: 'DSH 全局设置',
   searchIntro: 'DSH 的 web_search 可使用这里选择的 DeepSeek/GPT 后端，Claude 与其它模型遵循相同的路由设置。每次搜索是独立的模型调用，用插件保存的 Key 计费。',
@@ -450,6 +454,10 @@ export const en = {
   diagLive: 'open',
   diagNoFolder: 'no folder',
   diagError: 'Could not generate diagnostics',
+
+  communityTitle: 'Community and feedback',
+  communityIntro: 'Scan the QR code with QQ to join the DSH PackyCode plugin community.',
+  communityQrAlt: 'QR code for the DSH PackyCode plugin QQ group',
 
   searchTitle: 'Web search',
   searchScope: 'DSH-wide setting',

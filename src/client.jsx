@@ -10,6 +10,7 @@
 
 import * as react from 'react'
 
+import communityQr from '../docs/assets/qq-group.jpeg'
 import { en, zh } from './client-copy.js'
 import { STYLE } from './client-style.js'
 import { installImagePresentation, PackyCodeImagesCard, PackyCodeImageShortcut } from './client-images.jsx'
@@ -964,6 +965,10 @@ function PackyCodeSection({ rpc, t }) {
       <AutoReviewCard call={call} t={t} />
       <VersionCard call={call} t={t} />
       <DiagnosticsCard call={call} t={t} />
+      <Card title={t('communityTitle')}>
+        <p className="pkc-note">{t('communityIntro')}</p>
+        <img className="pkc-community-qr" src={communityQr} alt={t('communityQrAlt')} width="1080" height="1920" loading="lazy" decoding="async" />
+      </Card>
     </div>
   )
 }

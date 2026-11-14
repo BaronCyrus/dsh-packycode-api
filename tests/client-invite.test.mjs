@@ -75,6 +75,7 @@ async function accountsFixture(t, { keys = [], statusFails = false, removeAllFai
     accounts,
     endpoints,
     headings: () => root.root.findAll(node => node.type === 'h3').map(text),
+    footer: () => root.root.findAllByType('section').at(-1),
     invites: () => root.root.findAll(node => node.type === 'a' && node.props.href === INVITE_URL),
     alerts: () => accounts().findAll(node => node.props.role === 'alert').map(text),
     async removeAll() {
@@ -92,7 +93,7 @@ async function accountsFixture(t, { keys = [], statusFails = false, removeAllFai
   }
 }
 
-test('the built settings page keeps the native controls and adds the Claude Code CLI card without installing', async t => {
+test('the built settings page keeps the native controls, detects the CLI and embeds the community QR code last', async t => {
   const page = await accountsFixture(t)
   for (const endpoint of ['status', 'images/status', 'models/status', 'search/status', 'plugin/version', 'claude-cli/status']) {
     assert.ok(page.endpoints.includes(endpoint), endpoint)
@@ -101,6 +102,12 @@ test('the built settings page keeps the native controls and adds the Claude Code
   assert.equal(page.endpoints.includes('claude-cli/install'), false)
   assert.ok(page.headings().includes(zh.cliTitle))
   assert.equal(page.headings().some(heading => /委派/u.test(heading)), false)
+  const footer = page.footer()
+  assert.equal(text(footer.findByType('h3')), zh.communityTitle)
+  const qr = footer.findByType('img')
+  assert.equal(qr.props.alt, zh.communityQrAlt)
+  const original = readFileSync(new URL('../docs/assets/qq-group.jpeg', import.meta.url))
+  assert.equal(qr.props.src, `data:image/jpeg;base64,${original.toString('base64')}`, 'the original QR code is bundled without a network dependency')
 })
 
 test('a profile with no stored key is offered the registration invite, opening outside DSH', async t => {

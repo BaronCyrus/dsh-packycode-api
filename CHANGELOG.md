@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.11
+
+- **QQ community at the bottom of the README and settings.** Both README languages now end with the plugin community's QR code. The PackyCode settings page ends with a localized Community and feedback card after Diagnostics, with the same original image scaled to fit the available width.
+- **The image ships with the plugin.** The client bundle embeds the original JPEG as a data URL, so displaying the settings card does not require an external image host. The package also includes the image used by both READMEs.
+- Validation, 2026-11-14: 576 tests, both rebuilt bundles and the versioned tarball. The built settings page test checks the final card and compares its embedded image with the original bytes; the packed image and client bundle were also checked. The desktop application's actual display was not checked, and live gateway checks were not rerun for this UI-only change.
+
 ## 1.4.10
 
 - **Auto review works again on DSH 0.2.2.** DSH 0.2.2-rc.2 changed the official reviewer's model request: the system prompt is still `REVIEW_POLICY`, but the user message is now the environment followed by one JSON Session item per message, with the pending tool call last, instead of 0.2.1's one message holding four labelled sections. The plugin recognized only the old layout, so on 0.2.2 it passed every review through to the session model: a chosen Jev or DeepSeek Flash reviewer was never used, and a session model that rejects `temperature` failed the review with `Unsupported parameter: temperature` (GPT-6.1 Terra and GPT-5.6 Sol do; DeepSeek accepts it). The plugin now recognizes the official reviewer by its fixed policy prompt, reads both layouts, and fails a review it cannot read instead of silently passing it through. Jev's state is built from the 0.2.2 items too (the environment, `user-instruction` and other roles, tool schemas, and the pending call with its arguments and schema), and its authorization question names both role spellings.

@@ -45,6 +45,8 @@ export default defineConfig([
     sourcemap: true,
     clean: false,
     deps: { neverBundle: clientExternal },
+    // Keep the community QR code available without an external image host.
+    loader: { '.jpeg': 'dataurl' },
     define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
     outputOptions: {
       entryFileNames: 'client.js',
