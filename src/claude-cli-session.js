@@ -97,6 +97,10 @@ export function buildCliEnvironment({ baseUrl, apiKey, configDir, maxTokens, con
     DISABLE_ERROR_REPORTING: '1',
     DISABLE_BUG_COMMAND: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    // Per-turn effort can add an empty system control message when the CLI
+    // resumes DSH's rebuilt history. Gateways that do not preserve its beta
+    // field reject it; keep top-level effort and adaptive thinking instead.
+    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
     // DSH's retry policy owns retries and key rotation; one DSH step is one request.
     CLAUDE_CODE_MAX_RETRIES: '0',
     CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: '1',

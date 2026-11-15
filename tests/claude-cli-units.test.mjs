@@ -88,6 +88,16 @@ test('CLI arguments and environment: Claude Code\'s own prompt and tools, permis
   assert.equal(cliErrorMessage('plain'), 'plain')
 })
 
+test('the CLI disables experimental gateway fields for fresh and continued turns without depending on ambient settings', () => {
+  for (const parent of [{}, { CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '0' }]) {
+    for (const continues of [false, true]) {
+      const env = buildCliEnvironment({ baseUrl: 'https://cf.api.fan', apiKey: 'sk-fixture', configDir: '/isolated/cli', parent, continues })
+      assert.equal(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, '1', 'per-turn effort can otherwise add an empty system control message that the gateway rejects')
+      assert.equal(env.CLAUDE_CONFIG_DIR, '/isolated/cli')
+    }
+  }
+})
+
 test('a request tells the transport its model, effort and DSH system text; the HTTP envelope is not part of it', () => {
   const request = describeRequest({ model: 'claude-sonnet-5-5', max_tokens: 8000, output_config: { effort: 'high' }, system: [{ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.295.abc;' }, { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." }, { type: 'text', text: '只回复标题。' }], messages: [] }, { apiKey: 'sk-a', baseUrl: 'https://cf.api.fan', cwd: '/w' })
   assert.equal(request.model, 'claude-sonnet-5-5')
