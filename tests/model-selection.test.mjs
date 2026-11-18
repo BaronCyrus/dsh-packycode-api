@@ -107,9 +107,9 @@ for (const generation of ['0.1', '0.2']) {
     assert.deepEqual((await env.reapply().seen.adapter.listModels('packycode')).map(model => model.id), ['deepseek-flash', 'grok-4.7'])
 
     // Resolution and preparation use the full catalog for existing sessions.
-    const hidden = await seen.adapter.resolveModel('packycode', 'gpt-6.1-sol')
-    assert.equal(hidden.id, 'gpt-6.1-sol')
-    assert.equal((await seen.adapter.prepareCall('packycode', 'gpt-6.1-sol')).model.id, 'gpt-6.1-sol')
+    const hidden = await seen.adapter.resolveModel('packycode', 'gpt-6.2-sol')
+    assert.equal(hidden.id, 'gpt-6.2-sol')
+    assert.equal((await seen.adapter.prepareCall('packycode', 'gpt-6.2-sol')).model.id, 'gpt-6.2-sol')
     assert.equal((await seen.adapter.resolveModel('packycode', 'claude-opus-5-5')).id, 'claude-opus-5-5')
 
     await seen.handler('models/update', { selectedIds: [] })
@@ -123,9 +123,9 @@ for (const generation of ['0.1', '0.2']) {
 
 test('a volatile edit elsewhere refreshes only once, without changing other settings', async () => {
   const { seen, changeHidden } = host()
-  changeHidden(['gpt-6-astra', 'deepseek-flash'])
+  changeHidden(['gpt-6.2-astra', 'deepseek-flash'])
   assert.equal(seen.notifications, 1)
-  changeHidden(['deepseek-flash', 'gpt-6-astra', 'deepseek-flash', 'future-model'])
+  changeHidden(['deepseek-flash', 'gpt-6.2-astra', 'deepseek-flash', 'future-model'])
   assert.equal(seen.notifications, 1, 'order, duplicates and unknown exclusions do not change the picker')
   assert.deepEqual(seen.updates, [])
   assert.ok((await seen.adapter.listModels('packycode')).some(model => model.id === 'gemini-3.8-flash'), 'new models default to selected')

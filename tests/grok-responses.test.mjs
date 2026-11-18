@@ -55,7 +55,7 @@ test('Grok uses Responses and its four efforts without the cache key this gatewa
 
 test('GPT keeps the session cache key its gateway route requires', async () => {
   const provider = hostProvider(createPackyCodeProvider())
-  const model = provider.getModels().find(model => model.id === 'gpt-6.1-sol')
+  const model = provider.getModels().find(model => model.id === 'gpt-6.2-sol')
   let payload
   const stream = provider.streamSimple(model, { messages: [{ role: 'user', content: 'Reply with ok', timestamp: 1 }] }, {
     apiKey: 'sk-fixture-only-not-a-real-key', sessionId: 'gpt-session', reasoning: 'high',

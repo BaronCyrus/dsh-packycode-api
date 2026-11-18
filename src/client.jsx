@@ -36,7 +36,7 @@ const FOREIGN_NAMES = { codex: 'Codex', kimi: 'Kimi' }
 /** The catalog's models by family, for the "reaches" line under each key. */
 const MODEL_FAMILIES = [
   ['DeepSeek', ['deepseek-flash', 'deepseek-v4-pro']],
-  ['GPT', ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol']],
+  ['GPT', ['gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6.2-astra']],
   ['Grok', ['grok-4.7']],
   ['Hunyuan', ['hy4']],
   ['Gemini', ['gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash']],
@@ -491,7 +491,7 @@ function SearchCard({ call, t }) {
   const disabled = busy || state?.writable !== true
   const modeHint = { default: 'searchModeDefaultHint', auto: 'searchModeAutoHint', packycode: 'searchModePackycodeHint' }[mode]
   const backendHint = backend === 'gpt'
-    ? fill(t('searchBackendGptHint'), { model: models.gpt ?? 'gpt-6.1-sol' })
+    ? fill(t('searchBackendGptHint'), { model: models.gpt ?? 'gpt-6.2-sol' })
     : fill(t('searchBackendDeepseekHint'), { model: models.deepseek ?? 'deepseek-flash' })
 
   return (

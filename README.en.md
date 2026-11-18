@@ -48,10 +48,10 @@ You need **DeepSeek Harness** and a **PackyCode (PackyAPI) API key**. For DSH se
 Open the desktop application's **Plugins** page, click **Add plugin**, and enter the package name **with a version** as the **package name or address**:
 
 ```text
-dsh-packycode-api@1.4.13
+dsh-packycode-api@1.4.14
 ```
 
-Choose the **official** install source, then click **Install**. `1.4.13` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
+Choose the **official** install source, then click **Install**. `1.4.14` was the latest release when this was written; the [npm page](https://www.npmjs.com/package/dsh-packycode-api) shows the current one.
 
 > **Always include the version.** With a bare `dsh-packycode-api`, the install prompt shows the newest version on npm, but DSH's bundled pnpm by default installs only versions published at least 24 hours ago, so you can end up several releases behind with no sign of it in the prompt. With an exact version, pnpm installs that version and adds it to the profile's `minimumReleaseAgeExclude` itself. Afterwards, check **Current version** under **Settings → PackyCode → Plugin version**.
 
@@ -65,14 +65,14 @@ Open **Settings → PackyCode**. Paste the API key under **Add a key**. A label 
 
 ### 3. Select a model
 
-Choose a model from the `PackyCode` group. Of the fifteen models, Claude runs through this device's Claude Code CLI on `cc` keys; everything else uses the plugin’s HTTP route. Your key’s groups must cover the selected model.
+Choose a model from the `PackyCode` group. Claude runs through this device's Claude Code CLI on `cc` keys; everything else uses the plugin’s HTTP route. Your key’s groups must cover the selected model.
 
 <details>
 <summary>Verify the install / other profiles / a local checkout</summary>
 
 The **Plugins** page shows the installed state and version, and is also where you enable, disable, or uninstall.
 
-**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.4.13`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
+**For non-desktop profiles only:** `dsh plugin --profile <name> add dsh-packycode-api@1.4.14`. Do not use it for `desktop` — the CLI refuses it (`profile "desktop" is managed exclusively by the Electron application`).
 
 For a local checkout, keep the `link:` prefix: `dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`. **Do not pass a bare path or `file:`** — that install copies the whole checkout, `node_modules` included, into the profile, where it then shadows the packages the DSH installation itself provides and the plugin looks uninstalled; see the FAQ. If you already installed that way, uninstall first and reinstall as above.
 
@@ -103,7 +103,7 @@ A profile without a browser can still use the model route. It just has no settin
 | Backend | Model and protocol | Notes |
 | --- | --- | --- |
 | DeepSeek (default) | `deepseek-flash`, `/v1/messages` + `web_search_20250305` | A few thousand tokens per search; needs a DeepSeek group |
-| GPT | `gpt-6.1-sol`, `/v1/responses` + `web_search` | Usually fresher and more precise, about 20–30K input tokens per search; needs the gateway to route this key's GPT requests to its group |
+| GPT | `gpt-6.2-sol`, `/v1/responses` + `web_search` | Needs the gateway to route this key's GPT requests to `codex` or `codex-sale` |
 
 PackyCode has no dedicated search endpoint: one search is one model call with a server-side search tool, billed to the keys stored here. An exhausted or rejected key rotates exactly as on the model route.
 
@@ -206,7 +206,7 @@ The card shows whether DSH's plugin is on, how many reviews this plugin answered
 - DSH's reviewer sends one model request per review:
   - its fixed `REVIEW_POLICY` as the system prompt;
   - DSH 0.2.1 puts the review in one user message holding four JSON sections: ENVIRONMENT, PROJECT_INSTRUCTIONS, FILTERED_HISTORY, PENDING_ACTION; DSH 0.2.2 sends the environment first and then one JSON Session item per message, the pending tool call last. The plugin reads both layouts;
-  - and it expects one `{"risk","decision","reason"?}` object back. Its `temperature: 0` is dropped before a PackyCode model sees it: GPT-6.1 Terra and GPT-5.6 Sol reject it with `Unsupported parameter: temperature`, and the review's answer does not depend on sampling.
+  - and it expects one `{"risk","decision","reason"?}` object back. Its `temperature: 0` is dropped before a PackyCode model sees it: some models, including GPT-6.1 Terra, reject it with `Unsupported parameter: temperature`, and the review's answer does not depend on sampling.
 - Every model request passes DSH's `llm/stream` waterfall. The plugin recognizes only this request there; conversation turns and everything else go on untouched.
 - **DeepSeek Flash** gets the same request, re-addressed to the PackyCode route; DSH still reads its answer.
 - **jev-1.14.0** cannot write that object. The plugin passes the four sections and the official policy text to System One as the state and asks two questions: the risk, and whether you explicitly asked for this action.
@@ -229,10 +229,9 @@ The card shows whether DSH's plugin is on, how many reviews this plugin answered
 | --- | --- | --- | --- |
 | `deepseek-flash` | HTTP, Responses, images allowed | Can be off; `low` / `high` / `max` | `deepseek-officially`, `deepseek-sale` |
 | `deepseek-v4-pro` (DeepSeek V4 Pro) | HTTP, Responses, text only; 1M context, 384K output | Same | Same |
-| `gpt-6.1-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
+| `gpt-6.2-sol` | HTTP, Responses, images allowed | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | `codex`, `codex-sale` |
 | `gpt-6.1-terra` (GPT-6.1 Terra) | Same | Can be off; `low` / `medium` / `high` / `xhigh` / `max` | Same |
-| `gpt-6-astra` | Same | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | Same |
-| `gpt-5.6-sol` | Same | Same | Same |
+| `gpt-6.2-astra` | Same | Cannot be off; `low` / `medium` / `high` / `xhigh` / `max` | Same |
 | `grok-4.7` (Grok 4.7) | HTTP, Responses, text/image input; 500K context | Cannot be off; `low` / `medium` / `high` / `xhigh` | The Grok coverage read from the gateway in Settings |
 | `hy4` (Hy4, Tencent Hunyuan) | HTTP, Responses, text/image input; 1024K context (at most 960K input), 64K output | Can be off; `high` only | `hunyuan-officially` |
 | `gemini-4-carbon` (Gemini 4 Carbon) | HTTP, native Gemini streaming, text/image input; 1,048,576 context, 65,536 output | Cannot be off; `low` / `medium` / `high` | See the key's live model list |
@@ -243,11 +242,11 @@ The card shows whether DSH's plugin is on, how many reviews this plugin answered
 | `claude-sonnet-5-5` | Same | Same | Same |
 | `claude-haiku-5-5` | Same; also generates Claude session titles | Same | Same |
 
-A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want.
+A model in the list does not mean the current token group allows it. When changing groups, do not drop the group that serves the model you still want. If an existing session uses a removed GPT model, select a different model in the picker; the plugin will not switch it automatically.
 
 `jev-1.14.0` (TypeSafe Jev) is not in the model picker: it is a decision model that answers classification questions and cannot hold a conversation, so it only serves [Auto review](#auto-review). PackyCode lists it by version and no longer offers the `jev-latest` alias, so the plugin sends `jev-1.14.0` itself. It calls `/v1/systemone` host-side and needs a key in the `typesafe-officially` group; each key's Jev entry under Accounts and keys shows whether it can.
 
-Of the fifteen models in the current catalog, all but DeepSeek V4 Pro declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Responses request. DeepSeek V4 Pro takes text only, per DeepSeek's [models and pricing page](https://api-docs.deepseek.com/quick_start/pricing/): DSH does not let you attach an image to it, and an image already in the session (say, one switched over from Flash) is sent as a one-line "image omitted" note. PackyCode's gateway does not refuse an image sent to V4 Pro; it drops it.
+All models in the current catalog except DeepSeek V4 Pro declare text and image input. DeepSeek Flash follows the [official vision guide](https://api-docs.deepseek.com/guides/vision/); images are read through DSH's attachment service and sent with the Responses request. DeepSeek V4 Pro takes text only, per DeepSeek's [models and pricing page](https://api-docs.deepseek.com/quick_start/pricing/): DSH does not let you attach an image to it, and an image already in the session (say, one switched over from Flash) is sent as a one-line "image omitted" note. PackyCode's gateway does not refuse an image sent to V4 Pro; it drops it.
 
 Gemini capabilities and limits follow Google's model pages: [Gemini 4 Carbon](https://aistudio.google.com/docs/models/gemini-4-carbon), [Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon), [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash). All three models use the native Gemini protocol through `/v1beta/models/{model}:streamGenerateContent`, streaming text, thinking and tool calls; images are read through DSH's attachment service. Thinking levels are sent with `thinkingLevel`. All three routes use the single-stream output limit without automatic continuation beyond 65,536 tokens. Available endpoints and groups follow the [PackyAPI live model catalog](https://www.packyapi.com/api/pricing).
 
@@ -259,7 +258,7 @@ Hy4's protocols, context, output limit and image input follow Tencent Cloud Toke
 
 Only GPT Responses requests keep `prompt_cache_key`; other Responses models omit it by default. This gateway's Grok route reports a misleading `Incorrect API key provided` error when the field is present, and DeepSeek Flash and Hy4 hit their prefix caches without it. GPT tool definitions also carry an explicit `strict: false`: PackyCode's GPT route treats a tool without `strict` as strict, which forces the model to fill every optional parameter (see the FAQ).
 
-GPT-6.1 Terra's context, output limit and effort levels follow OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra). It is the only GPT model whose reasoning can be off: with effort off it sends `reasoning.effort: "none"`, which the gateway passes through, and the answer comes back without reasoning. GPT-5.6 Sol's documentation lists `none` too, but through PackyCode it answers at `medium`, so it cannot be off.
+GPT-6.1 Terra's context, output limit and effort levels follow OpenAI's [model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra). It is the only GPT model whose reasoning can be off: with effort off it sends `reasoning.effort: "none"`, which the gateway passes through, and the answer comes back without reasoning.
 
 DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `openai-response`). With effort off it sends `reasoning.effort: "none"`, and the gateway answers without reasoning; otherwise reasoning comes back as `reasoning_text` and is sent back with the same turn's tool calls.
 
@@ -274,7 +273,7 @@ DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `open
 - Claude streams finish at `message_stop` without waiting for the gateway to close the HTTP body, and CRLF delimiters remain intact across network chunks. Stream errors and cancellation still surface; waiting for response headers is not counted as success.
 - Offered DSH bash/read/write/edit/glob/grep tools use canonical CLI names such as `Bash` and `Read` over HTTP; other tools use MCP names. Through the CLI, DSH's tools are not sent to Claude Code. Only aliases declared for the current request regain their original names before DSH dispatch; unknown names never grant execution. Arguments, call IDs, results and signed history remain intact. Thinking display follows the CLI defaults: `omitted` for Haiku and `updates` with its required beta for Sonnet and Opus. Reasoning effort and output limits remain unchanged, signatures on empty thinking blocks survive replay, and explicit display options take precedence.
 - When the legacy working-directory sentence agrees with the initiating session metadata, Claude receives the exact path as a separate JSON string. Sentence punctuation stays outside the path; real trailing dots, Windows drive/UNC paths, spaces and backslashes remain intact. Commands are never trimmed or rewritten. Shell guidance prefers the current directory or `workdir`, preserving PowerShell syntax for Windows tools.
-- Claude turns on both routes retain the full DSH tool loop, permissions and plan mode, using host search and image tools. Claude titles use Haiku on the same route as the conversation; GPT-6 Astra and GPT-5.6 Sol titles use GPT-6.1 Sol, and DeepSeek V4 Pro titles use DeepSeek Flash.
+- Claude turns on both routes retain the full DSH tool loop, permissions and plan mode, using host search and image tools. Claude titles use Haiku on the same route as the conversation; GPT-6.2 Astra titles use GPT-6.2 Sol, and DeepSeek V4 Pro titles use DeepSeek Flash.
 - The 1.2 `claudeCliMode` / `claudeCliCwd` settings do not return: Claude Code's permissions follow the session's DSH permission preset, and its working directory is the session's. The tool named `claude_code` is now the mirror tool that shows Claude Code's tool calls in cc sessions; only the plugin uses it, and it is not the 1.2 delegation tool. `claudeCliPath` applies again and names the CLI (empty means the usual install places, then PATH). 1.3.4's `claudeTransport` is removed, and a value left in a profile is ignored. Separately installed Claude Code is only modified when you click **Update Claude Code CLI** in the CLI card.
 - Codex Responses requests still need `prompt_cache_key`; the plugin supplies a missing session identity. Other Responses families omit it.
 - After building, `node scripts/claude-check.mjs` checks all four Claude models on order totals, support triage, replenishment, read-only inventory tool roundtrips, product color labels, Chinese titles and plan mode (read-only lookup → plan submitted with `exit_plan_mode` → approval), validating the business answers; `--transport cli` runs the cc route's checks instead (`scripts/claude-agent-check.mjs`): in a scratch directory Claude Code reads a file and computes, edits one (approved), deletes one (refused), plans and then implements after review, asks a question, reads an image and names a session, and the files and answers are checked, with the gateway's client-anomaly and anti-abuse refusals counted. `node scripts/claude-stability.mjs --start --hours 6 --key-label <label>` starts a deadline- and request-budget-limited window. Invoke the same script on a schedule to sample again; `--status` reads the record. Each round records its build and scenario version. A test-message policy refusal fails that check while the other scheduled checks continue; real credential or quota failures still stop the window. Checks never change stored credentials or start DSH.
@@ -284,9 +283,9 @@ DeepSeek Flash uses the gateway's Responses endpoint (`/api/pricing` lists `open
 
 ## Update and uninstall
 
-> **Upgrading from 1.3.2 or earlier:** install `dsh-packycode-api@1.4.13` on the Plugins page instead of clicking **Update plugin** in the old settings card. The old button bypasses pnpm's release-age policy: if the version it installs is less than 24 hours old, the profile refuses every other plugin install until that version is 24 hours old. After the install and a restart, the button is the fixed one, and later updates can use it.
+> **Upgrading from 1.3.2 or earlier:** install `dsh-packycode-api@1.4.14` on the Plugins page instead of clicking **Update plugin** in the old settings card. The old button bypasses pnpm's release-age policy: if the version it installs is less than 24 hours old, the profile refuses every other plugin install until that version is 24 hours old. After the install and a restart, the button is the fixed one, and later updates can use it.
 
-**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. The install keeps pnpm's release-age policy instead of overriding it: by default pnpm installs the version at once and records it in the profile's `minimumReleaseAgeExclude`; under a stricter pnpm policy the button says when the update can run. The newer version is read from npm, while pnpm downloads it from the profile's own install source: right after a release that source (a regional mirror in particular) may not have it yet, and the button asks you to update again in a few minutes; when the source cannot be reached, it asks you to check the network or proxy. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.4.13`); without it you may get a version that is merely the newest one published at least 24 hours ago.
+**Update:** open **Settings → PackyCode** and, when a newer version is listed, click **Update plugin**. It installs that exact version into the owning profile with DSH's bundled pnpm and reads `package.json` back before reporting success. The install keeps pnpm's release-age policy instead of overriding it: by default pnpm installs the version at once and records it in the profile's `minimumReleaseAgeExclude`; under a stricter pnpm policy the button says when the update can run. The newer version is read from npm, while pnpm downloads it from the profile's own install source: right after a release that source (a regional mirror in particular) may not have it yet, and the button asks you to update again in a few minutes; when the source cannot be reached, it asks you to check the network or proxy. A local `link:` checkout does not get the button. Then quit and reopen the desktop application. A page refresh does not reload the Host. Reinstalling from the **Plugins** page works too, again with the version in the package name (for example `dsh-packycode-api@1.4.14`); without it you may get a version that is merely the newest one published at least 24 hours ago.
 
 **Coming back from a local-path install, uninstall first.** An update is a `pnpm add`: it rewrites the files inside the package directory and leaves a `node_modules` that an earlier local-path install left there. That older tree keeps shadowing the packages the DSH installation provides, so the plugin row fails to load with no visible reason. **Uninstall** runs `pnpm remove`, which deletes the package directory outright — only a reinstall after that is clean. `node scripts/install-check.mjs` reports whether a profile is in that state.
 
@@ -302,7 +301,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 Output means a leftover tree: a registry install ships no `node_modules`, so this one usually comes from an earlier local-path install (`file:`, or a bare path instead of `link:`). It sits inside the profile directory, and DSH resolves a plugin's imports from inside the profile first, so the plugin gets those old copies — for example `@deepseek-ai/schemastery` 3.18.2, which has no `Schema.volatile()`, so the module throws while it is imported. When an import fails the Loader creates no fiber for that row and no client bundle is composed either, so the model route, the RPC channel, and the settings panel all stay absent.
 
-Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.4.13`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
+Recovery: **uninstall** the plugin on the **Plugins** page, **install** it again with the version in the package name (for example `dsh-packycode-api@1.4.14`), then quit and reopen the desktop application. Uninstall runs `pnpm remove` and deletes the whole package directory; reinstalling or clicking **Update** only rewrites files and keeps the leftover tree. Deleting that `node_modules` by hand and restarting works too.
 
 **Right after a first install, every card in Settings shows `transport failure for /packycode-api/…: HTTP 405`?** The installed version is 1.1.6 or earlier, usually because only the bare package name was entered: the install prompt shows the newest version, but pnpm installs the newest one published at least 24 hours ago (see **Install the plugin**). Those older versions can register their settings channel only after DSH restarts and rebuilds its `connection` service. So right after a first install `/packycode-api` does not exist yet, requests fall through to the static page, and it answers 405; the model route and the settings panel itself load normally. From 1.1.7 on, a first install needs no restart. Check which version was installed:
 

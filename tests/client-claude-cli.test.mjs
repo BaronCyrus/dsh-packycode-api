@@ -32,7 +32,7 @@ async function page(t, cli) {
       keys: [
         { id: 'cc', groups: ['cc', 'codex'], coverage: CLAUDE_COVERAGE, claudeTransport: { transport: 'cli', reason: 'group', groups: ['cc'] } },
         { id: 'sale', groups: ['cc-sale'], coverage: CLAUDE_COVERAGE, claudeTransport: { transport: 'http', reason: 'group', groups: ['cc-sale'] } },
-        { id: 'gpt', groups: ['codex'], coverage: { 'gpt-6.1-sol': true, 'gemini-4-carbon': true, 'claude-opus-5-5': false }, claudeTransport: { transport: 'http', reason: 'group', groups: [] } },
+        { id: 'gpt', groups: ['codex'], coverage: { 'gpt-6.2-sol': true, 'gpt-6.2-astra': true, 'gemini-4-carbon': true, 'claude-opus-5-5': false }, claudeTransport: { transport: 'http', reason: 'group', groups: [] } },
       ],
     }),
     'claude-cli/status': () => current,
@@ -192,4 +192,11 @@ test('a key whose only known Gemini coverage is Carbon shows the Gemini family',
   const gemini = view.root.root.find(node => node.type === 'span' && node.props.title === '✓ gemini-4-carbon')
   assert.equal(text(gemini), '✓ Gemini')
   assert.equal(gemini.props['data-state'], 'ok')
+})
+
+test('the GPT coverage chip names both GPT-6.2 models', async t => {
+  const view = await page(t, INSTALLED)
+  const gpt = view.root.root.find(node => node.type === 'span' && node.props.title === '✓ gpt-6.2-sol\n✓ gpt-6.2-astra')
+  assert.equal(text(gpt), '✓ GPT')
+  assert.equal(gpt.props['data-state'], 'ok')
 })

@@ -33,8 +33,7 @@ const REQUEST_LIMITS = Object.freeze({
 /** Short titles use a smaller model in the same supplier/key group. */
 const TITLE_MODELS = Object.freeze({
   'deepseek-v4-pro': 'deepseek-flash',
-  'gpt-6-astra': 'gpt-6.1-sol',
-  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-6.2-astra': 'gpt-6.2-sol',
   'claude-fable-5-2': 'claude-haiku-5-5',
   'claude-opus-5-5': 'claude-haiku-5-5',
   'claude-sonnet-5-5': 'claude-haiku-5-5',
@@ -56,7 +55,7 @@ function titleRequest(options) {
 
 /**
  * The official reviewer asks for `temperature: 0`, but some models behind the
- * gateway reject that field outright (GPT-6.1 Terra and GPT-5.6 Sol answer
+ * gateway reject that field outright (GPT-6.1 Terra, for example, answers
  * `Unsupported parameter: temperature`), which fails the whole review. A
  * review's answer does not depend on sampling, so the route drops it for the
  * official review requests — DSH 0.2.2 marks them `purpose: 'auto-review'`,

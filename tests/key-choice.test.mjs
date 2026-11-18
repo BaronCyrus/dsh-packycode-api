@@ -16,7 +16,7 @@ const GROUPS = { [KEY_CODEX]: ['codex'], [KEY_DEEPSEEK]: ['deepseek-officially']
 const PRICING = {
   data: [
     { model_name: 'deepseek-flash', enable_groups: ['deepseek-officially'] },
-    { model_name: 'gpt-6.1-sol', enable_groups: ['codex'] },
+    { model_name: 'gpt-6.2-sol', enable_groups: ['codex', 'codex-sale'] },
     { model_name: 'claude-opus-5-5', enable_groups: ['cc', 'cc-sale'] },
     { model_name: 'claude-haiku-5-5', enable_groups: ['cc', 'cc-sale'] },
   ],

@@ -158,7 +158,7 @@ test('DSH 0.2: both providers register, and the panel switches routing through t
   assert.equal(initial.value.writable, true)
   assert.equal(initial.value.available, true)
   assert.deepEqual(initial.value.effective, { base: 'deepseek-official', runtime: 'codex-subscription-auto' })
-  assert.deepEqual(initial.value.models, { deepseek: 'deepseek-flash', gpt: 'gpt-6.1-sol' })
+  assert.deepEqual(initial.value.models, { deepseek: 'deepseek-flash', gpt: 'gpt-6.2-sol' })
   assert.equal(await readFile(env.patchPath, 'utf8'), USER_PATCH, 'the default selection writes nothing')
 
   const auto = await env.seen.handler('search/update', { searchProvider: 'auto' })

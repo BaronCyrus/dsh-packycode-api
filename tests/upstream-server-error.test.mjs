@@ -9,7 +9,7 @@ import { createRouteAdapter } from '../src/route.js'
 import { fakeCredentials } from './helpers.mjs'
 
 const KEY = 'sk-fixture-only-not-a-real-key'
-const MODEL = 'gpt-6.1-sol'
+const MODEL = 'gpt-6.2-sol'
 /** OpenAI's `server_error` sentence, as the Codex group relayed it on 2026-10-16. */
 const SERVER_ERROR = 'An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.'
 

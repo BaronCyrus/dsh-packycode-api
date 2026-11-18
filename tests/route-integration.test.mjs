@@ -155,14 +155,16 @@ test('resolved metadata carries context, modalities, and the vendor efforts', as
 
 test('a session set to a model that left the catalog is refused as an unknown model', async () => {
   const { adapter, reads } = route()
-  await assert.rejects(async () => adapter.prepareCall(PROVIDER, 'gemini-left-catalog'), { code: 'UNKNOWN_MODEL', message: /no configured model "gemini-left-catalog"/u })
+  for (const model of ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-sol']) {
+    await assert.rejects(async () => adapter.prepareCall(PROVIDER, model), { code: 'UNKNOWN_MODEL', message: `pi-ai provider "${PROVIDER}" has no configured model "${model}"` })
+  }
   assert.deepEqual(reads, [])
 })
 
 test('preparing a call returns the model and a stream, without opening one', async () => {
   const { adapter, reads } = route()
-  const prepared = await adapter.prepareCall(PROVIDER, 'gpt-6.1-sol')
-  assert.equal(prepared.model.id, 'gpt-6.1-sol')
+  const prepared = await adapter.prepareCall(PROVIDER, 'gpt-6.2-sol')
+  assert.equal(prepared.model.id, 'gpt-6.2-sol')
   assert.equal(typeof prepared.stream, 'function')
   assert.deepEqual(reads, [])
 })

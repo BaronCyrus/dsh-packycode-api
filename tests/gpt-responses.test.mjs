@@ -67,11 +67,22 @@ test('GPT-6.1 Terra takes each documented effort through the route, and off as e
   assert.equal(bodies.length, 6)
 })
 
+test('both GPT-6.2 models send every offered reasoning effort on Responses', async t => {
+  const { send } = await route(t)
+  for (const model of ['gpt-6.2-sol', 'gpt-6.2-astra']) {
+    for (const reasoningEffort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      const body = await send(model, { reasoningEffort })
+      assert.equal(body.model, model)
+      assert.equal(body.reasoning.effort, reasoningEffort, model)
+    }
+  }
+})
+
 test('GPT sends DSH\'s tools with strict false, so the model may leave the sandbox escalation pair out', async t => {
   const { send } = await route(t)
   // Without `strict`, PackyCode's GPT route made the model fill every optional
   // parameter, and edit/write refused the empty justification it gave.
-  for (const model of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol']) {
+  for (const model of ['gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6.2-astra']) {
     const [tool] = (await send(model, { reasoningEffort: 'high', tools: [BASH] })).tools
     assert.equal(tool.name, 'bash', model)
     assert.equal(tool.strict, false, model)

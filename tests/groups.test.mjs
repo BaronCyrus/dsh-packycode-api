@@ -20,8 +20,9 @@ const PRICING = {
   data: [
     { model_name: 'deepseek-flash', enable_groups: ['deepseek-sale', 'deepseek-officially'] },
     { model_name: 'deepseek-v4-pro', enable_groups: ['deepseek-officially', 'deepseek-sale'] },
-    { model_name: 'gpt-6.1-sol', enable_groups: ['codex', 'codex-sale', 'azure-officially'] },
-    { model_name: 'gpt-6-astra', enable_groups: ['azure-officially', 'codex', 'codex-sale'] },
+    { model_name: 'gpt-6.2-sol', enable_groups: ['codex-sale', 'codex'], supported_endpoint_types: ['openai-response'] },
+    { model_name: 'gpt-6.2-astra', enable_groups: ['codex-sale', 'codex'], supported_endpoint_types: ['openai-response'] },
+    { model_name: 'gpt-5.6-sol', enable_groups: ['azure-officially', 'codex-sale', 'codex'] },
     { model_name: 'claude-fable-5-2', enable_groups: ['aws-q', 'cc-expensive', 'cc', 'claude-officially', 'cc-sale'], supported_endpoint_types: ['anthropic'] },
     { model_name: 'claude-opus-5-5', enable_groups: ['cc', 'cc-expensive', 'claude-officially', 'cc-sale'] },
     { model_name: 'claude-sonnet-5-5', enable_groups: ['cc-expensive', 'claude-officially', 'cc-sale', 'cc'] },
@@ -84,7 +85,7 @@ test('a reading that could not reach a key is retried after a short wait, not af
 test('pricing keeps the catalog models\' groups and each group\'s description', () => {
   const pricing = parsePricing(PRICING)
   // jev-1.14.0 is not in the picker, but auto review asks it, so its group counts.
-  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6-astra', 'gpt-6.1-sol', 'hy4', 'jev-1.14.0'])
+  assert.deepEqual(Object.keys(pricing.modelGroups).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash', 'deepseek-v4-pro', 'gpt-6.2-astra', 'gpt-6.2-sol', 'hy4', 'jev-1.14.0'])
   assert.deepEqual(pricing.modelGroups['jev-1.14.0'], ['typesafe-officially'])
   assert.deepEqual(pricing.modelGroups.hy4, ['hunyuan-officially'])
   assert.deepEqual(pricing.modelGroups['claude-haiku-5-5'], ['cc', 'claude-officially'])
@@ -97,8 +98,8 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   assert.deepEqual(catalogCoverage({ groups: ['codex', 'deepseek-officially'], modelGroups }), {
     'deepseek-flash': true,
     'deepseek-v4-pro': true,
-    'gpt-6.1-sol': true,
-    'gpt-6-astra': true,
+    'gpt-6.2-sol': true,
+    'gpt-6.2-astra': true,
     'hy4': false,
     'claude-fable-5-2': false,
     'claude-opus-5-5': false,
@@ -109,6 +110,10 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   // Only typesafe-officially reaches Jev, and only hunyuan-officially Hy4.
   assert.equal(catalogCoverage({ groups: ['typesafe-officially'], modelGroups })['jev-1.14.0'], true)
   assert.equal(catalogCoverage({ groups: ['codex-sale', 'hunyuan-officially'], modelGroups }).hy4, true)
+  for (const id of ['gpt-6.2-sol', 'gpt-6.2-astra']) {
+    assert.equal(catalogCoverage({ groups: ['codex-sale'], modelGroups })[id], true)
+    assert.equal(catalogCoverage({ groups: ['azure-officially'], modelGroups })[id], false)
+  }
   // cc-sale serves Fable, Opus and Sonnet but not Haiku.
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-haiku-5-5'], false)
   assert.equal(catalogCoverage({ groups: ['cc-sale'], modelGroups })['claude-opus-5-5'], true)
@@ -120,10 +125,9 @@ test('coverage takes either source as evidence and leaves the rest unknown', () 
   assert.deepEqual(catalogCoverage({ models: new Set(['deepseek-flash']) }), {
     'deepseek-flash': true,
     'deepseek-v4-pro': false,
-    'gpt-6.1-sol': false,
+    'gpt-6.2-sol': false,
     'gpt-6.1-terra': false,
-    'gpt-6-astra': false,
-    'gpt-5.6-sol': false,
+    'gpt-6.2-astra': false,
     'grok-4.7': false,
     'hy4': false,
     'gemini-4-carbon': false,

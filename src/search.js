@@ -12,7 +12,7 @@
  * - `deepseek`: Anthropic Messages at `/v1/messages`, `deepseek-flash`, with
  *   the `web_search_20250305` server tool. Results come from its structured
  *   `web_search_tool_result` blocks, never from prose.
- * - `gpt`: OpenAI Responses at `/v1/responses`, `gpt-6.1-sol`, with the
+ * - `gpt`: OpenAI Responses at `/v1/responses`, `gpt-6.2-sol`, with the
  *   hosted `web_search` tool, streamed. Results come from `url_citation`
  *   annotations and the `web_search_call` actions.
  *
@@ -65,7 +65,7 @@ export const DEFAULT_SEARCH_BACKEND = SEARCH_BACKEND_DEEPSEEK
 /** The model each backend searches with. */
 export const SEARCH_BACKEND_MODELS = Object.freeze({
   [SEARCH_BACKEND_DEEPSEEK]: 'deepseek-flash',
-  [SEARCH_BACKEND_GPT]: 'gpt-6.1-sol',
+  [SEARCH_BACKEND_GPT]: 'gpt-6.2-sol',
 })
 
 /** Bound on one search request, below the `web_search` tool's 60 s budget. */

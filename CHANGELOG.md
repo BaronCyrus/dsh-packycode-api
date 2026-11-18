@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.14
+
+- **GPT-6.2 Sol and Astra replace GPT-6.1 Sol and GPT-6 Astra.** GPT-5.6 Sol is removed; GPT-6.1 Terra is unchanged. The [Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol) and [Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra) entries use Responses at `https://cf.api.fan/v1`, take text and images, and declare 1,050,000 context, 128,000 output, and `low` through `max` reasoning (no off). PackyCode lists both under `codex` and `codex-sale`. The GPT search backend and Astra's session titles now use GPT-6.2 Sol.
+
 ## 1.4.13
 
 - **Claude Code history rebuilds use the gateway compatibility setting.** With Claude Code 2.1.325, resuming a transcript rebuilt from DSH's history can add a `role: "system", content: []` control message carrying `output_config.effort` and the `per-turn-control-2026-07-01` beta. A gateway that cannot pass through the pair rejects it with `messages.1: system content must contain at least one block`; even one previous user/assistant exchange can trigger the shape. The CLI child environment now sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` directly, so no isolated-settings workaround is needed. Inherited Claude environment variables are still filtered, and neither personal nor project configuration is changed.

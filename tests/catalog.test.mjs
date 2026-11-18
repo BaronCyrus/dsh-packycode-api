@@ -9,7 +9,7 @@ import { DEFAULT_API_HOST, DEFAULT_REASONING_LEVEL, PROVIDER } from '../src/cons
 const byId = id => PACKYCODE_MODELS.find(model => model.id === id)
 
 test('ships the configured model ids in picker order', () => {
-  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'deepseek-v4-pro', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol', 'grok-4.7', 'hy4', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
+  assert.deepEqual([...PACKYCODE_MODEL_IDS], ['deepseek-flash', 'deepseek-v4-pro', 'gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6.2-astra', 'grok-4.7', 'hy4', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash', 'claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
   for (const model of PACKYCODE_MODELS) assert.equal(model.provider, PROVIDER)
 })
 
@@ -36,30 +36,25 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
   assert.equal(byId('deepseek-v4-pro').maxTokens, 384_000)
   // No catalog model uses Chat Completions any more.
   assert.deepEqual(PACKYCODE_MODELS.filter(model => model.api === 'openai-completions').map(model => model.id), [])
-  assert.equal(byId('gpt-6.1-sol').api, 'openai-responses')
-  assert.equal(byId('gpt-6.1-sol').baseUrl, `${DEFAULT_API_HOST}/v1`)
+  for (const [id, name] of [['gpt-6.2-sol', 'GPT-6.2 Sol'], ['gpt-6.2-astra', 'GPT-6.2 Astra']]) {
+    const model = byId(id)
+    assert.equal(model.name, name)
+    assert.equal(model.api, 'openai-responses')
+    assert.equal(model.baseUrl, `${DEFAULT_API_HOST}/v1`)
+    assert.equal(model.contextWindow, 1_050_000)
+    assert.equal(model.maxTokens, 128_000)
+  }
   // developers.openai.com: GPT-6.1 Terra calls tools only over Responses; text and image input, 1,050,000 context and 128,000 output.
   assert.equal(byId('gpt-6.1-terra').name, 'GPT-6.1 Terra')
   assert.equal(byId('gpt-6.1-terra').api, 'openai-responses')
   assert.equal(byId('gpt-6.1-terra').baseUrl, `${DEFAULT_API_HOST}/v1`)
   assert.equal(byId('gpt-6.1-terra').contextWindow, 1_050_000)
   assert.equal(byId('gpt-6.1-terra').maxTokens, 128_000)
-  // GPT-6 Astra rides the same Responses route as Sol (the Codex group's protocol).
-  assert.equal(byId('gpt-6-astra').api, 'openai-responses')
-  assert.equal(byId('gpt-6-astra').baseUrl, `${DEFAULT_API_HOST}/v1`)
-  assert.deepEqual([...byId('gpt-6-astra').input], ['text', 'image'])
-  assert.equal(byId('gpt-6-astra').contextWindow, 1_050_000)
-  // developers.openai.com: GPT-5.6 Sol serves Responses with text and image input, 1,050,000 context and 128,000 output.
-  assert.equal(byId('gpt-5.6-sol').api, 'openai-responses')
-  assert.equal(byId('gpt-5.6-sol').baseUrl, `${DEFAULT_API_HOST}/v1`)
-  assert.equal(byId('gpt-5.6-sol').contextWindow, 1_050_000)
-  assert.equal(byId('gpt-5.6-sol').maxTokens, 128_000)
   // platform.claude.com: Claude Fable 5.2 and every Claude 5.5 model, Haiku included, have a 1M context and 128K output.
   for (const id of ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
     assert.equal(byId(id).contextWindow, 1_000_000, id)
     assert.equal(byId(id).maxTokens, 128_000, id)
   }
-  assert.equal(byId('gpt-6-astra').maxTokens, 128_000)
   assert.equal(byId('grok-4.7').name, 'Grok 4.7')
   assert.equal(byId('grok-4.7').api, 'openai-responses')
   assert.equal(byId('grok-4.7').baseUrl, `${DEFAULT_API_HOST}/v1`)
@@ -99,13 +94,11 @@ test('pins each model to the protocol and base URL the gateway serves', () => {
 test("offers each vendor's documented effort levels", () => {
   assert.deepEqual(getSupportedThinkingLevels(byId('deepseek-flash')), ['off', 'low', 'high', 'max'])
   assert.deepEqual(getSupportedThinkingLevels(byId('deepseek-v4-pro')), ['off', 'low', 'high', 'max'])
-  assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6.1-sol')), ['low', 'medium', 'high', 'xhigh', 'max'])
+  for (const id of ['gpt-6.2-sol', 'gpt-6.2-astra']) {
+    assert.deepEqual(getSupportedThinkingLevels(byId(id)), ['low', 'medium', 'high', 'xhigh', 'max'], id)
+  }
   // developers.openai.com: GPT-6.1 Terra also takes `none`, and through PackyCode it answered without reasoning, so it can be off.
   assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6.1-terra')), ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
-  // developers.openai.com: GPT-6 Astra `reasoning.effort` is low | medium | high | xhigh | max.
-  assert.deepEqual(getSupportedThinkingLevels(byId('gpt-6-astra')), ['low', 'medium', 'high', 'xhigh', 'max'])
-  // GPT-5.6 Sol documents `none` too, but it is not offered: through PackyCode it answered at medium.
-  assert.deepEqual(getSupportedThinkingLevels(byId('gpt-5.6-sol')), ['low', 'medium', 'high', 'xhigh', 'max'])
   assert.deepEqual(getSupportedThinkingLevels(byId('grok-4.7')), ['low', 'medium', 'high', 'xhigh'])
   // TokenHub's deep-thinking page: Hy4 takes `reasoning_effort` high or no_think, nothing else.
   assert.deepEqual(getSupportedThinkingLevels(byId('hy4')), ['off', 'high'])
@@ -140,7 +133,7 @@ test('declares the wire dialect each protocol needs', () => {
   }
   // PackyCode's GPT route treats a tool without `strict` as strict, so GPT
   // declares strict support and pi-ai sends `strict: false`; nothing else changes.
-  for (const id of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol']) {
+  for (const id of ['gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6.2-astra']) {
     assert.deepEqual({ ...byId(id).compat }, { supportsStrictMode: true }, id)
   }
   // DeepSeek, Grok and Hy4 leave optional parameters out without it.

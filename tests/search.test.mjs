@@ -314,7 +314,7 @@ test('a capacity refusal that persists is reported after three attempts with wha
   })
   await assert.rejects(provider.search({ query: 'q' }), error => {
     assert.equal(error.code, 'WEB_PROVIDER_ERROR')
-    assert.match(error.message, /gpt-6\.1-sol stayed unavailable upstream after 3 attempts \(server_error: An error occurred/u)
+    assert.match(error.message, /gpt-6\.2-sol stayed unavailable upstream after 3 attempts \(server_error: An error occurred/u)
     assert.match(error.message, /switch the search backend to "deepseek"/u)
     return true
   })
@@ -393,7 +393,7 @@ test('each backend builds its own protocol request against the configured host',
   const gpt = buildSearchRequest('gpt', { apiHost: 'https://gw.example', query: 'q', sessionId: 's1' })
   assert.equal(gpt.url, 'https://gw.example/v1/responses')
   assert.deepEqual(gpt.headers('sk-1'), { authorization: 'Bearer sk-1' })
-  assert.equal(gpt.body.model, 'gpt-6.1-sol')
+  assert.equal(gpt.body.model, 'gpt-6.2-sol')
   assert.deepEqual(gpt.body.tools, [{ type: 'web_search' }])
   assert.equal(gpt.body.tool_choice, 'required')
   assert.equal(gpt.body.store, false)
@@ -489,12 +489,12 @@ test('a key whose group does not cover the search model is skipped but never dis
     onKeyFailure: kind => failures.push(kind),
     fetchImpl: async () => {
       calls += 1
-      return json(400, { error: { code: 'model_not_found', message: '当前令牌未覆盖供应商 "OpenAI"（模型=gpt-6.1-sol，已选分组=[codex]）', type: 'packy_api_error' } })
+      return json(400, { error: { code: 'model_not_found', message: '当前令牌未覆盖供应商 "OpenAI"（模型=gpt-6.2-sol，已选分组=[codex]）', type: 'packy_api_error' } })
     },
   })
   await assert.rejects(provider.search({ query: 'q' }), error => {
     assert.equal(error.code, 'WEB_PROVIDER_ERROR')
-    assert.match(error.message, /no stored API key's group covers gpt-6\.1-sol/u)
+    assert.match(error.message, /no stored API key's group covers gpt-6\.2-sol/u)
     assert.match(error.message, /Switch the search backend to "deepseek"/u)
     return true
   })
