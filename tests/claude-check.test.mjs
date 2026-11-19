@@ -1,10 +1,39 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { createClaudeCheck } from '../scripts/claude-check.mjs'
 import { anthropicStream } from './fixtures/anthropic.mjs'
 import { createBusinessScenario } from '../scripts/claude-scenarios.mjs'
 
 const orderAnswer = JSON.stringify({ itemSubtotalCents: 44300, amountDueCents: 43500 })
+
+test('the CLI tasks check requires three projected task completions as well as a correct file and answer', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'packy-task-check-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const record = { kind: 'grant', payload: { activeId: 'fixture', keys: [{ id: 'fixture', key: 'fixture-only' }] } }
+  await writeFile(join(dir, '.credentials.yaml'), JSON.stringify({ records: { 'packycode-api/keys': record } }), { mode: 0o600 })
+  const edit = { type: 'tool_use', id: 'edit', name: 'Edit', input: { file_path: 'stock.json', old_string: '"reserved": 7', new_string: '"reserved": 9' } }
+  const answer = { blocks: [{ type: 'text', text: '可用库存 33' }] }
+  const ids = ['1', '2', '3']
+  const creates = ids.map(id => ({ type: 'tool_use', id: `create-${id}`, name: 'TaskCreate', input: { subject: `Step ${id}` }, result: `Task #${id} created successfully: Step ${id}` }))
+  const updates = ids.map(id => ({ type: 'tool_use', id: `update-${id}`, name: 'TaskUpdate', input: { taskId: id, status: 'completed' }, result: `Updated task #${id} status` }))
+  await writeFile(join(dir, 'script.json'), JSON.stringify([{ blocks: [edit] }, answer, { blocks: [...creates, edit] }, { blocks: updates }, answer]))
+  const checker = fileURLToPath(new URL('../scripts/claude-check.mjs', import.meta.url))
+  const cli = fileURLToPath(new URL('./fixtures/fake-claude-agent.mjs', import.meta.url))
+  for (const count of [0, 3]) {
+    const run = spawnSync(process.execPath, [checker, '--transport', 'cli', '--model', 'claude-sonnet-5-5', '--kind', 'tasks', '--cli-path', cli], {
+      env: { ...process.env, DSH_HOME: dir, FAKE_CLAUDE_DIR: dir }, encoding: 'utf8', timeout: 20_000,
+    })
+    assert.equal(run.status, count === 0 ? 1 : 0, run.stderr)
+    const result = run.stdout.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(row => row.kind === 'tasks')
+    assert.deepEqual(result?.tasks, { created: count, completed: count })
+    assert.equal(result.ok, count === 3)
+  }
+})
 
 for (const maxRetries of [0, 1]) {
   test(`native live checker retains capacity evidence with ${maxRetries} transient retries`, async t => {

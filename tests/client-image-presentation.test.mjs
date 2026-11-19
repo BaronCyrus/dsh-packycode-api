@@ -30,10 +30,10 @@ function clientFixture() {
   const slots = new Map()
   const reads = []
   const opened = []
-  let definition
+  const definitions = new Map()
   let client
   const preview = 'blob:session-owned-generated-preview'
-  const conversation = { events: { register: value => { definition = value } },
+  const conversation = { events: { register: value => { definitions.set(value.kind, value) } },
     imageUrl: async (sessionId, attachment) => { reads.push({ sessionId, attachment }); return preview } }
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
     window: { open: () => assert.fail('the in-app viewer should be used'), __ModuleLoader__: { load: spec => { client = spec.factory(name => name === 'react' ? react : { jsx: element, jsxs: element }) } } },
@@ -60,7 +60,7 @@ function clientFixture() {
     }
     return [tree, ...render(tree.props.children, `${path}:children`)]
   }
-  return { slots, reads, opened, render, preview, definition: () => definition }
+  return { slots, reads, opened, render, preview, definition: () => definitions.get(IMAGE_CHAT_KIND) }
 }
 
 for (const protocol of ['native', 'ptc', 'cli']) for (const version of HOST_VERSIONS) test(`DSH ${version}: built ${protocol} main-chat gallery uses the same session image loader/viewer as tool details`, async () => {

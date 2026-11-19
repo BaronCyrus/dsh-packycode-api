@@ -18,12 +18,13 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { BlockAssembler, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { redactSecrets } from '../src/secret-redactor.js'
+import { CLAUDE_TASKS } from '../src/claude-tasks.js'
 import { dshTitleRequest } from '../tests/fixtures/dsh-session-title.mjs'
 import { readStoredKey } from './stored-key.mjs'
 import { createVisionFixture } from './vision-fixture.mjs'
 
 export const AGENT_MODELS = Object.freeze(['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
-export const AGENT_CHECK_KINDS = Object.freeze(['read', 'edit', 'deny', 'plan', 'question', 'image', 'title'])
+export const AGENT_CHECK_KINDS = Object.freeze(['read', 'edit', 'deny', 'plan', 'question', 'tasks', 'image', 'title'])
 const SYSTEM = 'You are an AI agent powered by DeepSeek Harness.'
 /** Tools as a DSH step offers them; a request without any is no agent's step and is answered once. */
 const TOOLS = [
@@ -47,6 +48,11 @@ const SCENARIOS = {
     preset: 'read-only',
     prompt: '把当前目录 stock.json 里 KB-87 的 reserved 改成 9，其他内容不要动。改完说一句话确认。',
     judge: async ({ workspace, approvals }) => approvals.length > 0 && JSON.parse(await readFile(join(workspace, 'stock.json'), 'utf8')).items[0].reserved === 9,
+  },
+  tasks: {
+    prompt: '请用 TaskCreate 建立三项任务，并用 TaskUpdate 在每项完成时更新状态：读取 stock.json，用 Edit 把 KB-87 的 reserved 从 7 改为 9，重新读取并计算可用库存。最后报告可用库存。',
+    judge: async ({ answer, workspace, tasks }) => tasks.created === 3 && tasks.completed === 3 && /\b33\b/u.test(answer)
+      && JSON.parse(await readFile(join(workspace, 'stock.json'), 'utf8')).items.find(item => item.sku === 'KB-87')?.reserved === 9,
   },
   deny: {
     preset: 'read-only',
@@ -145,7 +151,7 @@ export async function createAgentCheck({ key, cliPath, timeoutMs = 240_000, buil
   })
 
   /** DSH's tool pipeline for one step's calls, in DSH's order. */
-  async function runTools(result, signal, plans) {
+  async function runTools(result, signal, plans, taskStates) {
     const messages = []
     for (const block of result.blocks().filter(item => item.type === 'tool-call')) {
       const exec = { callId: block.id, name: block.name, arguments: JSON.parse(block.arguments), agent, signal }
@@ -164,7 +170,18 @@ export async function createAgentCheck({ key, cliPath, timeoutMs = 240_000, buil
           decision = await state.approve({ toolName: block.name }) === 'allowed-once' ? { kind: 'allow' } : { kind: 'deny', reason: `the user rejected tool "${block.name}"` }
         }
         if (decision.kind === 'allow') {
-          try { outcome = { content: definition.output.render(exec.arguments, await definition.execute(exec.arguments, exec)), isError: false } }
+          try {
+            const value = await definition.execute(exec.arguments, exec)
+            outcome = { content: definition.output.render(exec.arguments, value), isError: false }
+            const meta = definition.output.presentationMeta?.(exec.arguments, value)
+            // Judge the projected tool results that feed the checklist on screen.
+            if (meta?.kind === CLAUDE_TASKS) {
+              for (const task of meta.tasks) {
+                const id = `${meta.listId}:${task.id}`
+                if (exec.arguments.tool === 'TaskCreate' || (exec.arguments.tool === 'TaskUpdate' && taskStates.has(id) && task.status)) taskStates.set(id, task.status)
+              }
+            }
+          }
           catch (error) { outcome = { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true } }
         } else outcome = { content: [{ type: 'text', text: `Error: ${decision.reason}` }], isError: true }
         for (const listener of agent.listeners['tools/result']) listener(exec, outcome)
@@ -186,6 +203,7 @@ export async function createAgentCheck({ key, cliPath, timeoutMs = 240_000, buil
       Object.assign(state, { workspace, preset: scenario.preset ?? 'workspace-write', planActive: scenario.planActive === true, approvals: [], questions: [], approve: scenario.approve ?? (() => 'allowed-once'), answer: scenario.answer ?? (() => ({ answers: [] })) })
       agent = standInAgent(`agent-check-${randomUUID()}`)
       const plans = []
+      const taskStates = new Map()
       let answer = ''
       let toolCalls = 0
       const signal = AbortSignal.timeout(timeoutMs)
@@ -202,10 +220,11 @@ export async function createAgentCheck({ key, cliPath, timeoutMs = 240_000, buil
           answer = assembled.blocks().filter(block => block.type === 'text').map(block => block.text).join('').trim()
           if (assembled.finish?.kind !== 'tool-calls') break
           toolCalls += assembled.blocks().filter(block => block.type === 'tool-call').length
-          messages.push(...await runTools(assembled, signal, plans))
+          messages.push(...await runTools(assembled, signal, plans, taskStates))
         }
-        const ok = await scenario.judge({ answer, workspace, approvals: state.approvals, questions: state.questions, plans })
-        return { model, kind, ok, answer: scrub(answer).slice(0, 300), toolCalls, approvals: state.approvals.length, questions: state.questions.length, durationMs: Date.now() - started, requests: requests.slice(first), ...(ok ? {} : { failure: { code: 'CHECK', message: 'The outcome did not match the scenario' } }) }
+        const tasks = { created: taskStates.size, completed: [...taskStates.values()].filter(status => status === 'completed').length }
+        const ok = await scenario.judge({ answer, workspace, approvals: state.approvals, questions: state.questions, plans, tasks })
+        return { model, kind, ok, answer: scrub(answer).slice(0, 300), toolCalls, approvals: state.approvals.length, questions: state.questions.length, ...(kind === 'tasks' ? { tasks } : {}), durationMs: Date.now() - started, requests: requests.slice(first), ...(ok ? {} : { failure: { code: 'CHECK', message: 'The outcome did not match the scenario' } }) }
       } catch (error) {
         return { model, kind, ok: false, answer: scrub(answer).slice(0, 300), toolCalls, durationMs: Date.now() - started, failure: { code: error.code ?? 'CHECK', message: scrub(error instanceof Error ? error.message : error).slice(0, 500) }, requests: requests.slice(first) }
       } finally {

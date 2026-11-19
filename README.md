@@ -28,7 +28,7 @@
 | **自选显示的模型** | 设置页的模型列表默认全选；取消勾选后，切换列表立即隐藏该模型，已有会话仍可继续使用 |
 | **多 Key 按顺序使用** | 额度用尽或 Key 被拒绝时自动切到下一个可用 Key；失败的那一步由重试接手 |
 | **按分组选 Key** | 每个 Key 后面列出它所在的 PackyCode 分组和能用的模型；当前 Key 的分组用不了所选模型（例如没有 cc 分组却选了 Claude）时，这一轮自动改用分组合适的 Key |
-| **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条；输入框右侧显示当前 Key 的剩余额度 |
+| **余额一眼可见** | 设置页列出每个 Key 的剩余、已用、额度、重置周期和用量条；输入框右侧显示所选模型预计使用的 Key 余额，运行中显示实际使用的 Key |
 | **Claude 按分组选通道** | `cc` 分组只接受官方客户端，这些 Key 的 Claude 会话由本机 Claude Code 自己完成：它用自己的系统提示词和工具做事，DSH 显示每次工具调用，并负责授权、计划审阅和提问；`cc-sale`、`cc-expensive`、`claude-officially` 等分组走插件内 HTTP，由 DSH 自己的 agent 执行 |
 | **网页搜索可走 PackyCode** | 可选：DSH 的 `web_search` 改用 PackyCode 搜索，后端在 DeepSeek 与 GPT 之间切换；可只对 PackyCode 模型生效 |
 | **图片生成与编辑** | 独立图片 Key，支持 GPT Image 2 / 2.6 Flare / 2.6 Sunburst、型号与质量设置、参考图编辑和 PNG 原图保存；已通过网关生图与编辑实测 |
@@ -48,10 +48,10 @@
 打开桌面应用的**插件**页，点击**添加插件**，在**包名或地址**中填入**带版本号**的包名：
 
 ```text
-dsh-packycode-api@1.4.14
+dsh-packycode-api@1.5.0
 ```
 
-在**安装源**中选择**官方源**，然后点击**安装**。`1.4.14` 是写这份说明时的最新版，当前最新版本号以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
+在**安装源**中选择**官方源**，然后点击**安装**。上例使用 `1.5.0`，公开发布的最新版本以 [npm 页面](https://www.npmjs.com/package/dsh-packycode-api) 为准。
 
 > **一定要带版本号。** 只填 `dsh-packycode-api` 时，安装前的提示显示的是 npm 上的最新版，但 DSH 自带的 pnpm 默认只安装发布满 24 小时的版本，实际装上的可能是好几个版本之前的旧版，而安装提示里看不出这一点。填写精确版本时，pnpm 会直接安装这个版本，并自动把它加入 profile 的 `minimumReleaseAgeExclude`。装好后可以在 **设置 → PackyCode → 插件版本** 核对「当前版本」。
 
@@ -72,7 +72,7 @@ dsh-packycode-api@1.4.14
 
 桌面应用的**插件**页可以看到已安装状态与版本，也可以在那里启用、停用或卸载。
 
-**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.4.14`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
+**仅用于非 desktop profile：** `dsh plugin --profile <name> add dsh-packycode-api@1.5.0`。不要对 `desktop` 使用它 —— CLI 会直接拒绝（`profile "desktop" is managed exclusively by the Electron application`）。
 
 本地开发要加 `link:` 前缀：`dsh plugin --profile <name> add link:/path/to/dsh-packycode-api`。**不要直接写路径（或 `file:`）** —— 那样的安装会把整个仓库目录（连同 `node_modules`）复制进 profile，之后它会在 profile 内部挡住 DSH 自带的包，插件看起来像没装，见「常见问题」。已经那样装过的话，先卸载再按上面的方式重装。
 
@@ -88,7 +88,7 @@ dsh-packycode-api@1.4.14
 
 **看分组。** 「账户与 Key」里每个 Key 下面列出它所在的 PackyCode 分组（鼠标悬停可看分组说明），以及能用哪些模型：✓ 可用、◐ 部分可用、✕ 不可用。分组由网关自己报出（对一个不存在的模型 id 的拒绝里会写明「已选分组」，单分组的 Key 则是「分组 … 下模型 … 无可用渠道」，不产生费用），再对照 PackyCode 公开的模型分组表。Claude 的分组覆盖要按具体模型确认，不能假定 `cc-sale` 支持全部三个型号；GPT 需要 `codex` / `codex-sale`；DeepSeek 需要 `deepseek-officially` / `deepseek-sale`；Hy4 需要 `hunyuan-officially`。
 
-**看余额。** 「账户与 Key」里每个 Key 显示它自己的剩余、已用与额度（额度 = 剩余 + 已用），不限额的 Key 显示「不限额度」；多个 Key 不相加成合计。API Key 只能读到自己的额度，读不到 PackyCode 账号的总余额，账号余额请到 PackyCode 控制台查看。读失败的 Key 会在它那一行注明原因；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。输入框右侧只在选中 PackyCode 模型时显示当前 Key 的剩余额度。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
+**看余额。** 「账户与 Key」里每个 Key 显示它自己的剩余、已用与额度（额度 = 剩余 + 已用），不限额的 Key 显示「不限额度」；多个 Key 不相加成合计。API Key 只能读到自己的额度，读不到 PackyCode 账号的总余额，账号余额请到 PackyCode 控制台查看。读失败的 Key 会在它那一行注明原因；某个 Key 这次读失败但之前读到过，会继续显示上次的余额并注明读取时间（输入框里显示为 `≈US$…`），重启 DSH 后才清空。选中 PackyCode 模型时，输入框显示该模型预计使用的 Key 的余额。运行中以该次请求实际使用的 Key 为准。悬停或聚焦可查看 Key 名称、余额读取时间，以及 Claude 使用的通道。「刷新」会跳过约 60 秒的缓存。默认模型接口是 `https://cf.api.fan`，余额接口是 `https://www.packyapi.ai`，可在「高级：接口地址」里改。旧默认值 `https://www.packyapi.com` 在国内网络下 DNS 被污染、直连会 `fetch failed`，即使设置里保存的是它，插件也会先试 `.ai`。
 
 **用 Claude。** 直接选择四个 Claude 模型之一。Key 在 `cc` 分组时，这个会话由本机的官方 Claude Code CLI 完成，需要先在 **设置 → PackyCode → Claude Code CLI** 一键安装（或自行 `npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code`），版本过低或有新版本时在同一处点「更新 Claude Code CLI」；`cc-sale`、`cc-expensive`、`claude-officially` 等分组直接走插件内 HTTP，不需要 CLI。「账户与 Key」里每个能用 Claude 的 Key 会标出「Claude 经官方 CLI」或「Claude 经 HTTP」，通道由分组决定，不能手动切换；分组还没读到时先走 CLI。经 HTTP 时工具由 DSH 执行，计划模式、提问、待办、子代理、附件、思考档位和历史都和其它模型一样；经 CLI 时由 Claude Code 自己执行，差别见下方「Claude Code CLI 通道」。
 
@@ -137,10 +137,10 @@ PackyCode 没有专用搜索接口：一次搜索就是一次带服务端搜索�
 PackyCode 的 `cc` 分组（「claude code专用」）只接受官方 Claude Code 客户端，而且按请求内容判断是不是 Claude Code 自己在工作：1.3.4–1.3.9 借 CLI 发出的是 DSH 的系统提示词和工具，会被判为「客户端存在异常」。从 1.4.0 起，这些 Key 的 Claude 会话**由 Claude Code 自己当 agent**，DSH 负责界面和把关，和 paseo 等工具使用官方 CLI 的方式一样：
 
 - **Claude Code 用自己的提示词和工具。** 不追加 DSH 的系统提示词，也不挂 DSH 的工具；读写文件、执行命令、子代理都由 Claude Code 自己完成，在本机直接执行。项目里的 `CLAUDE.md` 照常生效。DSH 为自己的 agent 附加的内容（`AGENTS.md`、运行环境、时间、技能列表，以及审批、计划模式、换模型的提示）不会交给 Claude Code，它只收到你自己发的消息。
-- **每次工具调用都是一张 DSH 工具卡片。** 命令显示为终端卡片，改文件显示为 diff，结果是 Claude Code 实际执行后的输出（工具名为 `claude_code`）。
+- **每次工具调用都是一张 DSH 工具卡片。** 展开 `claude_code` 卡片可查看命令和实际输出。改文件时先显示调用预览，CLI 返回可确认的补丁后显示实际增删的行。插件通过 Claude Code 的官方开关为 `cc` 对话启用原生任务工具，`TaskCreate` 和 `TaskUpdate` 的实际结果会汇入一张可展开的清单。[Claude Code 任务工具说明](https://code.claude.com/docs/en/tools-reference#task-tool-availability)
 - **授权交给 DSH。** Claude Code 请求授权时，按会话的权限预设处理：`workspace-write`（默认）下工作目录内的文件修改直接进行，其它需要授权的操作（例如非只读命令）弹出 DSH 的授权提示；`read-only` 下修改文件也要授权；`auto` 下交给自动审查，审查拒绝时再问你；`danger-full-access` 下不询问。拒绝的理由会原样告诉 Claude Code。
 - **计划模式和提问也在 DSH 里完成。** `/plan` 后 Claude Code 进入它自己的计划模式，把计划写成文件再提交；DSH 用自己的计划审阅界面展示，批准后按预设继续，选「继续规划」时你的反馈会交给它修改。Claude Code 向你提问时，问题出现在 DSH 的提问界面。
-- **一个 DSH 会话对应一个 Claude Code 会话。** 同一个 DSH 会话复用一个常驻 CLI 进程；进程空闲 20 分钟结束、DSH 重启、换模型或换 Key 后，用 Claude Code 自己保存的会话记录续接。编辑过历史消息、分叉会话或从别的模型切过来时，用 DSH 的历史新开一个 Claude Code 会话。你在 Claude Code 工作时插话，插件会停下它当前的请求，把这句话作为下一条消息交给它。DSH 发起的历史压缩在本地生成摘要，Claude Code 自己的上下文由它自己压缩。
+- **一个 DSH 会话对应一个 Claude Code 会话。** 同一个 DSH 会话复用一个常驻 CLI 进程；进程空闲 20 分钟结束、DSH 重启、换模型或换 Key 后，用 Claude Code 自己保存的会话记录续接。编辑过历史消息、分叉会话或从别的模型切过来时，用 DSH 的历史新开一个 Claude Code 会话。你在 Claude Code 工作时插话，插件会停下它当前的请求，把这句话作为下一条消息交给它。DSH 发起的历史压缩在本地生成摘要，Claude Code 自己的上下文由它自己压缩。运行期间，输入框旁会显示 CLI 报告的压缩进展。续接时会核对前文，即使两段对话最后的答复相同，改过的前文也会触发重建。
 - **与你自己的 Claude Code 隔离。** 使用独立配置目录 `~/.dsh/packycode-claude-cli`，不读取 `~/.claude` 的设置和登录状态，也不读项目里的 `.claude/settings.json`、hooks 和 `.mcp.json`；只把插件保存的 Key 交给子进程。自动更新、遥测、自动记忆、后台任务和模型回退都关闭，失败重试交还给 DSH 的重试策略（会按 Key 轮换）。
 - **默认启用网关兼容设置。** 插件在 CLI 子进程中设置 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，避免重建会话历史时，逐轮 effort 产生的空 `system` 控制消息被网关以 `system content must contain at least one block` 拒绝，无需手动编辑配置。这个[官方兼容开关](https://code.claude.com/docs/en/llm-gateway-protocol#disable-pre-release-capabilities)也会关闭实验性 context management、结构化输出格式、task budget、部分工具 schema 字段及 MCP 工具搜索；顶层 effort、adaptive thinking 和普通非空 system 消息保留。它只影响插件启动的 Claude Code，不修改你的 Claude 设置或其它模型的 HTTP 请求。
 - **版本过低一键更新。** 插件需要 Claude Code 2.1.259 或更新版本（实测从这一版起支持插件用到的授权请求和权限模式切换）。更旧的 CLI 在请求发出前就被拦下并说明原因，CLI 卡片标出「版本过低」并提供「更新 Claude Code CLI」：官方安装器（`~/.local/bin/claude`）装的执行 `claude update`；npm 全局安装的执行 `npm install -g @anthropic-ai/claude-code@latest --allow-scripts=@anthropic-ai/claude-code`，因为 npm 12 默认不运行安装脚本，而 `claude update` 在 npm 安装上不会放行脚本，会留下一个无法运行的 CLI。CLI 能用但不是最新版时，卡片也会提示新版本并提供同一个按钮：插件在本机读取 npm 上 `@anthropic-ai/claude-code` 的 `latest`（与官方安装器的 `latest` 通道是同一版本），30 分钟内最多读一次，点「重新检测」立即重读；读不到时不提示。只有点这个按钮时才会更新你的 Claude Code。
@@ -276,16 +276,16 @@ DeepSeek Flash 走网关的 Responses 接口（`/api/pricing` 列出 `openai-res
 - 两条通道的 Claude 对话都保留完整 DSH 工具循环、权限及计划模式；网页搜索和生图使用宿主工具。会话标题由 `claude-haiku-5-5` 生成（与对话走同一条通道）；GPT-6.2 Astra 的标题交给 GPT-6.2 Sol，DeepSeek V4 Pro 的标题交给 DeepSeek Flash。
 - 1.2.x 的 `claudeCliMode`、`claudeCliCwd` 设置不再恢复：Claude Code 的权限由会话的 DSH 权限预设决定，工作目录就是会话目录。名为 `claude_code` 的工具现在是 cc 会话里显示 Claude Code 工具调用的镜像工具，只由插件使用，不是 1.2.x 的委派工具。`claudeCliPath` 重新生效，用于指定 CLI 位置（留空则按常见安装位置和 PATH 查找）。1.3.4 的 `claudeTransport` 已移除，profile 里残留的值会被忽略。除非你在 CLI 卡片里点「更新 Claude Code CLI」，用户独立安装的 Claude Code 不会被改动。
 - Codex 的 Responses 请求仍需要 `prompt_cache_key`；插件补上缺失的会话标识，其它 Responses 模型省略该字段。
-- 构建后可用 `node scripts/claude-check.mjs` 验证四个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注、中文标题和计划模式（只读查询 → `exit_plan_mode` 提交计划 → 审批），并核对业务答案；加 `--transport cli` 则改跑 cc 通道的检查（`scripts/claude-agent-check.mjs`）：在临时目录里让 Claude Code 自己读文件计算、改文件（授权批准）、删文件（授权拒绝）、计划审阅后实施、提问、看图和起标题，核对文件和答案，并统计网关的「客户端异常」和「反滥用」拒绝次数。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。
+- 构建后可用 `node scripts/claude-check.mjs` 验证四个 Claude 模型的订单核算、工单归类、库存补货、只读库存查询工具回传、商品色卡标注、中文标题和计划模式（只读查询 → `exit_plan_mode` 提交计划 → 审批），并核对业务答案；加 `--transport cli` 则改跑 cc 通道的检查（`scripts/claude-agent-check.mjs`）：在临时目录里让 Claude Code 自己读文件计算、改文件（授权批准）、删文件（授权拒绝）、计划审阅后实施、提问、用三个原生任务跟踪库存修改、看图和起标题，核对任务状态、文件和答案，并统计网关的「客户端异常」和「反滥用」拒绝次数。`node scripts/claude-stability.mjs --start --hours 6 --key-label <备注名>` 开始有截止时间和请求上限的采样；定时执行同一脚本继续采样，用 `--status` 查看记录。业务场景版本和每轮构建分别记录；测试消息拒绝将对应检查记为失败，其余预定检查继续，真实凭据或额度错误仍会停止整个窗口。测试不改变已保存的凭据，也不启动 DSH。
 - 连续对话可用 `node scripts/claude-conversation-check.mjs --model claude-haiku-5-5 --rounds 3 --key-label <备注名> --output .artifacts/claude-conversation.json`：同一插件适配器处理独立会话，每组保留六轮对话和完整工具历史，检查追问中的数值一致性、最终 JSON 和异常字符；遇到失败停止该批次并保留记录。单请求默认 65 秒、输出上限 2048 token；诊断可通过 `--timeout-ms`（5000–300000）和 `--max-tokens`（1024–128000）显式调整。`--capture-wire` 记录这组模拟业务的完整请求、非认证头和中断前的流事件，用于精确重放；不记录 Key。报告包含场景版本、适配器生命周期、所用上限、首响应和完整响应耗时。这些选项不修改插件的运行参数。
 
 </details>
 
 ## 更新与卸载
 
-> **从 1.3.2 或更早版本升级：** 请在插件页填写 `dsh-packycode-api@1.4.14` 安装，不要点旧版设置页里的「更新插件」。旧按钮安装时会绕过 pnpm 的发布冷却期：装到的版本如果发布还不满 24 小时，这个 profile 在它满 24 小时之前就装不了其他插件。装好并重启后，按钮就换成了修好的版本，以后直接点即可。
+> **从 1.3.2 或更早版本升级：** 请在插件页填写 `dsh-packycode-api@1.5.0` 安装，不要点旧版设置页里的「更新插件」。旧按钮安装时会绕过 pnpm 的发布冷却期：装到的版本如果发布还不满 24 小时，这个 profile 在它满 24 小时之前就装不了其他插件。装好并重启后，按钮就换成了修好的版本，以后直接点即可。
 
-**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。安装遵守 pnpm 的发布冷却策略，不会绕过它：默认情况下 pnpm 会直接装上这个版本，并把它记进 profile 的 `minimumReleaseAgeExclude`；如果你给 pnpm 配了更严格的策略，按钮会提示什么时候可以更新。新版本号是从 npm 读到的，pnpm 却从 profile 配置的安装源下载：刚发布的版本，安装源（尤其是国内镜像）可能还没同步到，这时按钮会提示过几分钟再更新；连不上安装源时，会提示检查网络或代理。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.4.14`），否则装上的可能是发布满 24 小时的旧版。
+**更新：** 打开 **设置 → PackyCode**，有新版本时点「更新插件」。它会在当前 profile 目录里用 DSH 自带的 pnpm 安装精确版本，并读回 `package.json` 确认版本落地。安装遵守 pnpm 的发布冷却策略，不会绕过它：默认情况下 pnpm 会直接装上这个版本，并把它记进 profile 的 `minimumReleaseAgeExclude`；如果你给 pnpm 配了更严格的策略，按钮会提示什么时候可以更新。新版本号是从 npm 读到的，pnpm 却从 profile 配置的安装源下载：刚发布的版本，安装源（尤其是国内镜像）可能还没同步到，这时按钮会提示过几分钟再更新；连不上安装源时，会提示检查网络或代理。本地 `link:` 开发安装不会出现这个按钮。完成后完全退出并重新打开桌面应用。只刷新页面不会重载 Host。也可以在**插件**页重新安装，同样要填写带版本号的包名（例如 `dsh-packycode-api@1.5.0`），否则装上的可能是发布满 24 小时的旧版。
 
 **从本地路径安装切回官方源时，必须先卸载。** 「更新」是 `pnpm add`，它只重写包目录里的文件，不会删除更早一次本地路径安装留在包目录内的 `node_modules`；那份旧依赖会继续挡住 DSH 自带的包，插件行加载失败且看不出原因。「卸载」执行的是 `pnpm remove`，会删掉整个包目录，重装才是干净的。用 `node scripts/install-check.mjs` 可以确认当前 profile 是否处于这个状态。
 
@@ -301,7 +301,7 @@ ls ~/.dsh/profiles/desktop/node_modules/dsh-packycode-api/node_modules
 
 有输出就是残留：从 npm 安装的包不会自带 `node_modules`，这一份通常来自更早一次「本地路径」安装（`file:` 或直接写路径，而不是 `link:`）。它位于 profile 目录内部，而 DSH 解析插件导入时优先使用 profile 内的副本，所以插件拿到的仍是那份旧依赖 —— 例如 `@deepseek-ai/schemastery` 3.18.2 没有 `Schema.volatile()`，模块在导入阶段就抛错。导入失败时 Loader 不会为这一行创建 fiber，客户端 bundle 也不会被组合，于是模型路由、RPC 通道和设置页全都不会出现。
 
-修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.4.14`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
+修复：到**插件**页**卸载**本插件，再用带版本号的包名重新**安装**（例如 `dsh-packycode-api@1.5.0`），然后完全退出并重新打开桌面应用。卸载执行的是 `pnpm remove`，会删掉整个包目录；直接重装或点「更新」只重写文件，不会清掉这份残留。也可以手动删掉上面那个 `node_modules` 再重启。
 
 **首次安装后，设置页每张卡片都显示 `transport failure for /packycode-api/…: HTTP 405`？** 实际装上的是 1.1.6 或更早的版本，通常是因为安装时只填了包名：安装提示显示的是最新版，pnpm 实际装的却是发布满 24 小时的旧版（见「安装插件」）。这些旧版要等 DSH 重启、重建它的 `connection` 服务之后，才能注册设置通道。所以首次安装后 `/packycode-api` 通道还不存在，请求落到静态页面，返回 405；模型路由和设置页本身照常加载。1.1.7 起首次安装不需要重启。先确认装上的版本：
 

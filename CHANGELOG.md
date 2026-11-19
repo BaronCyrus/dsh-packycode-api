@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+
+- **Claude Code file changes and tasks.** Expand a tool card to see the applied patch after a successful edit or write. Calls without a matching patch show a labeled preview. The cc route enables Claude Code’s native task tools across the PackyCode Claude models. Their updates form an expandable checklist that can be reopened from chat history.
+- **Long Claude conversations.** The composer shows context compaction progress. A failed compaction releases the next answer even if the CLI sends it immediately. Resuming a live or saved CLI session checks the conversation leading up to the last reply, so an edit can trigger a rebuild even when the reply text is identical.
+- **Model-specific balances.** The composer shows the balance of the key expected to serve the selected PackyCode model. During a turn it uses the key chosen for the current request. Hover or focus the balance to see the key label and, for Claude, the CLI or HTTP route.
+
 ## 1.4.14
 
 - **GPT-6.2 Sol and Astra replace GPT-6.1 Sol and GPT-6 Astra.** GPT-5.6 Sol is removed; GPT-6.1 Terra is unchanged. The [Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol) and [Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra) entries use Responses at `https://cf.api.fan/v1`, take text and images, and declare 1,050,000 context, 128,000 output, and `low` through `max` reasoning (no off). PackyCode lists both under `codex` and `codex-sale`. The GPT search backend and Astra's session titles now use GPT-6.2 Sol.

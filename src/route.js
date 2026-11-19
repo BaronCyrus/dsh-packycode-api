@@ -209,11 +209,15 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
   const inContext = (options, send) => {
     const clarified = clarifyWorkingDirectory(withoutReviewTemperature(options), resolveWorkingDirectory)
     const cwd = workingDirectoryOf(resolveWorkingDirectory, options.sessionId)
+    const checkpoint = isClaudeModel(options.model) && Array.isArray(options.messages)
+      ? options.messages.findLast(message => message?.role === 'user' && message.source?.kind === 'compact-checkpoint')?.source.compactionId
+      : undefined
     const context = {
       model: options.model,
       ...(options.purpose === undefined ? {} : { purpose: options.purpose }),
       ...(options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) }),
       ...(cwd === undefined ? {} : { cwd }),
+      ...(typeof checkpoint === 'string' ? { checkpoint } : {}),
       ...(isClaudeModel(options.model) ? { userText: forwardedUserText(options.messages) } : {}),
     }
     return classifyRouteFailures(withRequestContext(context, send(clarified)))

@@ -136,6 +136,7 @@ async function request(trigger, input) {
   const reply = expand(take())
   if (reply.delayMs !== undefined) await new Promise(resolveDelay => setTimeout(resolveDelay, reply.delayMs))
   if (interrupted) return
+  for (const frame of reply.beforeStream ?? []) out(frame)
   if (reply.exit !== undefined) {
     process.stderr.write(reply.stderr ?? '')
     process.exit(reply.exit)
@@ -185,7 +186,7 @@ async function request(trigger, input) {
     log({ kind: 'tool-result', id: use.id, result })
     results.push(result)
   }
-  out({ type: 'user', message: { role: 'user', content: results }, parent_tool_use_id: null })
+  out({ type: 'user', message: { role: 'user', content: results }, parent_tool_use_id: null, tool_use_result: reply.toolOutput })
   record({ type: 'user', message: { role: 'user', content: results } })
   await request('tool-results')
 }

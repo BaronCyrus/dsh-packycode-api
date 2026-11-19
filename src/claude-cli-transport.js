@@ -111,6 +111,35 @@ export function messageFingerprint(message) {
   })
 }
 
+/** Check the actual inputs to the last served answer, even when two answers say the same thing. */
+function historyBoundaries(messages, checkpoint) {
+  const digest = createHash('sha256')
+  const lastAnswer = messages.findLastIndex(message => message.role === 'assistant')
+  let before
+  const stable = (_key, value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
+    // pi-ai may reorder object keys or move its transient cache breakpoint.
+    return Object.fromEntries(Object.keys(value).filter(key => key !== 'cache_control').sort().map(key => [key, value[key]]))
+  }
+  for (let index = 0; index < messages.length; index++) {
+    if (index === lastAnswer) before = digest.copy().digest('hex')
+    const message = messages[index]
+    digest.update(JSON.stringify([message.role, contentBlocks(message.content)], stable)).update('\n')
+  }
+  return { before, input: { hash: digest.digest('hex'), ...(checkpoint === undefined ? {} : { checkpoint }) } }
+}
+
+function matchesInput(saved, request) {
+  // Existing installs have only the reply fingerprint until they serve their next step.
+  if (saved === undefined) return true
+  if (typeof saved?.hash !== 'string') return false
+  const history = request.history ?? historyBoundaries(request.messages)
+  // A new DSH compaction checkpoint deliberately replaces the earlier prefix;
+  // Claude Code retains its own native context across that host-side operation.
+  if (history.input.checkpoint !== undefined && history.input.checkpoint !== saved.checkpoint) return true
+  return saved.hash === history.before
+}
+
 /** The request's last assistant message, and the user content after it. */
 export function splitAtLastAnswer(messages) {
   const list = Array.isArray(messages) ? messages : []
@@ -152,6 +181,7 @@ export function planContinuation(session, request, { approvedMode } = {}) {
   const served = session.served
   const { answer, results, other, onlyUsers } = splitAtLastAnswer(request.messages)
   if (served === undefined || answer === undefined || !onlyUsers || messageFingerprint(answer) !== served.fingerprint) return undefined
+  if (!matchesInput(served.history, request)) return undefined
   if (session.state === 'awaiting-tools') {
     const pending = session.pendingToolIds
     if (pending.some(id => !results.has(id))) return undefined
@@ -309,8 +339,8 @@ export function createClaudeCliTransport({
     live.delete(key)
     // A response cut off mid-stream is what DSH keeps of it; remember it so
     // the next request still resumes this CLI session.
-    const partial = entry.session.partial?.text
-    if (typeof partial === 'string' && partial !== '') remembered.update(key, { partial })
+    const partial = entry.session.partial
+    if (partial?.text) remembered.update(key, { partial: partial.text, partialHistory: partial.history })
     void entry.session.dispose(reason)
   }
   const sweep = setInterval(() => {
@@ -376,7 +406,8 @@ export function createClaudeCliTransport({
     const fingerprint = messageFingerprint(answer)
     const text = textOf(answer)
     const cutOff = record?.partial !== undefined && !midTurn && contentBlocks(answer.content).every(block => block?.type !== 'tool_use') && record.partial.startsWith(text)
-    if (record !== undefined && (record.last === fingerprint || cutOff)) {
+    if (record !== undefined && ((record.last === fingerprint && matchesInput(record.history, request))
+      || (cutOff && matchesInput(record.partialHistory, request)))) {
       resumed += 1
       return { cliSessionId: record.cli, resume: true, continues, input }
     }
@@ -433,6 +464,7 @@ export function createClaudeCliTransport({
         return await serve(session, { kind: 'turn', content: [{ type: 'text', text }] }, init?.signal)
       }
       const key = meta.sessionId
+      request.history = historyBoundaries(request.messages, meta.checkpoint)
       const entry = live.get(key)
       if (entry !== undefined && entry.signature === request.signature && !entry.session.closed && entry.session.state !== 'streaming') {
         const plan = planContinuation(entry.session, request, { approvedMode: meta.approvedMode })
@@ -440,7 +472,7 @@ export function createClaudeCliTransport({
           entry.touched = now()
           continued += 1
           if (plan.exitPlan?.approved !== true) await entry.session.setPermissionMode(mode)
-          return await serve(entry.session, plan, init?.signal)
+          return await serve(entry.session, { ...plan, history: request.history.input }, init?.signal)
         }
       }
       if (entry !== undefined) evict(key, 'superseded')
@@ -454,16 +486,16 @@ export function createClaudeCliTransport({
         continues: start.continues,
         permissionMode: mode,
         nestedPermission: prompt => nestedPermission?.(key, prompt),
-        onServed: served => remembered.set(key, { cli: start.cliSessionId, last: served.fingerprint }),
+        onServed: served => remembered.set(key, { cli: start.cliSessionId, last: served.fingerprint, history: served.history }),
       }, context)
-      remembered.set(key, { cli: start.cliSessionId, last: remembered.get(key)?.cli === start.cliSessionId ? remembered.get(key).last : undefined })
+      if (remembered.get(key)?.cli !== start.cliSessionId) remembered.set(key, { cli: start.cliSessionId })
       live.set(key, { session, signature: request.signature, touched: now() })
       while (live.size > maxLive) {
         const [oldest] = [...live.entries()].filter(([candidate, value]) => candidate !== key && !['streaming', 'awaiting-tools'].includes(value.session.state)).sort((left, right) => left[1].touched - right[1].touched)
         if (oldest === undefined) break
         evict(oldest[0], 'too many live sessions')
       }
-      return await serve(session, start.input, init?.signal)
+      return await serve(session, { ...start.input, history: request.history.input }, init?.signal)
     } catch (error) {
       if (init?.signal?.aborted) throw error
       if (error?.code === 'CLAUDE_CLI_OUTDATED') {
@@ -488,6 +520,8 @@ export function createClaudeCliTransport({
     },
     /** Stop a live process's current turn; DSH cancelled it. */
     interrupt: key => live.get(key)?.session.interrupt(),
+    /** Display-only status of the current CLI process for this conversation. */
+    compactionOf: key => live.get(key)?.session.compaction,
     /** Counters for diagnostics; never message content. */
     stats: () => ({ live: [...live.values()].filter(entry => !entry.session.closed).length, opened, continued, resumed, rebuilt }),
     /** Stop every process; the plugin is unloading. */

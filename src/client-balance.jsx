@@ -66,6 +66,7 @@ export function QuotaHover({ row, fetchedAt, loading = false, failed = false, em
   const details = [
     copy.title,
     row?.label ? `${copy.key}: ${row.label}` : undefined,
+    copy.route,
     usage?.name ? `${t('keyName')}: ${usage.name}` : undefined,
     `${t('keyRemaining')}: ${remaining ?? '—'}`,
     `${t('keyUsed')}: ${formatUsd(usage?.usedUsd) ?? '—'}`,

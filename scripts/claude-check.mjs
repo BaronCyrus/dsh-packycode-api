@@ -164,13 +164,13 @@ async function main() {
   const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
   const selected = option('--model', undefined)
   const kind = option('--kind', undefined)
-  if (selected !== undefined && !CLAUDE_MODELS.includes(selected)) throw new Error('Unknown Claude model')
-  if (kind !== undefined && !CLAUDE_CHECK_KINDS.includes(kind)) throw new Error('Unknown Claude check kind')
   const transport = option('--transport', 'http')
   if (transport === 'cli') {
     const { main: agentMain } = await import('./claude-agent-check.mjs')
     return agentMain(args.filter((arg, index) => arg !== '--transport' && args[index - 1] !== '--transport'))
   }
+  if (selected !== undefined && !CLAUDE_MODELS.includes(selected)) throw new Error('Unknown Claude model')
+  if (kind !== undefined && !CLAUDE_CHECK_KINDS.includes(kind)) throw new Error('Unknown Claude check kind')
   const key = await readStoredKey({ label: option('--key-label', undefined) })
   const check = await createClaudeCheck({ key, transport, maxRetries: Number(option('--retry-transient', 0)) })
   try {

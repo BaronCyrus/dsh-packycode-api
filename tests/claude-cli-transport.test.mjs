@@ -62,7 +62,7 @@ async function harness(t, script, { env = {}, binary, version = () => '2.1.295',
   const dir = await mkdtemp(join(tmpdir(), 'packy-fake-agent-'))
   const workspace = await realpath(await mkdtemp(join(tmpdir(), 'packy-fake-workspace-')))
   await writeFile(join(dir, 'script.json'), JSON.stringify(script))
-  const state = { preset, planActive, approvals: [], questions: [], approve, answer }
+  const state = { preset, planActive, approvals: [], questions: [], toolResults: [], approve, answer }
   const spawned = []
   let bridge
   const transport = createClaudeCliTransport({
@@ -135,6 +135,8 @@ async function harness(t, script, { env = {}, binary, version = () => '2.1.295',
           try {
             const value = await definition.execute(exec.arguments, exec)
             outcome = { content: definition.output.render(exec.arguments, value), isError: false }
+            outcome.meta = definition.output.presentationMeta?.(exec.arguments, value)
+            state.toolResults.push({ outcome, card: definition.presentResult(exec.arguments, outcome) })
           } catch (error) { outcome = { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true } }
         } else outcome = { content: [{ type: 'text', text: `Error: ${decision.reason}` }], isError: true }
         for (const listener of agent.listeners['tools/result']) listener(exec, outcome)
@@ -160,6 +162,82 @@ async function harness(t, script, { env = {}, binary, version = () => '2.1.295',
 }
 
 const bash = (id, command, extra = {}) => ({ type: 'tool_use', id, name: 'Bash', input: { command }, ...extra })
+
+for (const reopen of [false, true]) test(`an identical acknowledgement after a changed earlier user message rebuilds the ${reopen ? 'persisted' : 'live'} CLI history`, async t => {
+  const { step, log, useKey } = await harness(t, [
+    { blocks: [{ type: 'text', text: '记住了。' }] }, { blocks: [{ type: 'text', text: '蓝色。' }] },
+  ])
+  const answered = await step([user('记住红色')])
+  if (reopen) useKey(OTHER_KEY)
+  await step([user('记住蓝色'), replay(answered), user('什么颜色？')])
+  const starts = (await log()).filter(entry => entry.kind === 'start')
+  assert.equal(starts.length, 2)
+  assert.notEqual(starts[0].sessionId, starts[1].sessionId)
+  assert.deepEqual(starts[1].transcript[0].message.content, [{ type: 'text', text: '记住蓝色' }])
+})
+
+test('a failed compaction releases the next answer, including when no requesting frame intervenes', async t => {
+  const status = fields => ({ type: 'system', subtype: 'status', ...fields })
+  const hidden = event => ({ type: 'stream_event', event })
+  const { step, transport, agent } = await harness(t, [{
+    beforeStream: [
+      status({ status: 'compacting' }), status({ status: null, permissionMode: 'default' }),
+      { type: 'system', subtype: 'compact_boundary', parent_tool_use_id: 'child' },
+      hidden({ type: 'message_start', message: { role: 'assistant', content: [] } }),
+      hidden({ type: 'message_stop' }), status({ status: null, compact_result: 'failed' }),
+    ],
+    blocks: [{ type: 'text', text: '继续回答。' }],
+  }])
+  const result = await step([user('继续')], { signal: AbortSignal.timeout(1500) })
+  assert.equal(text(result), '继续回答。')
+  assert.equal(result.finish.kind, 'stop')
+  assert.equal(transport.compactionOf(sessionUuid(agent.id)), 'failed')
+})
+
+test('a completed Write shows the applied hunks without putting the diff in model content', async t => {
+  const filePath = 'notes.txt'
+  const { workspace, converse, state } = await harness(t, [{
+    blocks: [{ type: 'tool_use', id: 'edit-note', name: 'Write', input: { file_path: filePath, content: 'keep\nnew' } }],
+    toolOutput: { type: 'update', filePath, structuredPatch: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: [' keep', '-old', '+new'] }] },
+  }, { blocks: [{ type: 'text', text: 'done' }] }])
+  await writeFile(join(workspace, filePath), 'keep\nold')
+  await converse([user('更新笔记')])
+  const [{ card, outcome }] = state.toolResults
+  assert.deepEqual(card.diffs, [{ path: filePath, oldText: 'keep\nold', newText: 'keep\nnew' }])
+  assert.doesNotMatch(JSON.stringify(outcome.content), /structuredPatch|keep|old/u)
+})
+
+test('several tool results in one CLI frame never share its single structured patch', async t => {
+  const write = id => ({ type: 'tool_use', id, name: 'Write', input: { file_path: 'notes.txt', content: id } })
+  const { converse, state } = await harness(t, [{
+    blocks: [write('one'), write('two')],
+    toolOutput: { type: 'create', filePath: 'notes.txt', content: 'ambiguous', structuredPatch: [] },
+  }, { blocks: [{ type: 'text', text: 'done' }] }])
+  await converse([user('改两次')])
+  assert.equal(state.toolResults.length, 2)
+  for (const { card, outcome } of state.toolResults) {
+    assert.equal(outcome.meta.kind, undefined)
+    assert.match(card.title, /Preview/u)
+  }
+})
+
+test('a new DSH compaction checkpoint may replace a history prefix while the CLI keeps its context', async t => {
+  const { converse, step, log } = await harness(t, [
+    { blocks: [{ type: 'text', text: '第一步' }] },
+    { blocks: [{ type: 'text', text: '第二步' }] },
+    { blocks: [{ type: 'text', text: '第三步' }] },
+  ])
+  const messages = [user('记住颜色')]
+  await converse(messages)
+  messages.push(user('再记住数字'))
+  const [second] = await converse(messages)
+  const checkpoint = createUserMessage({ source: { kind: 'compact-checkpoint', compactionId: 'checkpoint-1' }, content: [{ type: 'text', text: '宿主压缩摘要' }] })
+  const next = await step([checkpoint, replay(second), user('接着')])
+  assert.equal(text(next), '第三步')
+  const entries = await log()
+  assert.equal(entries.filter(entry => entry.kind === 'start').length, 1)
+  assert.doesNotMatch(JSON.stringify(entries.filter(entry => entry.kind === 'request')), /宿主压缩摘要/u)
+})
 
 test('Claude Code works with its own prompt and tools; a call it asks about is approved in DSH and the same process continues', async t => {
   const { converse, log, state, transport, workspace } = await harness(t, [
@@ -197,6 +275,7 @@ test('Claude Code works with its own prompt and tools; a call it asks about is a
   assert.equal(start.cwd, workspace)
   assert.equal(start.env.ANTHROPIC_BASE_URL, 'https://cf.api.fan')
   assert.equal(start.env.CLAUDE_CODE_PROJECT_DIR_NAME, 'dsh-packycode')
+  assert.equal(start.env.CLAUDE_CODE_ENABLE_TODO_TOOLS, '1')
   assert.equal(start.env.CLAUDE_CODE_MAX_RETRIES, '0')
   assert.equal(start.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, '1')
   assert.equal(start.env.ANTHROPIC_API_KEY, undefined, 'an ambient key never reaches the CLI')
@@ -410,6 +489,12 @@ test('a new process resumes the same Claude Code session by id; a history it doe
   await first.converse(messages)
   // DSH restarts: a new transport over the same CLI home.
   await first.transport.close()
+  // A v1.4.14 record carries the reply fingerprint only. The first matching
+  // continuation upgrades it without throwing away the native CLI session.
+  const storePath = join(first.dir, 'home', 'dsh-sessions.json')
+  const previous = JSON.parse(await readFile(storePath, 'utf8'))
+  for (const record of Object.values(previous.sessions)) delete record.history
+  await writeFile(storePath, JSON.stringify(previous))
   const again = createClaudeCliTransport({
     binary: async () => '/fixture/bin/claude', configDir: join(first.dir, 'home'), version: () => '2.1.295',
     spawnImpl: (command, args, options) => spawn(process.execPath, [FAKE_CLI, ...args], options),
@@ -459,6 +544,7 @@ test('session titles run in a one-shot process with no tools on what DSH asks to
   assert.equal(text(await titled(first)), '仓库发货安排')
   const [start] = (await log()).filter(entry => entry.kind === 'start')
   assert.ok(start.args.includes('-p'))
+  assert.equal(start.env.CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined)
   assert.equal(start.args[start.args.indexOf('--model') + 1], 'claude-haiku-5-5')
   assert.equal(start.args[start.args.indexOf('--tools') + 1], '')
   assert.ok(start.args.includes('--no-session-persistence'))

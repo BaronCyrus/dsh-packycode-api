@@ -47,6 +47,7 @@ import { normalizeHost, statusHostOrder } from './hosts.js'
 import { createKeyChooser } from './key-chooser.js'
 import { PackyCodeKeyRing } from './key-ring.js'
 import { createModelSelectionController } from './model-selection.js'
+import { currentRequest } from './request-context.js'
 import { createNetworkLog } from './network.js'
 import { createPackyCodePluginManager } from './plugin-version.js'
 import { connectSettings, fieldValue, live, unwritable } from './preferences.js'
@@ -139,7 +140,20 @@ export function apply(ctx, config) {
    * with a choice of keys waits briefly for the first reading.
    */
   const groups = createGroupReader({ listKeys: () => ring.secrets(), getHosts: hosts })
-  const keys = createKeyChooser({ ring, groups, logger: ctx.logger, onRotated: () => balance.invalidate() })
+  // Only foreground turns have a composer. Record the chosen key's ring ID
+  // at dispatch, including retries, without exposing a credential to the UI.
+  const runningTurns = new Map()
+  const dispatchedTurn = model => {
+    const request = currentRequest()
+    const turn = request?.purpose === undefined ? runningTurns.get(request?.sessionId) : undefined
+    return turn?.model === model ? turn : undefined
+  }
+  const keys = createKeyChooser({ ring, groups, logger: ctx.logger, onRotated: () => balance.invalidate(),
+    onSelected(model, keyId) {
+      const turn = dispatchedTurn(model)
+      if (turn !== undefined) turn.keyId = keyId
+    },
+  })
 
   /** The session of the agent this turn runs for, when one is in scope. */
   const currentSession = () => {
@@ -251,6 +265,7 @@ export function apply(ctx, config) {
   const claudeTransportOf = keyId => claudeTransportFor({ groups: keyId === undefined ? undefined : groups.groupsOf(keyId) })
   /** Sessions whose running turn is Claude Code's; it may be waiting for DSH's tool results. */
   const cliTurns = new WeakSet()
+  ctx.on?.('session/disposed', session => runningTurns.delete(session.id))
   /** Read the active key's groups in the background, for the routes still to come. */
   const readGroupsSoon = () => { void keys.active().then(key => (key === undefined ? undefined : keys.awaitGroups?.(key.id))).catch(() => undefined) }
   // A session that opens reads them before its first turn needs them.
@@ -263,12 +278,14 @@ export function apply(ctx, config) {
    * stays there to its end, even if a group reading arrives during it.
    */
   ctx.on?.('session/event', (session, event) => {
-    if (event?.type === 'turn/end') { cliTurns.delete(session); return }
+    if (event?.type === 'turn/end') { cliTurns.delete(session); runningTurns.delete(session.id); return }
     if (event?.type !== 'turn/start') return
     let agent
     try { agent = ctx.get?.('agents')?.currentInitiator?.() } catch { return }
     if (agent === undefined || agent.session !== session) return
     const next = nextModelOf(agent)
+    if (next.provider === PROVIDER) runningTurns.set(session.id, { model: next.model })
+    else runningTurns.delete(session.id)
     const route = next.provider === PROVIDER && isClaudeModel(next.model) ? claudeTransportOf(keys.idFor(next.model)) : undefined
     if (route?.transport !== 'cli') {
       cliTurns.delete(session)
@@ -292,7 +309,14 @@ export function apply(ctx, config) {
       choose: ({ apiKey, model }) => {
         if (!isClaudeModel(model)) return false
         const session = currentSession()
-        return (session !== undefined && cliTurns.has(session)) || claudeTransportOf(keys.idOf(apiKey)).transport === 'cli'
+        const route = claudeTransportOf(keys.idOf(apiKey))
+        const viaCli = (session !== undefined && cliTurns.has(session)) || route.transport === 'cli'
+        const turn = dispatchedTurn(model)
+        if (turn !== undefined) {
+          turn.transport = viaCli ? 'cli' : 'http'
+          turn.groupsKnown = route.reason === 'group'
+        }
+        return viaCli
       },
       fetch: (input, init, meta) => {
         const agent = requestAgent(meta)
@@ -449,6 +473,16 @@ export function apply(ctx, config) {
     groups,
     hosts,
     preference: hostPreference,
+    conversationActivity(sessionId, model) {
+      const turn = runningTurns.get(sessionId)
+      if (!turn?.keyId || turn.model !== model) return {}
+      const { keyId, transport, groupsKnown } = turn
+      const compaction = transport === 'cli' ? cliTransport.compactionOf(sessionUuid(sessionId)) : undefined
+      return {
+        selection: { keyId, ...(transport ? { transport, groupsKnown } : {}) },
+        ...(compaction === undefined ? {} : { compaction }),
+      }
+    },
     pluginManager: createPackyCodePluginManager(),
     claude: Object.freeze({
       async status({ force = false } = {}) {

@@ -17,6 +17,8 @@ import { installImagePresentation, PackyCodeImagesCard, PackyCodeImageShortcut }
 import { fill, KeyBalance, QuotaHover } from './client-balance.jsx'
 import { KeyRenameForm, useKeyRename } from './client-key-rename.jsx'
 import { DiagnosticsCard } from './client-diagnostics.jsx'
+import { CLAUDE_TASKS, claudeTaskNode } from './claude-tasks.js'
+import { ClaudeTaskList, ClaudeToolCard } from './client-claude-tool.jsx'
 
 const NS = 'settings.packyCodeApi'
 const PROVIDER = 'packycode'
@@ -64,12 +66,6 @@ const useCaller = rpc => react.useMemo(() => channelCaller(rpc), [rpc])
 function clearMessage(error) {
   const text = typeof error?.message === 'string' && error.message.length > 0 ? error.message : String(error)
   return text.length > 200 ? text.slice(0, 200) : text
-}
-
-/** Active key's usage row, preferring the key the ring currently points at. */
-function activeUsage(balance) {
-  if (balance === undefined) return undefined
-  return balance.keys?.find(entry => entry.id === balance.activeId) ?? balance.keys?.[0]
 }
 
 /** Which catalog families a key reaches, from its per-model coverage. */
@@ -973,14 +969,22 @@ function PackyCodeSection({ rpc, t }) {
   )
 }
 
-function PackyCodeComposerQuota({ rpc, t, directory }) {
+const COMPACTION_LABELS = { running: 'cliCompacting', completed: 'cliCompacted', interrupted: 'cliCompactInterrupted', failed: 'cliCompactFailed' }
+
+function PackyCodeComposerQuota({ rpc, t, directory, sessionId, session }) {
   const call = useCaller(rpc)
   const snapshot = react.useSyncExternalStore(
     listener => directory.subscribe(listener),
     () => directory.getSnapshot(),
   )
   const enabled = snapshot?.current?.provider === PROVIDER
+  const model = snapshot?.current?.model
+  const running = react.useSyncExternalStore(
+    listener => session?.subscribe?.(listener) ?? (() => {}),
+    () => session?.getSnapshot?.()?.running === true,
+  )
   const [balance, setBalance] = react.useState()
+  const [activity, setActivity] = react.useState()
   const refresh = react.useRef(() => {})
 
   react.useEffect(() => {
@@ -994,8 +998,8 @@ function PackyCodeComposerQuota({ rpc, t, directory }) {
     const tick = () => {
       if (pending) return
       pending = true
-      call('balance').then(value => {
-        if (live) setBalance(value)
+      call('balance', model === undefined ? {} : { model }).then(value => {
+        if (live) setBalance({ ...value, model })
       }).catch(() => {
         if (live) setBalance(undefined)
       }).finally(() => {
@@ -1010,23 +1014,52 @@ function PackyCodeComposerQuota({ rpc, t, directory }) {
       refresh.current = () => {}
       window.clearInterval(timer)
     }
-  }, [call, enabled])
+  }, [call, enabled, model, running])
 
-  if (!enabled || balance === undefined) return null
-  const row = activeUsage(balance)
+  react.useEffect(() => {
+    setActivity(undefined)
+    if (!enabled || !running || !sessionId) return undefined
+    let live = true
+    let pending = false
+    const tick = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const value = await call('conversation/activity', { sessionId, model })
+        if (live) setActivity({ ...value, sessionId, model })
+      } catch {
+        if (live) setActivity(undefined)
+      } finally { pending = false }
+    }
+    void tick()
+    // This reads only process memory. Balance and group reads keep their own cadence.
+    const timer = window.setInterval(tick, 2000)
+    return () => { live = false; window.clearInterval(timer) }
+  }, [call, enabled, running, sessionId, model])
+
+  if (!enabled) return null
+  const current = running && activity?.sessionId === sessionId && activity?.model === model ? activity : undefined
+  const compactLabel = COMPACTION_LABELS[current?.compaction]
+  const ready = balance !== undefined && balance.model === model
+  const selected = current?.selection ?? balance?.selection
+  const keyId = selected === undefined ? balance?.activeId ?? balance?.keys?.find(entry => !entry.disabled)?.id : selected.keyId
+  const row = ready ? balance.keys?.find(entry => entry.id === keyId) : undefined
+  const routeLabel = selected?.transport === 'http' ? t('keyClaudeHttp') : selected?.transport === 'cli'
+    ? t(selected.groupsKnown === false ? 'composerClaudeUnknown' : 'keyClaudeCli') : undefined
   // A key whose balance read failed is still usable; say the read failed
   // instead of claiming there is no key.
-  return (
-    <QuotaHover
+  return <>
+    {compactLabel && <span className="pkc-meta" role="status">{t(compactLabel)}</span>}
+    {ready && <QuotaHover
       row={row}
       fetchedAt={balance.fetchedAt}
-      empty={row?.error === undefined ? t('composerNoKey') : t('composerUnread')}
-      copy={{ title: t('composerLabel'), key: t('composerKey'), failed: t('composerUnread') }}
+      empty={keyId === undefined ? t('composerNoKey') : t('composerUnread')}
+      copy={{ title: t('composerLabel'), key: t(current?.selection ? 'composerRunningKey' : 'composerKey'), route: routeLabel, failed: t('composerUnread') }}
       align="end"
       onRefresh={() => refresh.current()}
       t={t}
-    />
-  )
+    />}
+  </>
 }
 
 export const inject = ['slots', 'locale', 'connection', 'modelDirectories']
@@ -1044,6 +1077,17 @@ export function apply(ctx) {
   const t = ctx.locale.bind(NS)
   const call = channelCaller(connection.rpc)
   installImagePresentation(ctx, t, call)
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+    name: 'tool.call.toolview', key: 'claude_code', inject: () => ({ t }),
+  }, ClaudeToolCard))
+  ctx.inject(['uiConversation'], scope => {
+    const events = scope.get('uiConversation')?.events
+    if (typeof events?.register !== 'function') return
+    scope.effect(() => events.register(claudeTaskNode), 'packycode-api: Claude task list')
+    scope.slots.inject('conversation.chat.node', () => scope.slots.register({
+      name: 'conversation.chat.node', key: CLAUDE_TASKS, inject: () => ({ t }),
+    }, ClaudeTaskList))
+  })
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'packycode-api',
@@ -1060,6 +1104,8 @@ export function apply(ctx) {
     inject: sessionId => ({
       rpc: connection.rpc,
       t,
+      sessionId,
+      session: ctx.get('sessions')?.binding?.(sessionId)?.session,
       directory: ctx.modelDirectories.directoryFor(sessionId).store,
     }),
   }, PackyCodeComposerQuota))

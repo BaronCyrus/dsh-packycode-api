@@ -5,6 +5,7 @@ import { answersFor, approvalReason, presentClaudeCall, presentClaudeResult, que
 import { buildCliArgs, buildCliEnvironment, cliErrorMessage, MIRROR_TOOL, PLAN_TOOL, responseFingerprint, toolResultText } from '../src/claude-cli-session.js'
 import { baseUrlOf, compactionSummary, describeRequest, dshSystemText, messageFingerprint, planAnswer, planContinuation, splitAtLastAnswer, titlePrompt } from '../src/claude-cli-transport.js'
 import { claudePermissionMode } from '../src/claude-permission-mode.js'
+import { appliedClaudePatch, claudePatchDiffs } from '../src/claude-file-diff.js'
 import { buildTranscript, toCliHistory } from '../src/claude-transcript.js'
 import { createClaudeToolNames } from '../src/claude-tools.js'
 import { claudeTransportFor, CLI_ONLY_GROUPS } from '../src/claude-transport.js'
@@ -86,6 +87,19 @@ test('CLI arguments and environment: Claude Code\'s own prompt and tools, permis
   assert.equal(cliErrorMessage('Failed to authenticate. API Error: 403 客户端存在异常'), '客户端存在异常')
   assert.equal(cliErrorMessage('API Error: Request rejected (429) · concurrency_queue_full'), 'concurrency_queue_full')
   assert.equal(cliErrorMessage('plain'), 'plain')
+})
+
+test('the cc conversation opts in to native task tools on newer Claude models and keeps one-shot calls tool-less', () => {
+  const options = { baseUrl: 'https://fixture.invalid', apiKey: 'fixture', configDir: '/fixture', parent: {
+    CLAUDE_CODE_ENABLE_TODO_TOOLS: '0', CLAUDE_CODE_ENABLE_TASKS: '0',
+  } }
+  for (const continues of [false, true]) {
+    const env = buildCliEnvironment({ ...options, continues })
+    assert.equal(env.CLAUDE_CODE_ENABLE_TODO_TOOLS, '1')
+    assert.equal(env.CLAUDE_CODE_ENABLE_TASKS, undefined, 'the user’s legacy TodoWrite choice stays in their own CLI')
+    assert.equal(env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, '1')
+  }
+  assert.equal(buildCliEnvironment({ ...options, oneShot: true }).CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined)
 })
 
 test('the CLI disables experimental gateway fields for fresh and continued turns without depending on ambient settings', () => {
@@ -194,6 +208,20 @@ test('an approval prompt names what Claude Code asks to run, and a refusal reach
   assert.match(approvalReason({ tool_name: 'Write', input: { file_path: '/etc/hosts' } }).reason, /\/etc\/hosts/u)
   assert.equal(refusalMessage({ content: [{ type: 'text', text: 'Error: the user rejected tool "claude_code"' }] }), 'The user rejected this call in DeepSeek Harness.')
   assert.match(refusalMessage({ content: [{ type: 'text', text: 'Error: Auto review denied tool "claude_code": risky' }] }), /did not allow this call: Auto review denied/u)
+})
+
+test('file metadata keeps only validated hunks for the called path and redacts the request credential', () => {
+  const call = { name: 'Edit', input: { file_path: './a.txt' } }
+  const key = 'test-credential'
+  const hunk = { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: ['-before', `+${key}`, '\\ No newline at end of file'] }
+  const output = { type: 'update', filePath: '/work/a.txt', originalFile: 'private prior contents', structuredPatch: [hunk] }
+  const patch = appliedClaudePatch(call, output, '/work', key)
+  assert.deepEqual(claudePatchDiffs(patch), [{ path: './a.txt', oldText: 'before', newText: '[redacted]' }])
+  assert.ok(!JSON.stringify(patch).includes(key) && !JSON.stringify(patch).includes('private prior contents'))
+  assert.equal(appliedClaudePatch(call, { ...output, filePath: '/other/a.txt' }, '/work', key), undefined)
+  assert.equal(appliedClaudePatch(call, { ...output, structuredPatch: [{ ...hunk, newLines: 2 }] }, '/work', key), undefined)
+  const create = appliedClaudePatch({ ...call, name: 'Write' }, { type: 'create', filePath: 'a.txt', structuredPatch: [], content: 'new\n' }, '/work', key)
+  assert.deepEqual(claudePatchDiffs(create), [{ path: './a.txt', oldText: null, newText: 'new\n' }])
 })
 
 test('Claude Code\'s questions go to DSH\'s question UI and the answers come back by question text', () => {

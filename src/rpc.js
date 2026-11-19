@@ -14,6 +14,10 @@
 
 import { DEFAULT_API_HOST, DEFAULT_STATUS_HOST } from './constants.js'
 import { normalizeHost } from './hosts.js'
+import { claudeTransportFor, isClaudeModel } from './claude-transport.js'
+import { pickKeyForModel } from './groups.js'
+import { firstUsableKey } from './key-ring.js'
+import { DEFAULT_GROUP_WAIT_MS } from './key-chooser.js'
 
 export { normalizeHost } from './hosts.js'
 
@@ -33,7 +37,7 @@ const keyId = payload => String(payload?.id ?? '')
  *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claude, pluginManager, search, autoReview, modelSelection, images, imageOriginals, diagnostics }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claude, conversationActivity, pluginManager, search, autoReview, modelSelection, images, imageOriginals, diagnostics }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
@@ -55,6 +59,21 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     defaults: { apiHost: DEFAULT_API_HOST, statusHost: DEFAULT_STATUS_HOST },
   })
 
+  /** The composer's estimate uses only public key records and the request chooser's coverage rule. */
+  const previewSelection = async (state, model, signal) => {
+    const usable = state.keys.filter(entry => !entry.disabled)
+    if (groups && (usable.length > 1 || (usable.length > 0 && isClaudeModel(model)))) {
+      const timeout = AbortSignal.timeout(DEFAULT_GROUP_WAIT_MS)
+      const read = groups.read({ signal: signal ? AbortSignal.any([signal, timeout]) : timeout }).catch(() => undefined)
+      if (!groups.hasReading?.()) await read
+    }
+    const chosen = pickKeyForModel(model, firstUsableKey(state), usable, (id, name) => groups?.covers?.(id, name))
+    if (!chosen) return {}
+    if (!isClaudeModel(model)) return { keyId: chosen.id }
+    const route = claudeTransportFor({ groups: groups?.groupsOf?.(chosen.id) })
+    return { keyId: chosen.id, transport: route.transport, groupsKnown: route.reason === 'group' }
+  }
+
   /**
    * Key mutations, each answered with the new status. Every one drops the
    * cached balance; one that changes which keys exist also drops the groups.
@@ -70,10 +89,18 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
 
   const endpoints = {
     status: () => status(),
-    balance: async payload => {
-      const [value, state] = await Promise.all([balance.read({ force: payload?.force === true }), ring.list()])
-      return { ...value, activeId: state.activeId }
+    balance: async (payload, signal) => {
+      const model = payload?.model
+      const [value, selection] = await Promise.all([
+        balance.read({ force: payload?.force === true, signal }),
+        ring.list().then(async state => ({
+          activeId: state.activeId,
+          ...(typeof model === 'string' && model ? { selection: await previewSelection(state, model, signal) } : {}),
+        })),
+      ])
+      return { ...value, ...selection }
     },
+    'conversation/activity': payload => conversationActivity?.(payload?.sessionId, payload?.model) ?? {},
     groups: async payload => {
       const reading = await groupReader().read({ force: payload?.force === true })
       if (claude === undefined) return reading

@@ -44,11 +44,11 @@ export async function orderKeysFor(ring, modelId, covers) {
 }
 
 /**
- * @param options - the key ring, the group reader, what to do after a key
- *   moved aside, a logger, and how long to wait for the first group reading.
+ * @param options - the ring and group reader, callbacks for a rotation and
+ *   a model's selected ring ID, a logger and the initial group wait.
  * @returns the chooser.
  */
-export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEFAULT_GROUP_WAIT_MS }) {
+export function createKeyChooser({ ring, groups, onRotated, onSelected, logger, waitMs = DEFAULT_GROUP_WAIT_MS }) {
   /**
    * Key material to ring id. A failure is reported from inside a stream, which
    * carries the request's key but not its id; this index is refreshed on every
@@ -137,6 +137,7 @@ export function createKeyChooser({ ring, groups, onRotated, logger, waitMs = DEF
       const current = snapshot.find(entry => entry.key === apiKey)
       if (current === undefined) return apiKey
       const chosen = pickKeyForModel(modelId, current, usable(), covers)
+      onSelected?.(modelId, chosen?.id ?? current.id)
       if (chosen?.switchedFrom !== undefined) {
         logger?.info?.('packycode-api: key %s cannot reach %s by its last group reading; this request uses key %s', current.id, modelId, chosen.id)
       }

@@ -28,7 +28,7 @@ const imageBalance = () => ({ activeId: 'image-a', fetchedAt: READ_AT, keys: [
 function composerFixture(t) {
   let current = { current: { provider: 'packycode', model: 'deepseek-flash' } }
   let chat = chatBalance()
-  let failure = false
+  let failure = false, running = false, activity = {}
   const calls = [], subscribers = new Set(), timers = new Map(), slots = new Map()
   let nextTimer = 0, client, root
   const directory = { getSnapshot: () => current, subscribe(listener) { subscribers.add(listener); return () => subscribers.delete(listener) } }
@@ -38,12 +38,13 @@ function composerFixture(t) {
     if (endpoint === 'images/status') return { ok: true, value: { imageEnabled: true, available: true, activeId: 'image-a', keys: [{ id: 'image-a', active: true }] } }
     if (failure) throw new Error('Fixture RPC unavailable')
     if (endpoint === 'balance') return { ok: true, value: structuredClone(chat) }
+    if (endpoint === 'conversation/activity') return { ok: true, value: structuredClone(activity) }
     assert.equal(endpoint, 'images/balance')
     return { ok: true, value: imageBalance() }
   } }
   const window = { __ModuleLoader__: { load(spec) { client = spec.factory(name => name === 'react' ? react : jsx) } },
     addEventListener() {}, removeEventListener() {},
-    setInterval(fn, ms) { assert.equal(ms, 60_000); timers.set(++nextTimer, fn); return nextTimer },
+    setInterval(fn, ms) { assert.ok([2000, 60_000].includes(ms)); timers.set(++nextTimer, fn); return nextTimer },
     clearInterval(id) { timers.delete(id) },
   }
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), {
@@ -51,7 +52,9 @@ function composerFixture(t) {
   })
   const ctx = {
     locale: { register() {}, bind: () => key => zh[key] }, effect: fn => fn(),
-    get: name => ({ connection: { rpc }, sessions: { scope: () => ({}) }, conversation: { input: { for: () => ({
+    get: name => ({ connection: { rpc }, sessions: { scope: () => ({}), binding: () => ({ session: {
+      getSnapshot: () => ({ running }), subscribe(listener) { subscribers.add(listener); return () => subscribers.delete(listener) },
+    } }) }, conversation: { input: { for: () => ({
       state: { getSnapshot: () => ({ phase: 'plain', draft: '', occurrences: [] }) }, setDraft() {},
     }) } } })[name],
     modelDirectories: { directoryFor: () => ({ store: directory }) },
@@ -82,9 +85,12 @@ function composerFixture(t) {
     image: () => hovers().find(side => side.lines[0] === zh.imagesComposerLabel),
     chat: () => hovers().find(side => side.lines[0] === zh.composerLabel),
     hovers,
+    status: () => root.root.findAll(node => node.type === 'span' && node.props.role === 'status').map(node => node.children.join('')),
+    setActivity(value) { activity = value },
+    async running(value) { await act(async () => { running = value; for (const listener of subscribers) listener() }) },
     setChat(value) { chat = value },
     fail(value = true) { failure = value },
-    async provider(provider) { await act(async () => { current = { current: { provider } }; for (const listener of subscribers) listener() }) },
+    async provider(provider, model) { await act(async () => { current = { current: { provider, model } }; for (const listener of subscribers) listener() }) },
     async tick() { await act(async () => { for (const fn of [...timers.values()]) fn() }); await settle() },
   }
 }
@@ -158,6 +164,40 @@ test('stale, unreadable, unlimited and missing conversation balances read the sa
   await fx.tick()
   assert.equal(fx.chat().figure, zh.composerNoKey)
   assert.equal(fx.chat().lines.some(line => line.startsWith(`${zh.composerKey}:`)), false)
+})
+
+test('switching PackyCode models selects the quoted key and its Claude route immediately', async t => {
+  const fx = composerFixture(t)
+  await fx.mount()
+  fx.setChat({ ...chatBalance(), selection: { keyId: 'chat-a', transport: 'cli', groupsKnown: false } })
+  await fx.provider('packycode', 'claude-opus-5-5')
+  assert.equal(fx.calls.filter(item => item.endpoint === 'balance').at(-1).payload.model, 'claude-opus-5-5')
+  assert.equal(fx.chat().figure, usd(500))
+  assert.ok(fx.chat().lines.includes(`${zh.composerKey}: Backup key`))
+  assert.ok(fx.chat().lines.includes(zh.composerClaudeUnknown))
+  fx.setChat({ ...chatBalance(), selection: {} })
+  await fx.tick()
+  assert.equal(fx.chat().figure, zh.composerNoKey, 'all keys disabled')
+})
+
+test('a running turn shows its dispatched key and compaction state until the turn ends', async t => {
+  const fx = composerFixture(t)
+  await fx.mount()
+  await fx.provider('packycode', 'claude-opus-5-5')
+  fx.setActivity({ selection: { keyId: 'chat-a', transport: 'cli', groupsKnown: true }, compaction: 'running' })
+  await fx.running(true)
+  assert.equal(fx.chat().figure, usd(500))
+  assert.ok(fx.chat().lines.includes(`${zh.composerRunningKey}: Backup key`))
+  assert.ok(fx.status().includes(zh.cliCompacting))
+  fx.setActivity({ selection: { keyId: 'chat-a', transport: 'cli', groupsKnown: true }, compaction: 'failed' })
+  await fx.tick()
+  assert.ok(fx.status().includes(zh.cliCompactFailed))
+  await fx.running(false)
+  assert.equal(fx.chat().figure, usd(42.5))
+  assert.ok(!fx.status().includes(zh.cliCompactFailed))
+  const count = fx.calls.filter(item => item.endpoint === 'conversation/activity').length
+  await fx.tick()
+  assert.equal(fx.calls.filter(item => item.endpoint === 'conversation/activity').length, count)
 })
 
 test('the PackyCode quota still hides for other providers and after a failed read, and stops polling', async t => {

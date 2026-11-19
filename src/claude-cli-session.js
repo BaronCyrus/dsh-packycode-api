@@ -24,6 +24,10 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 
 import { resolveSpawnCommand } from './claude-binary.js'
+import { appliedClaudePatch } from './claude-file-diff.js'
+import { nativeTaskChange } from './claude-tasks.js'
+import { toolResultText } from './claude-tool-presentation.js'
+import { redactSecrets } from './secret-redactor.js'
 import { CLI_MARK, CLI_OUTDATED, CLI_UNAVAILABLE } from './failures.js'
 import { withProgramDirOnPath } from './locate.js'
 
@@ -74,10 +78,10 @@ export function buildCliArgs({ model, effort, permissionMode = 'default', cliSes
  * home, retries and fallbacks handed back to DSH, and nothing inherited that
  * would authenticate another account or redirect the request.
  * @param options - endpoint, key, CLI home, output cap, whether the open turn
- *   is continued, and the parent environment.
+ *   is continued, whether the process is tool-less, and the parent environment.
  * @returns the environment for the child process.
  */
-export function buildCliEnvironment({ baseUrl, apiKey, configDir, maxTokens, continues = false, parent = process.env }) {
+export function buildCliEnvironment({ baseUrl, apiKey, configDir, maxTokens, continues = false, oneShot = false, parent = process.env }) {
   if (typeof apiKey !== 'string' || apiKey === '') throw new Error('Claude Code CLI has no PackyCode API key to run with')
   const env = {}
   for (const [name, value] of Object.entries(parent ?? {})) {
@@ -113,6 +117,8 @@ export function buildCliEnvironment({ baseUrl, apiKey, configDir, maxTokens, con
     CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING: '1',
     CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
     CLAUDE_CODE_DISABLE_TERMINAL_TITLE: '1',
+    // Newer Claude models omit the native task tools unless the CLI opts in.
+    ...(!oneShot ? { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } : {}),
     ...(Number.isSafeInteger(maxTokens) && maxTokens > 0 ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens) } : {}),
     ...(continues ? { CLAUDE_CODE_RESUME_INTERRUPTED_TURN: '1' } : {}),
   }
@@ -142,12 +148,7 @@ export function responseFingerprint({ toolIds = [], text = '' } = {}) {
   return JSON.stringify([toolIds, text.trim()])
 }
 
-/** A tool result's content as text, for DSH's card and for errors. */
-export function toolResultText(content) {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content.map(block => (block?.type === 'text' ? block.text : block?.type === 'image' ? '[image]' : '')).filter(Boolean).join('\n')
-}
+export { toolResultText }
 
 /**
  * Start a process.
@@ -208,8 +209,8 @@ export async function startClaudeCliSession({
   /** A request failed between steps; the next step reports it. */
   let failure
   let interrupting = false
-  /** The CLI is compacting its own context; that request is not a DSH step. */
-  let compacting = false
+  /** CLI context compaction is display-only; its internal request is not a DSH step. */
+  let compaction
   /** Callers waiting for an interrupted turn to end. */
   const stopWaiters = []
   let lastPlanFile
@@ -284,6 +285,7 @@ export async function startClaudeCliSession({
   const dispose = (reason = 'closed') => {
     if (disposing !== undefined) return disposing
     state = 'closed'
+    if (compaction === 'running') compaction = 'interrupted'
     clearTimeout(startupTimer)
     const gone = new Error(`Claude Code CLI process ended (${reason})`)
     for (const call of calls.values()) {
@@ -335,7 +337,7 @@ export async function startClaudeCliSession({
     release(entry)
     try { entry.controller.close() } catch { /* the consumer went away */ }
     const fingerprint = responseFingerprint({ toolIds: entry.tools.map(tool => tool.id), text: entry.text.join('') })
-    served = { fingerprint, toolIds: entry.tools.map(tool => tool.id), planId: entry.tools.find(tool => tool.name === PLAN_TOOL)?.id }
+    served = { fingerprint, history: entry.history, toolIds: entry.tools.map(tool => tool.id), planId: entry.tools.find(tool => tool.name === PLAN_TOOL)?.id }
     streaming = undefined
     if (oneShot) { void dispose('one-shot request answered'); return }
     onServed?.(served)
@@ -399,10 +401,13 @@ export async function startClaudeCliSession({
       enqueue(event)
       return
     }
-    if (event.type === 'content_block_start' && event.content_block?.type === 'text') entry.text.push(String(event.content_block.text ?? ''))
+    if (event.type === 'content_block_start' && event.content_block?.type === 'text') {
+      entry.text.push(String(event.content_block.text ?? ''))
+      streaming = { parts: entry.text, history: entry.history }
+    }
     if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
       entry.text.push(String(event.delta.text ?? ''))
-      streaming = { text: entry.text.join('') }
+      streaming ??= { parts: entry.text, history: entry.history }
     }
     if (event.type === 'message_delta' && typeof event.delta?.stop_reason === 'string') entry.stopReason = event.delta.stop_reason
     enqueue(event)
@@ -411,7 +416,7 @@ export async function startClaudeCliSession({
 
   /** A stream event: the step's, or held until DSH asks for the next step. */
   const onStreamEvent = event => {
-    if (interrupting || compacting) return
+    if (interrupting || compaction === 'running') return
     if (event.type === 'message_start') {
       if (!cliBusy && !inputPending && step === undefined) {
         // A turn Claude Code started on its own (a scheduled prompt): DSH cannot show it.
@@ -436,10 +441,12 @@ export async function startClaudeCliSession({
     stopWaiters.push(resolveStop)
     if (interrupting) return
     interrupting = true
+    if (compaction === 'running') compaction = 'interrupted'
     void control({ subtype: 'interrupt' })
   })
 
   const writeUser = content => {
+    compaction = undefined
     inputPending = true
     cliBusy = true
     write({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: cliSessionId })
@@ -456,16 +463,23 @@ export async function startClaudeCliSession({
       return
     }
     if (message.type === 'system') {
+      if (nested) return
       if (message.subtype === 'init') {
         if (typeof message.claude_code_version === 'string') version = message.claude_code_version
         if (typeof message.permissionMode === 'string') mode = message.permissionMode
       }
       if (message.subtype === 'status') {
         if (typeof message.permissionMode === 'string') mode = message.permissionMode
-        // Each request is announced: `requesting` for the conversation, `compacting` for a summary.
-        if (Object.hasOwn(message, 'status') && message.status !== null) compacting = message.status === 'compacting'
+        if (message.compact_result === 'success') compaction = 'completed'
+        else if (message.compact_result === 'failed') compaction = interrupting ? 'interrupted' : 'failed'
+        else if (message.status === 'compacting') compaction = 'running'
+        else if (compaction === 'running' && Object.hasOwn(message, 'status')) {
+          // A null status with permissionMode only acknowledges a mode change.
+          if (message.status !== null) compaction = undefined
+          else if (message.permissionMode === undefined) compaction = 'interrupted'
+        }
       }
-      if (message.subtype === 'compact_boundary') compacting = false
+      if (message.subtype === 'compact_boundary') compaction = 'completed'
       return
     }
     if (message.type === 'control_response') {
@@ -515,11 +529,19 @@ export async function startClaudeCliSession({
       return
     }
     if (message.type === 'user') {
-      const content = Array.isArray(message.message?.content) ? message.message.content : []
-      for (const block of content) {
-        if (block?.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue
+      const results = Array.isArray(message.message?.content) ? message.message.content.filter(block => block?.type === 'tool_result') : []
+      for (const block of results) {
+        if (typeof block.tool_use_id !== 'string') continue
         const call = callOf(block.tool_use_id)
         call.result = { content: block.content, isError: block.is_error === true }
+        const skipped = Array.isArray(message.tool_result_meta) && message.tool_result_meta.some(meta => meta?.id === block.tool_use_id && meta.non_execution_kind)
+        if (!call.result.isError && !skipped) {
+          const output = results.length === 1 ? message.tool_use_result : undefined
+          call.result.patch = appliedClaudePatch(call, output, cwd, apiKey)
+          if (['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList'].includes(call.name)) {
+            call.result.taskChange = nativeTaskChange(call.name, call.input, output, toolResultText(block.content), cliSessionId, value => redactSecrets(value, [apiKey]))
+          }
+        }
         settleResult(call)
       }
       return
@@ -578,7 +600,7 @@ export async function startClaudeCliSession({
       resolveStep(errorResponse(400, `${CLI_MARK} received a request with no new message to send`))
       return
     }
-    const entry = { started: false, done: false, tools: [], text: [], blocks: new Map(), stopReason: undefined, controller: undefined, resolve: resolveStep, reject, signal }
+    const entry = { started: false, done: false, history: input.history, tools: [], text: [], blocks: new Map(), stopReason: undefined, controller: undefined, resolve: resolveStep, reject, signal }
     entry.onAbort = () => {
       const error = signal.reason ?? new DOMException('This operation was aborted', 'AbortError')
       if (entry.started && !entry.done) {
@@ -619,7 +641,7 @@ export async function startClaudeCliSession({
     const program = await binary()
     const command = resolveSpawnCommand(program, { platform })
     const args = buildCliArgs({ model, effort, permissionMode, cliSessionId, resume, oneShot })
-    const env = withProgramDirOnPath(buildCliEnvironment({ baseUrl, apiKey, configDir, maxTokens, continues, parent: parentEnv }), program, platform)
+    const env = withProgramDirOnPath(buildCliEnvironment({ baseUrl, apiKey, configDir, maxTokens, continues, oneShot, parent: parentEnv }), program, platform)
     child = spawnImpl(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
   } catch (error) {
     await dispose('could not start')
@@ -670,12 +692,13 @@ export async function startClaudeCliSession({
   return {
     /** `starting`, `streaming`, `awaiting-tools`, `idle` or `closed`. */
     get state() { return state },
+    get compaction() { return compaction },
     /** The tool_use ids of the last served response, in order. */
     get pendingToolIds() { return pending.map(entry => entry.id) },
     /** The last response served in full: its fingerprint, tool ids and plan call. */
     get served() { return served },
     /** The text of a response that was cut off while streaming. */
-    get partial() { return streaming },
+    get partial() { return streaming && { text: streaming.parts.join(''), history: streaming.history } },
     get closed() { return disposed() },
     /** The CLI version the process announced, once it has. */
     get version() { return version },

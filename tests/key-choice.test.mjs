@@ -110,6 +110,10 @@ test('an HTTP turn runs on a key whose groups reach its model, without moving th
   assert.deepEqual(gateway.chatKeys, [KEY_DEEPSEEK])
   const status = await seen.handler('status', {})
   assert.equal(status.value.keys.find(key => key.active).label, 'codex')
+  const balance = await seen.handler('balance', { model: 'deepseek-flash' })
+  const deepseek = status.value.keys.find(key => key.label === 'deepseek')
+  assert.deepEqual(balance.value.selection, { keyId: deepseek.id })
+  assert.equal(balance.value.activeId, status.value.activeId, 'preview does not move the ring')
 
   // The panel's group projection names both keys' groups, and no key.
   const groups = await seen.handler('groups', {})
@@ -150,6 +154,9 @@ test('a native Claude turn after "use this key" uses that key, otherwise one wit
   const passedOver = await turn(seen.adapter, 'claude-opus-5-5')
   assert.equal(passedOver.at(-1).reason.kind, 'stop')
   assert.deepEqual(gateway.chatKeys, [KEY_CLAUDE])
+  const preview = await seen.handler('balance', { model: 'claude-opus-5-5' })
+  assert.equal(preview.value.selection.transport, 'http')
+  assert.equal(preview.value.selection.groupsKnown, true)
 
   // "Use this key" on the Claude key: the very next run uses it, named plainly.
   const status = await seen.handler('status', {})

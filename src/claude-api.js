@@ -124,6 +124,7 @@ export function createClaudeApi({ cli } = {}) {
       ...(route?.purpose === undefined ? {} : { purpose: route.purpose }),
       ...(typeof route?.cwd === 'string' ? { cwd: route.cwd } : {}),
       ...(typeof route?.userText === 'function' ? { userText: route.userText } : {}),
+      ...(route?.checkpoint === undefined ? {} : { checkpoint: route.checkpoint }),
     })
     return {
       ...options,

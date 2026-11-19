@@ -16,10 +16,12 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import { sessionUuid } from './claude-api.js'
-import { MIRROR_TOOL, toolResultText } from './claude-cli-session.js'
+import { MIRROR_TOOL } from './claude-cli-session.js'
 import { claudePermissionMode } from './claude-permission-mode.js'
+import { presentClaudeCall, short, subjectOf, toolResultText } from './claude-tool-presentation.js'
+import { claudePatchDiffs } from './claude-file-diff.js'
 
-export { MIRROR_TOOL }
+export { MIRROR_TOOL, presentClaudeCall }
 
 /** DSH's Auto review preset: the review answers what the CLI asks about. */
 const AUTO_PRESET = 'auto'
@@ -28,44 +30,6 @@ const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'EnterPlanMode'])
 const GONE = 'This Claude Code tool call can no longer continue: its Claude Code CLI process has ended. Send the request again to resume the session.'
 
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
-const short = (value, limit = 300) => String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, limit)
-
-/** The salient part of a Claude Code tool call, for titles and approval prompts. */
-function subjectOf(tool, input) {
-  const value = record(input) ? input : {}
-  return value.command ?? value.file_path ?? value.notebook_path ?? value.url ?? value.pattern ?? value.query ?? value.description ?? value.path ?? undefined
-}
-
-/**
- * What DSH shows while a Claude Code tool call is pending.
- * @param args - the mirror call's `{ tool, input }`.
- * @returns a terminal, diff or generic card.
- */
-export function presentClaudeCall(args) {
-  const tool = String(args?.tool ?? 'tool')
-  const input = record(args?.input) ? args.input : {}
-  const path = typeof input.file_path === 'string' ? input.file_path : undefined
-  if (tool === 'Bash' && typeof input.command === 'string') {
-    return { card: 'terminal', title: input.command, ...(typeof input.description === 'string' ? { description: input.description } : {}) }
-  }
-  if (tool === 'Edit' && path !== undefined) {
-    return { card: 'diff', title: `Edit ${path}`, diffs: [{ path, oldText: String(input.old_string ?? ''), newText: String(input.new_string ?? '') }], locations: [{ path }] }
-  }
-  if (tool === 'MultiEdit' && path !== undefined && Array.isArray(input.edits)) {
-    return { card: 'diff', title: `Edit ${path}`, diffs: input.edits.map(edit => ({ path, oldText: String(edit?.old_string ?? ''), newText: String(edit?.new_string ?? '') })), locations: [{ path }] }
-  }
-  if (tool === 'Write' && path !== undefined) {
-    return { card: 'diff', title: `Write ${path}`, diffs: [{ path, oldText: null, newText: String(input.content ?? '') }], locations: [{ path }] }
-  }
-  if (tool === 'Read' && path !== undefined) {
-    return { card: 'generic', title: `Read ${path}`, kind: 'read', locations: [{ path, ...(Number.isSafeInteger(input.offset) && input.offset > 0 ? { line: input.offset } : {}) }] }
-  }
-  if (tool === 'Glob' || tool === 'Grep') return { card: 'generic', title: `${tool} ${short(input.pattern)}`, kind: 'search', rawInput: input }
-  if (tool === 'WebFetch' || tool === 'WebSearch') return { card: 'generic', title: `${tool} ${short(input.url ?? input.query)}`, kind: 'fetch' }
-  if (tool === 'AskUserQuestion') return { card: 'generic', title: short(input.questions?.[0]?.question ?? 'AskUserQuestion'), kind: 'other' }
-  const subject = subjectOf(tool, input)
-  return { card: 'generic', title: subject === undefined ? tool : `${tool} ${short(subject, 120)}`, kind: 'other', rawInput: input }
-}
 
 /**
  * What DSH shows once a Claude Code tool call has finished.
@@ -76,7 +40,10 @@ export function presentClaudeCall(args) {
 export function presentClaudeResult(args, result) {
   const call = presentClaudeCall(args)
   if (call.card === 'terminal') return { card: 'terminal', output: toolResultText(result?.content) }
-  if (call.card === 'diff' && result?.isError !== true) return { card: 'diff', diffs: call.diffs }
+  if (call.card === 'diff' && result?.isError !== true) {
+    if (result?.meta?.kind === 'claude-file-diff' && Array.isArray(result.meta.patch?.hunks)) return { card: 'diff', diffs: claudePatchDiffs(result.meta.patch) }
+    return { card: 'diff', title: `Preview · ${call.title}`, diffs: call.diffs }
+  }
   return undefined
 }
 
@@ -159,8 +126,19 @@ export function createClaudeAgentBridge({ transport, services = () => ({}), logg
       input: { type: 'object', required: true, additionalProperties: true, description: 'The Claude Code tool input.' },
     },
     output: {
-      schema: { type: 'object', additionalProperties: false, properties: { content: { type: 'string', required: true } } },
+      schema: { type: 'object', additionalProperties: false, properties: {
+        content: { type: 'string', required: true },
+        patch: { type: 'object', additionalProperties: false, properties: {
+          path: { type: 'string', required: true }, created: { type: 'boolean', required: true },
+          hunks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
+            oldStart: { type: 'integer', required: true }, newStart: { type: 'integer', required: true },
+            lines: { type: 'array', required: true, items: { type: 'string' } },
+          } } },
+        } },
+        taskChange: { type: 'object', additionalProperties: true },
+      } },
       render: (_args, value) => [{ type: 'text', text: value.content }],
+      presentationMeta: (_args, value) => value.patch ? { kind: 'claude-file-diff', patch: value.patch } : value.taskChange ?? {},
     },
     isConcurrencySafe: () => true,
     presentCall: args => presentClaudeCall(args),
@@ -183,7 +161,7 @@ export function createClaudeAgentBridge({ transport, services = () => ({}), logg
         const result = await call.result(exec.signal)
         const text = toolResultText(result.content)
         if (result.isError) throw new Error(text === '' ? 'Claude Code reported an error for this call.' : text)
-        return { content: text }
+        return { content: text, ...(result.patch ? { patch: result.patch } : {}), ...(result.taskChange ? { taskChange: result.taskChange } : {}) }
       } finally {
         exec.signal?.removeEventListener('abort', onAbort)
       }

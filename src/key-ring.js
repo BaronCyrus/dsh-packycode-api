@@ -91,6 +91,16 @@ function projection(state) {
   }
 }
 
+/** First usable key starting at the ring pointer, for stored and projected entries alike. */
+export function firstUsableKey({ keys, activeId }) {
+  const start = Math.max(0, keys.findIndex(candidate => candidate.id === activeId))
+  for (let offset = 0; offset < keys.length; offset += 1) {
+    const candidate = keys[(start + offset) % keys.length]
+    if (candidate.disabledAt === undefined && candidate.disabled !== true) return candidate
+  }
+  return undefined
+}
+
 export class PackyCodeKeyRing {
   #credentials
   #recordKey
@@ -177,15 +187,8 @@ export class PackyCodeKeyRing {
    * @returns the chosen entry, or undefined when every key is unusable.
    */
   async activeKey() {
-    const state = await this.#read()
-    if (state.keys.length === 0) return undefined
-    const usable = candidate => candidate.disabledAt === undefined
-    const start = Math.max(0, state.keys.findIndex(candidate => candidate.id === state.activeId))
-    for (let offset = 0; offset < state.keys.length; offset += 1) {
-      const candidate = state.keys[(start + offset) % state.keys.length]
-      if (usable(candidate)) return { id: candidate.id, label: candidate.label, key: candidate.key }
-    }
-    return undefined
+    const candidate = firstUsableKey(await this.#read())
+    return candidate === undefined ? undefined : { id: candidate.id, label: candidate.label, key: candidate.key }
   }
 
   async add(key, label) {
