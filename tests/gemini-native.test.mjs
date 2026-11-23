@@ -8,6 +8,7 @@ import { SKIP_THOUGHT_SIGNATURE, skipThoughtSignatures } from '../src/gemini-api
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createPackyCodeProvider } from '../src/provider.js'
 import { createRouteAdapter } from '../src/route.js'
+import { dshTitleRequest } from './fixtures/dsh-session-title.mjs'
 import { fakeCredentials, hostProvider } from './helpers.mjs'
 
 const KEY = 'sk-fixture-only-not-a-real-key'
@@ -98,6 +99,29 @@ function capture(t, respond = (_request, _count, model) => nativeStream(undefine
 }
 
 for (const id of ['gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash']) {
+  test(`${id} uses Flash for new and refreshed titles and the selected model for chat`, async t => {
+    const requests = capture(t)
+    const ring = new PackyCodeKeyRing(fakeCredentials())
+    await ring.add(KEY, 'fixture')
+    const adapter = createRouteAdapter({
+      ring,
+      keys: { active: () => ring.activeKey(), forRequest: (_model, key) => key, onKeyFailure: () => assert.fail('unexpected key failure') },
+    })
+    const options = { provider: 'packycode', model: id, sessionId: 'gemini-title', reasoningEffort: 'low' }
+    const prompt = '请整理今天的仓库发货安排'
+    const first = dshTitleRequest([prompt], options)
+    const refresh = dshTitleRequest([prompt, '加上明天的发货安排'], { ...options, currentTitle: '仓库发货安排' })
+    const chat = { ...options, messages: [createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } })] }
+    for (const call of [adapter, await adapter.prepareCall('packycode', id)]) {
+      for (const [request, model] of [[first, 'gemini-3.8-flash'], [refresh, 'gemini-3.8-flash'], [chat, id]]) {
+        const result = new BlockAssembler()
+        for await (const chunk of call.stream(request)) result.push(chunk)
+        assert.equal(result.finish.kind, 'stop')
+        assert.equal(requests.at(-1).url.pathname, `/v1beta/models/${model}:streamGenerateContent`)
+      }
+    }
+  })
+
   test(`${id} streams its three thinking levels through the native SDK without thinkingBudget`, async t => {
     const requests = capture(t)
     const provider = hostProvider(createPackyCodeProvider())

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1
+
+- Gemini 3.8 Flash now generates and refreshes session titles for Gemini 4 Carbon, Gemini 4 Argon and Gemini 3.8 Flash. Conversation turns use the selected Gemini model.
+
 ## 1.5.0
 
 - **Claude Code file changes and tasks.** Expand a tool card to see the applied patch after a successful edit or write. Calls without a matching patch show a labeled preview. The cc route enables Claude Code’s native task tools across the PackyCode Claude models. Their updates form an expandable checklist that can be reopened from chat history.
