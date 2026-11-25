@@ -37,7 +37,7 @@ const keyId = payload => String(payload?.id ?? '')
  *   web search controller (without one, its endpoints refuse).
  * @returns a handler for `connection.rpc.handle(CHANNEL, handler)`.
  */
-export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claude, conversationActivity, pluginManager, search, autoReview, modelSelection, images, imageOriginals, diagnostics }) {
+export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, claude, conversationActivity, pluginManager, search, autoReview, modelSelection, routeSettings, images, imageOriginals, diagnostics }) {
   const need = (service, message) => {
     if (service === undefined) throw new Error(message)
     return service
@@ -48,6 +48,7 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
   const review = () => need(autoReview, 'PackyCode auto review is unavailable in this runtime')
   const groupReader = () => need(groups, 'PackyCode key groups are unavailable in this runtime')
   const models = () => need(modelSelection, 'PackyCode model selection is unavailable in this runtime')
+  const route = () => need(routeSettings, 'PackyCode route settings are unavailable in this runtime')
   const imageSupport = () => need(images, 'PackyCode images are unavailable in this runtime')
   const originals = () => need(imageOriginals, 'PackyCode original images are unavailable in this runtime')
   const diagnosis = () => need(diagnostics, 'PackyCode diagnostics are unavailable in this runtime')
@@ -143,6 +144,11 @@ export function createPackyCodeRpc({ ring, balance, groups, hosts, preference, c
     'auto-review/update': payload => review().update({ autoReviewModel: payload?.autoReviewModel }),
     'models/status': () => models().status(),
     'models/update': payload => models().update({ selectedIds: payload?.selectedIds }),
+    'route/status': () => route().status(),
+    'route/update': payload => route().update({
+      ...(payload?.maxRetries === undefined ? {} : { maxRetries: payload.maxRetries }),
+      ...(payload?.streamIdleTimeoutMs === undefined ? {} : { streamIdleTimeoutMs: payload.streamIdleTimeoutMs }),
+    }),
     'images/status': () => imageSupport().status(),
     'images/balance': (payload, signal) => imageSupport().readBalance({ force: payload?.force === true, signal }),
     'images/groups': (payload, signal) => imageSupport().readGroups({ force: payload?.force === true, signal }),

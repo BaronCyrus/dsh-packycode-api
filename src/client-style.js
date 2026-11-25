@@ -138,6 +138,14 @@ export const STYLE = `
 .pkc-advanced>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .pkc-advanced[open]>summary{margin-bottom:10px}
 .pkc-field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.pkc-advanced-card>summary{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;min-height:28px;cursor:pointer;user-select:none;list-style:none}
+.pkc-advanced-card>summary::-webkit-details-marker{display:none}
+.pkc-advanced-card>summary::marker{content:""}
+.pkc-advanced-card>summary>.pkc-title::before{content:"▸";font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.pkc-advanced-card[open]>summary>.pkc-title::before{content:"▾"}
+.pkc-advanced-body,.pkc-advanced-form{display:flex;flex-direction:column;gap:14px}
+.pkc-advanced-body{padding-top:14px}
+.pkc-number{flex:none;width:160px}
 
 .pkc-composer{display:inline-flex;flex:0 0 auto;align-items:center;box-sizing:border-box;height:28px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500;line-height:20px;font-variant-numeric:tabular-nums;white-space:nowrap;user-select:none}
 

@@ -655,6 +655,162 @@ function AutoReviewCard({ call, t }) {
   )
 }
 
+// ── advanced route options ──────────────────────────────────────────────────
+
+function parseWholeNumber(raw) {
+  const trimmed = String(raw ?? '').trim()
+  if (!/^-?\d+$/u.test(trimmed)) return undefined
+  const value = Number(trimmed)
+  return Number.isSafeInteger(value) ? value : undefined
+}
+
+/** Collapsible card for HTTP route retry count and stream-idle timeout. */
+function AdvancedCard({ call, t }) {
+  const [state, setState] = react.useState()
+  const [draft, setDraft] = react.useState({ maxRetries: '', idleSeconds: '' })
+  const [busy, setBusy] = react.useState(false)
+  const [error, setError] = react.useState()
+  const [saved, setSaved] = react.useState(false)
+
+  const syncFrom = value => {
+    setState(value)
+    setDraft({
+      maxRetries: String(value.maxRetries),
+      idleSeconds: String(Math.round(value.streamIdleTimeoutMs / 1000)),
+    })
+  }
+
+  react.useEffect(() => {
+    let live = true
+    call('route/status').then(value => {
+      if (live) syncFrom(value)
+    }).catch(failure => {
+      if (live) setError(clearMessage(failure))
+    })
+    return () => { live = false }
+  }, [call])
+
+  const defaults = state?.defaults ?? { maxRetries: 20, streamIdleTimeoutMs: 600_000 }
+  const limits = state?.limits ?? { maxRetries: { min: 0, max: 100 }, streamIdleTimeoutMs: { min: 30_000, max: 3_600_000 } }
+  const defaultSeconds = Math.round(defaults.streamIdleTimeoutMs / 1000)
+  const minSeconds = Math.round(limits.streamIdleTimeoutMs.min / 1000)
+  const maxSeconds = Math.round(limits.streamIdleTimeoutMs.max / 1000)
+  const savedSeconds = state === undefined ? undefined : Math.round(state.streamIdleTimeoutMs / 1000)
+  const customized = state !== undefined && (state.maxRetries !== defaults.maxRetries || state.streamIdleTimeoutMs !== defaults.streamIdleTimeoutMs)
+  const disabled = busy || state?.writable !== true
+  const dirty = state !== undefined && (draft.maxRetries.trim() !== String(state.maxRetries) || draft.idleSeconds.trim() !== String(savedSeconds))
+  const canReset = state !== undefined && !disabled && (customized || draft.maxRetries.trim() !== String(defaults.maxRetries) || draft.idleSeconds.trim() !== String(defaultSeconds))
+
+  const submit = payload => {
+    setBusy(true)
+    setError(undefined)
+    setSaved(false)
+    return call('route/update', payload)
+      .then(value => {
+        syncFrom(value)
+        setSaved(true)
+      })
+      .catch(failure => setError(clearMessage(failure)))
+      .finally(() => setBusy(false))
+  }
+
+  const onSave = event => {
+    event.preventDefault()
+    if (disabled || state === undefined) return
+    const retries = parseWholeNumber(draft.maxRetries)
+    if (retries === undefined || retries < limits.maxRetries.min || retries > limits.maxRetries.max) {
+      setSaved(false)
+      setError(fill(t('routeRetriesRange'), limits.maxRetries))
+      return
+    }
+    const seconds = parseWholeNumber(draft.idleSeconds)
+    if (seconds === undefined || seconds < minSeconds || seconds > maxSeconds) {
+      setSaved(false)
+      setError(fill(t('routeTimeoutRange'), { min: minSeconds, max: maxSeconds }))
+      return
+    }
+    void submit({ maxRetries: retries, streamIdleTimeoutMs: seconds * 1000 })
+  }
+
+  const onReset = () => {
+    if (!canReset) return
+    if (!customized) {
+      setError(undefined)
+      setSaved(false)
+      setDraft({ maxRetries: String(defaults.maxRetries), idleSeconds: String(defaultSeconds) })
+      return
+    }
+    void submit({ maxRetries: defaults.maxRetries, streamIdleTimeoutMs: defaults.streamIdleTimeoutMs })
+  }
+
+  return (
+    <section className="pkc-card">
+      <details className="pkc-advanced-card">
+        <summary>
+          <h3 className="pkc-title">{t('routeTitle')}</h3>
+          {state !== undefined && (
+            <span className="pkc-actions">
+              {customized && <span className="pkc-chip" data-tone="info">{t('routeCustomized')}</span>}
+              <span className="pkc-meta">{fill(t('routeSummary'), { retries: state.maxRetries, seconds: savedSeconds })}</span>
+            </span>
+          )}
+        </summary>
+        <div className="pkc-advanced-body">
+          <p className="pkc-note">{t('routeIntro')}</p>
+          {state === undefined && error === undefined && <p className="pkc-note" role="status">{t('routeChecking')}</p>}
+          {state !== undefined && (
+            <form className="pkc-advanced-form" onSubmit={onSave}>
+              <div className="pkc-setting">
+                <label className="pkc-label" htmlFor="pkc-route-retries">{t('routeRetriesLabel')}</label>
+                <div>
+                  <input
+                    id="pkc-route-retries"
+                    className="pkc-input pkc-number"
+                    type="number"
+                    inputMode="numeric"
+                    min={limits.maxRetries.min}
+                    max={limits.maxRetries.max}
+                    step={1}
+                    disabled={disabled}
+                    value={draft.maxRetries}
+                    onChange={event => { setSaved(false); setDraft(current => ({ ...current, maxRetries: event.target.value })) }}
+                  />
+                  <p className="pkc-note">{fill(t('routeRetriesHint'), { ...limits.maxRetries, defaultValue: defaults.maxRetries })}</p>
+                </div>
+              </div>
+              <div className="pkc-setting">
+                <label className="pkc-label" htmlFor="pkc-route-timeout">{t('routeTimeoutLabel')}</label>
+                <div>
+                  <input
+                    id="pkc-route-timeout"
+                    className="pkc-input pkc-number"
+                    type="number"
+                    inputMode="numeric"
+                    min={minSeconds}
+                    max={maxSeconds}
+                    step={1}
+                    disabled={disabled}
+                    value={draft.idleSeconds}
+                    onChange={event => { setSaved(false); setDraft(current => ({ ...current, idleSeconds: event.target.value })) }}
+                  />
+                  <p className="pkc-note">{fill(t('routeTimeoutHint'), { min: minSeconds, max: maxSeconds, defaultValue: defaultSeconds })}</p>
+                </div>
+              </div>
+              <div className="pkc-actions">
+                <Button type="submit" variant="primary" disabled={disabled || !dirty}>{busy ? t('routeSaving') : t('routeSave')}</Button>
+                <Button disabled={!canReset} onClick={onReset}>{t('routeReset')}</Button>
+              </div>
+              {saved && <p className="pkc-note" role="status">{t('routeSaved')}</p>}
+              {state.writable !== true && <p className="pkc-note">{t('searchNotWritable')}</p>}
+            </form>
+          )}
+          {error !== undefined && <p className="pkc-error" role="alert">{`${t('routeLoadFailed')}: ${error}`}</p>}
+        </div>
+      </details>
+    </section>
+  )
+}
+
 // ── Claude Code CLI ─────────────────────────────────────────────────────────
 
 const INSTALL_FAILURES = {
@@ -959,6 +1115,7 @@ function PackyCodeSection({ rpc, t }) {
       <ModelsCard call={call} t={t} />
       <SearchCard call={call} t={t} />
       <AutoReviewCard call={call} t={t} />
+      <AdvancedCard call={call} t={t} />
       <VersionCard call={call} t={t} />
       <DiagnosticsCard call={call} t={t} />
       <Card title={t('communityTitle')}>

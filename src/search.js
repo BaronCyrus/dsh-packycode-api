@@ -31,7 +31,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 
 import { PROVIDER } from './constants.js'
-import { classifyClientPolicy, classifyCoverage, classifyGatewayFailure, classifyUpstreamServerError, explainClientPolicyFailure } from './failures.js'
+import { classifyClientPolicy, classifyCoverage, classifyGatewayFailure, classifyUpstreamServerError, classifyUpstreamStreamInterruption, explainClientPolicyFailure } from './failures.js'
 import { orderKeysFor } from './key-chooser.js'
 import { ambientFetch, boundedFetch } from './request.js'
 
@@ -358,6 +358,7 @@ export function transientRetryDelay(error, fallbackMs = DEFAULT_RETRY_DELAY_MS) 
   const transient = ['rate_limit_exceeded', 'server_error'].includes(text(error.code))
     || ['server_error', 'service_unavailable_error'].includes(text(error.type))
     || classifyUpstreamServerError(message)
+    || classifyUpstreamStreamInterruption(message)
   if (!transient) return undefined
   const hint = RETRY_HINT.exec(message)
   const delay = hint === null ? fallbackMs : Math.round(Number(hint[1]) * (hint[2].toLowerCase() === 'ms' ? 1 : 1000))

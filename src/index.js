@@ -52,6 +52,15 @@ import { createNetworkLog } from './network.js'
 import { createPackyCodePluginManager } from './plugin-version.js'
 import { connectSettings, fieldValue, live, unwritable } from './preferences.js'
 import { createRouteAdapter } from './route.js'
+import {
+  createRouteSettingsController,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  MAX_MAX_RETRIES,
+  MAX_STREAM_IDLE_TIMEOUT_MS,
+  MIN_MAX_RETRIES,
+  MIN_STREAM_IDLE_TIMEOUT_MS,
+} from './route-settings.js'
 import { createPackyCodeRpc } from './rpc.js'
 import { DEFAULT_SEARCH_BACKEND, SEARCH_BACKENDS, SEARCH_MODE_DEFAULT, SEARCH_MODES } from './search.js'
 import { createProfileSearchComposition } from './search-composition.js'
@@ -96,6 +105,10 @@ export const Config = z.object({
     ...AUTO_REVIEW_MODELS,
     ...Object.keys(RETIRED_AUTO_REVIEW_MODELS).map(id => z.const(id).hidden()),
   ]).default(DEFAULT_AUTO_REVIEW_MODEL)),
+  /** Step-level retries on transient, rate-limit or key-rotation failures across the PackyCode route. */
+  maxRetries: live(z.number().step(1).min(MIN_MAX_RETRIES).max(MAX_MAX_RETRIES).default(DEFAULT_MAX_RETRIES)),
+  /** Idle watchdog bound (ms) between streamed events on the HTTP route. */
+  streamIdleTimeoutMs: live(z.number().step(1).min(MIN_STREAM_IDLE_TIMEOUT_MS).max(MAX_STREAM_IDLE_TIMEOUT_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS)),
 })
 
 export function apply(ctx, config) {
@@ -116,6 +129,8 @@ export function apply(ctx, config) {
     imageQuality: fieldValue(config?.imageQuality),
     claudeCliPath: fieldValue(config?.claudeCliPath),
     autoReviewModel: fieldValue(config?.autoReviewModel),
+    maxRetries: fieldValue(config?.maxRetries),
+    streamIdleTimeoutMs: fieldValue(config?.streamIdleTimeoutMs),
   })
   const hosts = () => {
     const current = source() ?? {}
@@ -174,11 +189,18 @@ export function apply(ctx, config) {
   const fallbackSessionId = `${PLUGIN_ID}-${randomUUID()}`
   const attachments = () => ctx.get?.('attachments') ?? ctx.attachments
   const modelPreference = { writable: false, set: undefined }
+  const routePreference = { writable: false, set: undefined }
   let refreshModels = () => {}
   const modelSelection = createModelSelectionController({
     readPreference: () => source() ?? {},
     writePreference: patch => modelPreference.set(patch),
     isWritable: () => modelPreference.writable === true && typeof modelPreference.set === 'function',
+    onChange: () => refreshModels(),
+  })
+  const routeSettings = createRouteSettingsController({
+    readPreference: () => source() ?? {},
+    writePreference: patch => routePreference.set(patch),
+    isWritable: () => routePreference.writable === true && typeof routePreference.set === 'function',
     onChange: () => refreshModels(),
   })
 
@@ -303,7 +325,9 @@ export function apply(ctx, config) {
   // one whose groups are not read yet), where Claude Code is the agent; no
   // other fallback exists.
   const registration = ctx.llm.registerAdapter([PROVIDER], createRouteAdapter({
-    ring, keys, fallbackSessionId, resolveAttachments: attachments, isModelVisible: modelSelection.isVisible,
+    ring, keys, fallbackSessionId, resolveAttachments: attachments,
+    isModelVisible: modelSelection.isVisible,
+    getRouteSettings: routeSettings.read,
     claudeCli: Object.freeze({
       followsGroups: () => true,
       choose: ({ apiKey, model }) => {
@@ -424,12 +448,14 @@ export function apply(ctx, config) {
       groups.invalidate()
       imageGroups.invalidate()
       modelSelection.reconcile()
+      routeSettings.reconcile()
       void images.reconcile().catch(() => undefined)
       void search.reconcile()
     },
     hostPreference,
     searchPreference,
     modelPreference,
+    routePreference,
     imagePreference,
     autoReviewPreference,
   }))
@@ -437,6 +463,7 @@ export function apply(ctx, config) {
   // profile patch): follow it without restarting the route.
   ctx.on?.('loader/volatile-update', () => {
     modelSelection.reconcile()
+    routeSettings.reconcile()
     void images.reconcile().catch(() => undefined)
     void search.reconcile()
   })
@@ -495,6 +522,7 @@ export function apply(ctx, config) {
     search,
     autoReview,
     modelSelection,
+    routeSettings,
     images,
     imageOriginals: createImageOriginalReader({
       imageDirectory: join(dshHome, 'packycode-api', 'images'),
@@ -595,6 +623,7 @@ export {
   classifyCliUnavailable,
   classifyGatewayFailure,
   classifyUpstreamServerError,
+  classifyUpstreamStreamInterruption,
   classifyTestMessagePolicy,
   explainTestMessagePolicyFailure,
   TEST_MESSAGE_POLICY_CODE,
@@ -614,6 +643,18 @@ export { createPackyCodeImageClient, createPackyCodeImageTool, decodeImagePng, I
 export { assertApiKey, PackyCodeKeyRing } from './key-ring.js'
 export { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 export { createPackyCodeProfile, createRouteAdapter, withoutReviewTemperature } from './route.js'
+export {
+  createRouteSettingsController,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  MAX_MAX_RETRIES,
+  MAX_STREAM_IDLE_TIMEOUT_MS,
+  MIN_MAX_RETRIES,
+  MIN_STREAM_IDLE_TIMEOUT_MS,
+  readRouteSettings,
+  ROUTE_SETTINGS_DEFAULTS,
+  ROUTE_SETTINGS_LIMITS,
+} from './route-settings.js'
 export { createPackyCodeRpc } from './rpc.js'
 export {
   buildSearchRequest,

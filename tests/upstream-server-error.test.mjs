@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-import { classifyGatewayFailure, classifyUpstreamServerError } from '../src/failures.js'
+import { classifyGatewayFailure, classifyUpstreamServerError, classifyUpstreamStreamInterruption } from '../src/failures.js'
 import { PackyCodeKeyRing } from '../src/key-ring.js'
 import { createRouteAdapter } from '../src/route.js'
 import { fakeCredentials } from './helpers.mjs'
@@ -12,6 +12,8 @@ const KEY = 'sk-fixture-only-not-a-real-key'
 const MODEL = 'gpt-6.2-sol'
 /** OpenAI's `server_error` sentence, as the Codex group relayed it on 2026-10-16. */
 const SERVER_ERROR = 'An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.'
+/** Gateway mid-stream drop sentence relayed inside an HTTP 200 Responses stream. */
+const STREAM_INTERRUPTED = 'Upstream response stream was interrupted'
 
 const sse = events => new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), {
   headers: { 'Content-Type': 'text/event-stream' },
@@ -141,4 +143,56 @@ test('other unclassified failures and answers pass through unchanged', async t =
   }
   assert.equal(finish.kind, 'stop')
   assert.equal(text, 'ok')
+})
+
+test('recognizes upstream stream interruption wording without blaming the key', () => {
+  for (const message of [
+    STREAM_INTERRUPTED,
+    `${STREAM_INTERRUPTED}.`,
+    `unknown: ${STREAM_INTERRUPTED}`,
+    `stream_error: ${STREAM_INTERRUPTED}`,
+    `Error Code stream_error: ${STREAM_INTERRUPTED}`,
+    'Response stream was interrupted',
+    'Upstream stream was interrupted',
+    'Stream was interrupted',
+    'stream_interrupted: Upstream connection closed.',
+    'Error Code upstream_stream_interrupted: stopped',
+  ]) assert.equal(classifyUpstreamStreamInterruption(message), true, message)
+  for (const message of [
+    undefined,
+    '',
+    'invalid_prompt: Invalid prompt: your prompt was flagged.',
+    'Claude context compaction interrupted',
+    '当前令牌额度已用完',
+    'Turn was interrupted by user',
+  ]) assert.equal(classifyUpstreamStreamInterruption(message), false, String(message))
+  assert.equal(classifyGatewayFailure(STREAM_INTERRUPTED), undefined, 'the key is not at fault')
+})
+
+test('an upstream stream interruption relayed mid-stream is filed as TRANSPORT, which the route retries', async t => {
+  const partialItem = { type: 'message', id: 'msg_partial', role: 'assistant', status: 'in_progress', content: [] }
+  const shapes = [
+    sse([
+      ...OPENING,
+      { type: 'response.output_item.added', output_index: 0, item: partialItem },
+      { type: 'response.content_part.added', output_index: 0, content_index: 0, item_id: partialItem.id, part: { type: 'output_text', text: '', annotations: [] } },
+      { type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: partialItem.id, delta: 'half' },
+      { type: 'error', error: { message: STREAM_INTERRUPTED, type: 'upstream_error', code: null } },
+    ]),
+    sse([...OPENING, { type: 'error', code: 'stream_error', message: STREAM_INTERRUPTED }]),
+    sse([...OPENING, failed({ code: 'stream_error', message: STREAM_INTERRUPTED })]),
+  ]
+  const { adapter, ring } = await route(t, count => shapes[(count - 1) % shapes.length])
+  const policy = adapter.providerRetryPolicy('packycode')
+  assert.ok(policy.retryableCodes.includes('TRANSPORT'))
+  for (let index = 0; index < shapes.length; index++) {
+    const prepared = await adapter.prepareCall('packycode', MODEL)
+    const finish = await finishOf(prepared.stream(request()))
+    assert.equal(finish.kind, 'error')
+    assert.equal(finish.failure.code, 'TRANSPORT', finish.failure.message)
+    assert.match(finish.failure.message, /Upstream response stream was interrupted/u)
+  }
+  const direct = await finishOf(adapter.stream(request()))
+  assert.equal(direct.failure.code, 'TRANSPORT')
+  assert.equal((await ring.activeKey()).key, KEY, 'key stays active and enabled')
 })

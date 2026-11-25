@@ -323,6 +323,29 @@ test('a capacity refusal that persists is reported after three attempts with wha
   assert.equal((await ring.list()).keys.every(key => !key.disabled), true)
 })
 
+test('an upstream stream interruption inside a GPT search stream is resent on the same key', async () => {
+  const ring = await ringWith('sk-first-key-0001', 'sk-second-key-0002')
+  const failures = []
+  const used = []
+  const provider = createPackyCodeSearchProvider({
+    ring,
+    hosts: () => ({ apiHost: 'https://gw.example' }),
+    backend: () => 'gpt',
+    retryDelayMs: 1,
+    onKeyFailure: kind => failures.push(kind),
+    fetchImpl: async (_url, init) => {
+      used.push(init.headers.authorization)
+      return streamAnswer(sse(used.length === 1
+        ? [{ type: 'error', error: { type: 'upstream_error', code: null, message: 'Upstream response stream was interrupted' } }]
+        : searchEvents()))
+    },
+  })
+  const result = await provider.search({ query: 'q' })
+  assert.equal(result.sources.length, 3)
+  assert.deepEqual(used, ['Bearer sk-first-key-0001', 'Bearer sk-first-key-0001'])
+  assert.deepEqual(failures, [])
+})
+
 test('any other failure inside the stream is reported at once, without a status', async () => {
   const ring = await ringWith('sk-secret-key-123456')
   let calls = 0

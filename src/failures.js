@@ -99,6 +99,25 @@ export function classifyUpstreamServerError(message) {
 }
 
 /**
+ * An upstream SSE stream that PackyCode's gateway cut off mid-response after
+ * already answering HTTP 200 (for example, Codex/GPT peak-hour drops relayed
+ * as "Upstream response stream was interrupted"). Because no 5xx status or
+ * `terminated` / `stream ended before` wording is present, DSH's pi-ai error
+ * classifier files it as a non-retryable `PI_AI_ERROR` unless caught here.
+ */
+const UPSTREAM_STREAM_INTERRUPTED = /\b(?:upstream\s+)?(?:response\s+)?stream\s+was\s+interrupted\b|^(?:error code\s+)?(?:upstream_)?(?:response_)?stream_interrupted:/iu
+
+/**
+ * Whether a failure is a mid-stream upstream interruption that a retry clears.
+ * The key is not at fault.
+ * @param message - provider failure text, as pi-ai carries it.
+ * @returns true when the gateway reported an interrupted upstream stream.
+ */
+export function classifyUpstreamStreamInterruption(message) {
+  return UPSTREAM_STREAM_INTERRUPTED.test(typeof message === 'string' ? message : '')
+}
+
+/**
  * Classify a gateway failure message.
  *
  * Quota wording wins over a status token: an exhausted balance is often

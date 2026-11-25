@@ -40,7 +40,7 @@ test('a failed Auto search setting is a valid Connection failure, preserving its
 
 test('unknown endpoints and unavailable services also satisfy the Connection failure contract', async () => {
   const rpc = createPackyCodeRpc({})
-  for (const endpoint of ['unknown', 'search/status', 'models/status', 'plugin/version', 'status']) {
+  for (const endpoint of ['unknown', 'search/status', 'models/status', 'route/status', 'route/update', 'plugin/version', 'status']) {
     connectionFailure(await rpc(endpoint))
   }
 })

@@ -12,10 +12,11 @@ import { isOfficialReviewRequest } from './auto-review.js'
 import { isClaudeModel } from './claude-transport.js'
 import { forwardedUserText } from './claude-user-text.js'
 import { DEFAULT_REASONING_LEVEL, DISPLAY_NAME, PLUGIN_ID, PROVIDER } from './constants.js'
-import { classifyUpstreamServerError, classifyTestMessagePolicy, TEST_MESSAGE_POLICY_CODE } from './failures.js'
+import { classifyUpstreamServerError, classifyUpstreamStreamInterruption, classifyTestMessagePolicy, TEST_MESSAGE_POLICY_CODE } from './failures.js'
 import { guardGeminiReplay } from './gemini-replay.js'
 import { createPackyCodeProvider, guardKeyRotation } from './provider.js'
 import { currentRequest, withRequestContext } from './request-context.js'
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, readRouteSettings } from './route-settings.js'
 import { clarifyWorkingDirectory } from './working-directory.js'
 
 /**
@@ -24,7 +25,7 @@ import { clarifyWorkingDirectory } from './working-directory.js'
  * gateway size cap.
  */
 const REQUEST_LIMITS = Object.freeze({
-  streamIdleTimeoutMs: 10 * 60 * 1000,
+  streamIdleTimeoutMs: DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   maxRequestImageBytes: 20 * 1024 * 1024,
   requestImagePixelBudget: 2048 * 2048,
   requestImageMaxBytes: 1024 * 1024,
@@ -72,13 +73,15 @@ export function withoutReviewTemperature(options) {
   return rest
 }
 
-/** Preserve policy refusals and retryable upstream server errors as distinct categories. */
+/** Preserve policy refusals and retryable upstream stream/server errors as distinct categories. */
 async function* classifyRouteFailures(stream) {
   for await (const chunk of stream) {
     const failure = chunk.type === 'finish' && chunk.reason?.kind === 'error' ? chunk.reason.failure : undefined
     const code = classifyTestMessagePolicy(failure?.message)
       ? TEST_MESSAGE_POLICY_CODE
-      : failure?.code === 'PI_AI_ERROR' && classifyUpstreamServerError(failure.message) ? 'SERVER' : undefined
+      : failure?.code === 'PI_AI_ERROR' && classifyUpstreamStreamInterruption(failure.message)
+        ? 'TRANSPORT'
+        : failure?.code === 'PI_AI_ERROR' && classifyUpstreamServerError(failure.message) ? 'SERVER' : undefined
     yield code === undefined ? chunk : { ...chunk, reason: { ...chunk.reason, failure: { ...failure, code } } }
   }
 }
@@ -119,7 +122,8 @@ function ringCredentialStore(ring) {
  * @param provider - the route's pi-ai provider.
  * @returns the frozen profile handed to `PiAiAdapter`.
  */
-export function createPackyCodeProfile(provider) {
+export function createPackyCodeProfile(provider, options) {
+  const { maxRetries, streamIdleTimeoutMs } = readRouteSettings(options)
   return Object.freeze({
     provider: PROVIDER,
     displayName: DISPLAY_NAME,
@@ -128,6 +132,10 @@ export function createPackyCodeProfile(provider) {
     configuredMaxTokens: new Map(),
     modelErrors: new Map(),
     ...REQUEST_LIMITS,
+    streamIdleTimeoutMs,
+    // Keep the OpenAI/Anthropic SDK initial header timeout from firing earlier
+    // than a raised stream idle timeout (their SDK default is 10 minutes).
+    ...(streamIdleTimeoutMs > DEFAULT_STREAM_IDLE_TIMEOUT_MS ? { timeoutMs: streamIdleTimeoutMs } : {}),
     cacheRetention: 'short',
     retryPolicy: resolveRetryPolicy({
       mode: 'normal',
@@ -135,9 +143,9 @@ export function createPackyCodeProfile(provider) {
       // gateway drops an upstream channel or key per request, and a retry is
       // also the mechanism that reaches the next key — a long budget is what
       // turns those blips into a slower answer instead of a failed turn.
-      // Worst case with the default backoff (0.5s doubling, capped at 10s) is
-      // roughly three minutes before the failure is surfaced.
-      maxRetries: 20,
+      // Worst case with the default backoff (0.5s doubling, capped at 10s) and
+      // 20 retries is roughly three minutes before the failure is surfaced.
+      maxRetries,
       // A retry is the mechanism that reaches the next key, so the two
       // key-level codes belong here; INVALID_REQUEST is here because this
       // gateway reports a dead upstream channel as a misleading 400.
@@ -179,7 +187,7 @@ function workingDirectoryOf(resolveWorkingDirectory, sessionId) {
  *   optional Claude Code CLI transport selector.
  * @returns a `PiAiAdapter` serving the `packycode` route.
  */
-export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments, resolveWorkingDirectory, isModelVisible = () => true, claudeCli }) {
+export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttachments, resolveWorkingDirectory, isModelVisible = () => true, getRouteSettings, claudeCli }) {
   const raw = createPackyCodeProvider({ claudeCli })
   /**
    * The gateway's Codex-group check refuses a Responses request that carries
@@ -201,7 +209,19 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
     return guardKeyRotation(stream, { key: routed?.apiKey, onKeyFailure: keys.onKeyFailure })
   }
   const provider = Object.freeze({ ...raw, stream: guarded('stream'), streamSimple: guarded('streamSimple') })
-  const profiles = new Map([[PROVIDER, createPackyCodeProfile(provider)]])
+  let cachedSettings
+  let cachedProfiles
+  const currentProfiles = () => {
+    const next = readRouteSettings(getRouteSettings?.())
+    if (cachedProfiles !== undefined
+      && cachedSettings.maxRetries === next.maxRetries
+      && cachedSettings.streamIdleTimeoutMs === next.streamIdleTimeoutMs) {
+      return cachedProfiles
+    }
+    cachedSettings = next
+    cachedProfiles = new Map([[PROVIDER, createPackyCodeProfile(provider, next)]])
+    return cachedProfiles
+  }
 
   /**
    * Iterate one request inside its context: the transport reads the purpose,
@@ -247,7 +267,7 @@ export function createRouteAdapter({ ring, keys, fallbackSessionId, resolveAttac
       return (await super.listModels(provider)).filter(model => isModelVisible(model.id))
     }
   })({
-    profiles: () => profiles,
+    profiles: currentProfiles,
     resolveApiKey: async () => {
       // DSH 0.2.1 also asks before listing models, outside any request. That
       // only needs a usable key to exist; the group reading a request waits

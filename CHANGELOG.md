@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.2
+
+- **Upstream mid-stream interruptions now trigger automatic retries.** When PackyCode's gateway loses its upstream connection after already answering HTTP 200 (such as peak-hour GPT Responses drops relayed as `Upstream response stream was interrupted`), the error arrives inside the SSE stream with no HTTP status code, so DSH's `pi-ai` classifier previously filed it as a non-retryable `PI_AI_ERROR` and ended the turn immediately with zero retries. The route now classifies upstream stream-interruption messages as `TRANSPORT` (and the GPT web search backend resends on the same key), so the route's retry policy re-runs the failed step without disabling or rotating a healthy key.
+- **Collapsible Advanced options for retry count and stream idle timeout.** A new collapsed-by-default **Advanced options** card in **Settings → PackyCode** configures the built-in HTTP route's step `maxRetries` (0–100, default 20) and `streamIdleTimeoutMs` (displayed in seconds: 30–3600s, default 600s / 10 min) with a one-click reset to defaults. Changes are stored as volatile profile preferences and hot-replace the registered route immediately without restarting DSH; raising the idle timeout above 10 minutes also raises the underlying SDK initial-response timeout to match.
+
 ## 1.5.1
 
 - Gemini 3.8 Flash now generates and refreshes session titles for Gemini 4 Carbon, Gemini 4 Argon and Gemini 3.8 Flash. Conversation turns use the selected Gemini model.
